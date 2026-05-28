@@ -42,10 +42,7 @@ DEFAULT_RUNTIME_CONFIG = {
     "db_maintenance_sql_phase": "before_unpack",
     "db_maintenance_sql": ["VACUUM ANALYZE;"],
     "sql_scripts": [],
-    "management_commands": [
-        "python project/manage.py migrate",
-        "python project/manage.py sync_action_role",
-    ],
+    "management_commands": [],
     "service_permission_checks_enabled": True,
     "service_steps": [],
     "healthcheck_enabled": True,
@@ -249,6 +246,17 @@ def load_runtime_config(config_file: Path) -> dict:
             override = json.load(file)
         config.update(override)
     return config
+
+
+def management_commands(env: dict[str, str], runtime: dict) -> list[str]:
+    configured = runtime.get("management_commands", [])
+    if configured:
+        return configured
+    manage_py = require_value(env, "APP_MANAGE_PY_PATH")
+    return [
+        f"python {sh_quote(manage_py)} migrate",
+        f"python {sh_quote(manage_py)} sync_action_role",
+    ]
 
 
 def require_value(env: dict[str, str], name: str) -> str:
@@ -708,6 +716,24 @@ def check_app_deploy_directories(reporter: Reporter, env: dict[str, str], runtim
         check_remote_directory(reporter, env, name, path)
 
 
+def check_app_manage_py(reporter: Reporter, env: dict[str, str]) -> None:
+    app_user = require_value(env, "APP_VM_USER")
+    app_host = require_value(env, "APP_VM_HOST")
+    app_workdir = require_value(env, "APP_WORKDIR")
+    manage_py = require_value(env, "APP_MANAGE_PY_PATH")
+    command = (
+        f"cd {sh_quote(app_workdir)} && "
+        f"test -f {sh_quote(manage_py)} && "
+        f"test -r {sh_quote(manage_py)}"
+    )
+    result = ssh_command(env, app_user, app_host, command, "APP", timeout=30)
+    output = (result.stdout or result.stderr).strip()
+    if result.rc == 0:
+        reporter.pass_("app manage.py path", f"{app_workdir}/{manage_py}")
+    else:
+        reporter.fail("app manage.py path", output or f"not found/readable from APP_WORKDIR: {app_workdir}/{manage_py}")
+
+
 def check_http(reporter: Reporter, env: dict[str, str], validate_certs: bool) -> None:
     url = f"https://{require_value(env, 'DEV_DOMAIN')}/"
     context = None if validate_certs else ssl._create_unverified_context()
@@ -781,6 +807,7 @@ def dry_run(args: argparse.Namespace) -> bool:
         reporter.skip("DEV HTTP endpoint", "app VM недоступна, healthcheck неинформативен")
     else:
         check_app_deploy_directories(reporter, env, runtime)
+        check_app_manage_py(reporter, env)
         check_service_permissions(reporter, env, runtime)
         if runtime.get("healthcheck_enabled", True):
             check_http(reporter, env, bool(runtime.get("healthcheck_validate_certs", False)))
@@ -1016,7 +1043,7 @@ def deploy(args: argparse.Namespace) -> int:
     run_service_steps(env, runtime, "after_unpack")
     run_db_maintenance(env, runtime, "before_migrate")
 
-    for command in runtime.get("management_commands", []):
+    for command in management_commands(env, runtime):
         remote = (
             f"cd {sh_quote(require_value(env, 'APP_WORKDIR'))} && "
             f". {sh_quote(require_value(env, 'APP_VENV_ACTIVATE_PATH'))} && "

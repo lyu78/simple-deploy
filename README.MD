@@ -99,6 +99,19 @@ healthcheck-команд, SQL-скриптов и включения backup. Е�
 `example_backend_app/` попадает прямо в `FRONTEND_RELEASE_PATH` или
 `BACKEND_RELEASE_PATH`, без вложенного `build/build`.
 
+Django management-команды запускаются после распаковки из `APP_WORKDIR`. Если
+`management_commands` в `windows_pipeline.local.json` пустой, runner строит
+дефолтные команды из `APP_MANAGE_PY_PATH`:
+
+```properties
+APP_WORKDIR=/opt/example/backend
+APP_MANAGE_PY_PATH=manage.py
+```
+
+Если `manage.py` лежит глубже, укажите относительный путь от `APP_WORKDIR`,
+например `example_backend_app/manage.py`, или абсолютный путь. Полностью
+переопределить команды можно в `windows_pipeline.local.json`.
+
 Диагностика:
 
 ```bash

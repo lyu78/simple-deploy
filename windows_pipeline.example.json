@@ -8,10 +8,7 @@
     "VACUUM ANALYZE;"
   ],
   "sql_scripts": [],
-  "management_commands": [
-    "python project/manage.py migrate",
-    "python project/manage.py sync_action_role"
-  ],
+  "management_commands": [],
   "service_permission_checks_enabled": true,
   "service_steps": [
     {
