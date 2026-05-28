@@ -87,6 +87,22 @@ healthcheck-команд, SQL-скриптов и включения backup. Е�
 `permission_check_command`, который безопасно проверяет право/готовность без
 реального рестарта.
 
+`systemctl --dry-run` проверяет транзакцию systemd, но не всегда доказывает, что
+реальный `start` пройдет через polkit. Если нужно проверить именно право запуска
+конкретного сервиса, задайте явный `permission_check_command`, например:
+
+```json
+{
+  "name": "start nginx",
+  "phase": "after_migrate",
+  "command": "systemctl start nginx",
+  "permission_check_command": "systemctl start nginx"
+}
+```
+
+Такой check уже выполняет реальный `start`, поэтому используйте его для
+идемпотентных сервисов, где повторный start допустим.
+
 Также `dry-run` проверяет на app VM наличие и права `rwx` для директорий
 `REMOTE_TMP_ROOT`, `BACKEND_RELEASE_PATH`, `FRONTEND_RELEASE_PATH` и
 `APP_WORKDIR`. Проверка выполняется под `APP_VM_USER` и делает безопасный

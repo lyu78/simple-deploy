@@ -630,6 +630,7 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
         label = step.get("name") or f"service step #{index}"
         command = str(step.get("command", "")).strip()
         check_command_text = str(step.get("permission_check_command", "")).strip()
+        derived_check = False
 
         if command.startswith("sudo ") or check_command_text.startswith("sudo "):
             reporter.fail(
@@ -640,6 +641,7 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
 
         if not check_command_text:
             check_command_text = derive_service_permission_check(command)
+            derived_check = bool(check_command_text)
         if check_command_text == "sudo":
             reporter.fail(
                 f"service permission {label}",
@@ -656,7 +658,10 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
         result = ssh_command(env, app_user, app_host, check_command_text, "APP", timeout=30)
         output = (result.stdout or result.stderr).strip()
         if result.rc == 0:
-            reporter.pass_(f"service permission {label}", output.splitlines()[0] if output else check_command_text)
+            detail = output.splitlines()[0] if output else check_command_text
+            if derived_check:
+                detail = f"{detail} (systemctl --dry-run; authorization not guaranteed)"
+            reporter.pass_(f"service permission {label}", detail)
         else:
             reporter.fail(f"service permission {label}", output or f"rc={result.rc}")
 
