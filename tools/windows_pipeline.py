@@ -169,6 +169,27 @@ def require_value(env: dict[str, str], name: str) -> str:
     return value
 
 
+def resolve_ssh_key_path(path_value: str) -> Path:
+    path = Path(path_value).expanduser()
+    if path.is_absolute():
+        return path
+
+    cwd_path = Path.cwd() / path
+    if cwd_path.exists():
+        return cwd_path
+
+    return Path.home() / path
+
+
+def ssh_key_args(env: dict[str, str], scope: str) -> list[str]:
+    specific = env.get(f"{scope}_SSH_KEY_PATH", "").strip()
+    generic = env.get("SSH_KEY_PATH", "").strip()
+    path_value = specific or generic
+    if not path_value:
+        return []
+    return ["-i", str(resolve_ssh_key_path(path_value))]
+
+
 def windows_release_root(env: dict[str, str]) -> Path:
     explicit = env.get("RELEASE_ROOT_WINDOWS", "").strip()
     if explicit:
@@ -273,6 +294,26 @@ def check_windows_command(reporter: Reporter, name: str, command: str) -> bool:
     return check_command(reporter, name, ["cmd.exe", "/C", command])
 
 
+def check_ssh_key_files(reporter: Reporter, env: dict[str, str]) -> None:
+    keys = [
+        ("SSH key", env.get("SSH_KEY_PATH", "")),
+        ("app SSH key", env.get("APP_SSH_KEY_PATH", "")),
+        ("DB SSH key", env.get("DB_SSH_KEY_PATH", "")),
+    ]
+    configured = False
+    for name, path_value in keys:
+        if not path_value.strip():
+            continue
+        configured = True
+        key_path = resolve_ssh_key_path(path_value)
+        if key_path.is_file():
+            reporter.pass_(name, str(key_path))
+        else:
+            reporter.fail(name, f"not found: {key_path}")
+    if not configured:
+        reporter.skip("SSH key", "not configured; using default ssh config/agent")
+
+
 def check_repo(reporter: Reporter, name: str, path_value: str) -> str:
     path = Path(path_value)
     if not path.exists():
@@ -313,9 +354,10 @@ def check_origin_network(reporter: Reporter, name: str, origin_url: str) -> None
         reporter.fail(name, str(exc))
 
 
-def ssh_base_args(user: str, host: str) -> list[str]:
+def ssh_base_args(env: dict[str, str], user: str, host: str, scope: str) -> list[str]:
     return [
         "ssh",
+        *ssh_key_args(env, scope),
         "-o", "BatchMode=yes",
         "-o", "NumberOfPasswordPrompts=1",
         "-o", "ConnectTimeout=10",
@@ -326,25 +368,28 @@ def ssh_base_args(user: str, host: str) -> list[str]:
 
 
 def ssh_command(
+    env: dict[str, str],
     user: str,
     host: str,
     command: str,
+    scope: str,
     input_text: str | None = None,
     timeout: int = DEFAULT_TIMEOUT,
     mask: Iterable[str] = (),
 ) -> CommandResult:
     return run_command(
-        ssh_base_args(user, host) + [command],
+        ssh_base_args(env, user, host, scope) + [command],
         input_text=input_text,
         timeout=timeout,
         mask=mask,
     )
 
 
-def scp_file(local_path: Path, user: str, host: str, remote_path: str) -> CommandResult:
+def scp_file(env: dict[str, str], local_path: Path, user: str, host: str, remote_path: str) -> CommandResult:
     return run_command(
         [
             "scp",
+            *ssh_key_args(env, "APP"),
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=10",
             "-o", "StrictHostKeyChecking=no",
@@ -368,7 +413,7 @@ def check_ssh_runtime(reporter: Reporter, env: dict[str, str]) -> dict[str, bool
     db_host = require_value(env, "DB_VM_HOST")
     result = {"app": False, "db": False}
 
-    app = ssh_command(app_user, app_host, "echo ok && command -v bash tar python >/dev/null")
+    app = ssh_command(env, app_user, app_host, "echo ok && command -v bash tar python >/dev/null", "APP")
     if app.rc == 0:
         reporter.pass_("app VM SSH/runtime", app.stdout.strip())
         result["app"] = True
@@ -376,7 +421,7 @@ def check_ssh_runtime(reporter: Reporter, env: dict[str, str]) -> dict[str, bool
         reporter.fail("app VM SSH/runtime", (app.stderr or app.stdout).strip() or f"rc={app.rc}")
         reporter.skip("app VM deploy checks", "app VM SSH/runtime недоступен")
 
-    db = ssh_command(db_user, db_host, "echo ok && command -v psql >/dev/null")
+    db = ssh_command(env, db_user, db_host, "echo ok && command -v psql >/dev/null", "DB")
     if db.rc == 0:
         reporter.pass_("DB VM SSH/psql", db.stdout.strip())
         result["db"] = True
@@ -457,7 +502,7 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
             )
             continue
 
-        result = ssh_command(app_user, app_host, check_command_text, timeout=30)
+        result = ssh_command(env, app_user, app_host, check_command_text, "APP", timeout=30)
         output = (result.stdout or result.stderr).strip()
         if result.rc == 0:
             reporter.pass_(f"service permission {label}", output.splitlines()[0] if output else check_command_text)
@@ -511,6 +556,8 @@ def dry_run(args: argparse.Namespace) -> bool:
         reporter.pass_("Git Bash", str(git_bash))
     else:
         reporter.fail("Git Bash", f"не найден: {git_bash}")
+
+    check_ssh_key_files(reporter, env)
 
     origins = [
         ("backend source repo", env.get("BACKEND_SOURCE_REPO_PATH", "")),
@@ -655,7 +702,14 @@ def run_service_steps(env: dict[str, str], runtime: dict, phase: str) -> None:
     for step in steps:
         label = step.get("name") or step["command"]
         command = step["command"]
-        result = ssh_command(require_value(env, "APP_VM_USER"), require_value(env, "APP_VM_HOST"), command, timeout=120)
+        result = ssh_command(
+            env,
+            require_value(env, "APP_VM_USER"),
+            require_value(env, "APP_VM_HOST"),
+            command,
+            "APP",
+            timeout=120,
+        )
         run_or_raise(f"service {phase}: {label}", result)
 
 
@@ -678,7 +732,7 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
 
     if phase == runtime.get("db_maintenance_sql_phase", "before_unpack"):
         for index, sql in enumerate(runtime.get("db_maintenance_sql", []), start=1):
-            result = ssh_command(db_user, db_host, psql_base, input_text=sql, timeout=120, mask=[password])
+            result = ssh_command(env, db_user, db_host, psql_base, "DB", input_text=sql, timeout=120, mask=[password])
             run_or_raise(f"DB inline SQL {phase} #{index}", result, mask=[password])
 
     for script in runtime.get("sql_scripts", []):
@@ -686,7 +740,7 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
             continue
         path = ROOT / script["path"]
         sql = path.read_text(encoding="utf-8")
-        result = ssh_command(db_user, db_host, psql_base, input_text=sql, timeout=120, mask=[password])
+        result = ssh_command(env, db_user, db_host, psql_base, "DB", input_text=sql, timeout=120, mask=[password])
         run_or_raise(f"DB SQL script {path}", result, mask=[password])
 
 
@@ -703,13 +757,13 @@ def deploy(args: argparse.Namespace) -> int:
     run_db_maintenance(env, runtime, "before_unpack")
     run_service_steps(env, runtime, "before_unpack")
 
-    run_or_raise("create remote release dir", ssh_command(app_user, app_host, f"mkdir -p {sh_quote(remote_dir)}"))
+    run_or_raise("create remote release dir", ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(remote_dir)}", "APP"))
     for artifact in artifacts:
-        run_or_raise(f"upload {artifact.name}", scp_file(artifact.local_path, app_user, app_host, artifact.remote_archive))
+        run_or_raise(f"upload {artifact.name}", scp_file(env, artifact.local_path, app_user, app_host, artifact.remote_archive))
 
     if runtime.get("backup_enabled", False):
         backup_root = f"{env.get('BACKUP_ROOT_BASE', '/tmp/simple-deploy-backups').rstrip('/')}/{build_version}"
-        run_or_raise("create backup root", ssh_command(app_user, app_host, f"mkdir -p {sh_quote(backup_root)}"))
+        run_or_raise("create backup root", ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(backup_root)}", "APP"))
         for artifact in artifacts:
             extract_path = artifact.extract_path.rstrip("/")
             backup_parent = str(PurePosixPath(extract_path).parent)
@@ -719,11 +773,11 @@ def deploy(args: argparse.Namespace) -> int:
                 f"tar -czf {sh_quote(backup_root + '/' + artifact.name + '.tar.gz')} "
                 f"-C {sh_quote(backup_parent)} {sh_quote(backup_name)}"
             )
-            run_or_raise(f"backup {artifact.name}", ssh_command(app_user, app_host, command, timeout=120))
+            run_or_raise(f"backup {artifact.name}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
 
     for artifact in artifacts:
         command = f"mkdir -p {sh_quote(artifact.extract_path)} && tar -xzf {sh_quote(artifact.remote_archive)} -C {sh_quote(artifact.extract_path)}"
-        run_or_raise(f"unpack {artifact.name}", ssh_command(app_user, app_host, command, timeout=120))
+        run_or_raise(f"unpack {artifact.name}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
 
     run_service_steps(env, runtime, "after_unpack")
     run_db_maintenance(env, runtime, "before_migrate")
@@ -734,7 +788,7 @@ def deploy(args: argparse.Namespace) -> int:
             f". {sh_quote(require_value(env, 'APP_VENV_ACTIVATE_PATH'))} && "
             f"{command}"
         )
-        run_or_raise(f"management command: {command}", ssh_command(app_user, app_host, remote, timeout=300))
+        run_or_raise(f"management command: {command}", ssh_command(env, app_user, app_host, remote, "APP", timeout=300))
 
     run_db_maintenance(env, runtime, "after_migrate")
     run_service_steps(env, runtime, "after_migrate")
@@ -780,7 +834,7 @@ def healthcheck(env: dict[str, str], runtime: dict) -> None:
     app_user = require_value(env, "APP_VM_USER")
     app_host = require_value(env, "APP_VM_HOST")
     for command in runtime.get("healthcheck_commands", []):
-        run_or_raise(f"healthcheck command: {command}", ssh_command(app_user, app_host, command, timeout=120))
+        run_or_raise(f"healthcheck command: {command}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
 
 
 def pipeline(args: argparse.Namespace) -> int:

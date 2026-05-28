@@ -32,6 +32,19 @@ cp windows_pipeline.example.json windows_pipeline.local.json
 оставить `PROJECT_ROOT_WSL` и `RELEASE_ROOT_WSL` пустыми; при необходимости
 задайте `RELEASE_ROOT_WINDOWS`.
 
+Если SSH-вход выглядит как `ssh -i ./simple-deploy deploy-user@192.0.2.10`,
+укажите:
+
+```properties
+APP_SSH_KEY_PATH=./simple-deploy
+APP_VM_USER=deploy-user
+```
+
+Относительные `APP_SSH_KEY_PATH`, `DB_SSH_KEY_PATH` и общий `SSH_KEY_PATH` runner
+ищет сначала от текущей директории, затем от домашней директории пользователя
+Windows. Если один ключ подходит для обеих VM, можно задать только
+`SSH_KEY_PATH`.
+
 В `local.secrets.env` укажите доступ к PostgreSQL:
 
 ```properties
