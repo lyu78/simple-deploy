@@ -444,6 +444,7 @@ def ssh_base_args(env: dict[str, str], user: str, host: str, scope: str) -> list
         "-o", "ConnectTimeout=10",
         "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "LogLevel=ERROR",
         f"{user}@{host}",
     ]
 
@@ -475,6 +476,7 @@ def scp_file(env: dict[str, str], local_path: Path, user: str, host: str, remote
             "-o", "ConnectTimeout=10",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
             str(local_path),
             f"{user}@{host}:{remote_path}",
         ],
@@ -516,6 +518,34 @@ def check_ssh_runtime(reporter: Reporter, env: dict[str, str]) -> dict[str, bool
         reporter.fail("DB VM SSH/psql", (db.stderr or db.stdout).strip() or f"rc={db.rc}")
         reporter.skip("DB SQL checks", "DB VM SSH/psql недоступен")
     return result
+
+
+def db_psql_base_command(env: dict[str, str], runtime: dict) -> tuple[str, list[str]]:
+    password = env.get("DB_LOGIN_PASSWORD", "")
+    psql_bin = str(runtime.get("db_psql_bin", "psql"))
+    psql_host = str(runtime.get("db_psql_host", "localhost"))
+    psql_base = (
+        f"PGPASSWORD={sh_quote(password)} {sh_quote(psql_bin)} --set=ON_ERROR_STOP=1 "
+        f"--host={sh_quote(psql_host)} --port={sh_quote(require_value(env, 'DB_PORT'))} "
+        f"--username={sh_quote(env.get('DB_LOGIN_USER', 'postgres'))} "
+        f"--dbname={sh_quote(require_value(env, 'DB_NAME'))}"
+    )
+    return psql_base, [password]
+
+
+def check_db_psql_login(reporter: Reporter, env: dict[str, str], runtime: dict) -> None:
+    db_user = require_value(env, "DB_VM_USER")
+    db_host = require_value(env, "DB_VM_HOST")
+    psql_base, mask = db_psql_base_command(env, runtime)
+    result = ssh_command(env, db_user, db_host, f"{psql_base} --command='SELECT 1;'", "DB", timeout=30, mask=mask)
+    output = (result.stdout or result.stderr).strip()
+    if result.rc == 0:
+        reporter.pass_("DB psql login", output.splitlines()[0] if output else "SELECT 1")
+    else:
+        for secret in mask:
+            if secret:
+                output = output.replace(secret, "***")
+        reporter.fail("DB psql login", output or f"rc={result.rc}")
 
 
 def derive_service_permission_check(command: str) -> str:
@@ -748,6 +778,11 @@ def dry_run(args: argparse.Namespace) -> bool:
         else:
             reporter.skip("DEV HTTP endpoint", "healthcheck disabled")
 
+    if ssh_state["db"]:
+        check_db_psql_login(reporter, env, runtime)
+    else:
+        reporter.skip("DB psql login", "DB VM SSH/psql unavailable")
+
     return reporter.result()
 
 
@@ -847,10 +882,18 @@ def run_or_raise(label: str, result: CommandResult, mask: Iterable[str] = ()) ->
     if result.rc == 0:
         print(f"PASS {label}")
         return
-    detail = (result.stderr or result.stdout or f"rc={result.rc}").strip()
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
     for secret in mask:
         if secret:
-            detail = detail.replace(secret, "***")
+            stdout = stdout.replace(secret, "***")
+            stderr = stderr.replace(secret, "***")
+    detail_parts = [f"rc={result.rc}"]
+    if stdout:
+        detail_parts.append(f"stdout:\n{stdout}")
+    if stderr:
+        detail_parts.append(f"stderr:\n{stderr}")
+    detail = "\n".join(detail_parts)
     raise RuntimeError(f"{label}: {detail}")
 
 
@@ -899,21 +942,14 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
 
     db_user = require_value(env, "DB_VM_USER")
     db_host = require_value(env, "DB_VM_HOST")
-    password = env.get("DB_LOGIN_PASSWORD", "")
-    psql_bin = str(runtime.get("db_psql_bin", "psql"))
-    psql_host = str(runtime.get("db_psql_host", "localhost"))
-    psql_base = (
-        f"PGPASSWORD={sh_quote(password)} {sh_quote(psql_bin)} --set=ON_ERROR_STOP=1 "
-        f"--host={sh_quote(psql_host)} --port={sh_quote(require_value(env, 'DB_PORT'))} "
-        f"--username={sh_quote(env.get('DB_LOGIN_USER', 'postgres'))} "
-        f"--dbname={sh_quote(require_value(env, 'DB_NAME'))}"
-    )
+    psql_base, mask = db_psql_base_command(env, runtime)
 
     if phase == runtime.get("db_maintenance_sql_phase", "before_unpack"):
         for index, sql in enumerate(runtime.get("db_maintenance_sql", []), start=1):
             print(f"RUN DB inline SQL {phase} #{index}", flush=True)
-            result = ssh_command(env, db_user, db_host, psql_base, "DB", input_text=sql, timeout=120, mask=[password])
-            run_or_raise(f"DB inline SQL {phase} #{index}", result, mask=[password])
+            command = f"{psql_base} --command={sh_quote(sql)}"
+            result = ssh_command(env, db_user, db_host, command, "DB", timeout=120, mask=mask)
+            run_or_raise(f"DB inline SQL {phase} #{index}", result, mask=mask)
 
     for script in runtime.get("sql_scripts", []):
         if script.get("phase") != phase:
@@ -921,8 +957,8 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
         path = ROOT / script["path"]
         sql = path.read_text(encoding="utf-8")
         print(f"RUN DB SQL script {path}", flush=True)
-        result = ssh_command(env, db_user, db_host, psql_base, "DB", input_text=sql, timeout=120, mask=[password])
-        run_or_raise(f"DB SQL script {path}", result, mask=[password])
+        result = ssh_command(env, db_user, db_host, psql_base, "DB", input_text=sql, timeout=120, mask=mask)
+        run_or_raise(f"DB SQL script {path}", result, mask=mask)
 
 
 def deploy(args: argparse.Namespace) -> int:
