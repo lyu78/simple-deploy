@@ -172,6 +172,9 @@ APP_MANAGE_PY_PATH=manage.py
 .venv/Scripts/python.exe tools/windows_pipeline.py pipeline
 ```
 
+Пример запуска полного pipeline по расписанию через Windows Task Scheduler лежит
+в `tools/windows_task_scheduler/`.
+
 Runner повторяет основной порядок Ansible-деплоя: DB maintenance, service steps,
 загрузка архивов через `scp`, распаковка, Django management-команды, повторные
 service steps и HTTP healthcheck. Ansible остается в репозитории как legacy-вариант
