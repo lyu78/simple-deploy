@@ -121,6 +121,12 @@ APP_MANAGE_PY_PATH=manage.py
 Каждый запуск runner пишет вывод одновременно в консоль и в отдельный файл
 `logs/<timestamp>-<command>.log`. Директория `logs/` не попадает в git.
 
+После deploy healthcheck проверяет не только HTTP-доступность портала, но и
+наличие текущей версии релиза на главной странице. Для React-приложения runner
+сначала ищет версию в HTML, затем скачивает JS-ассеты из `<script src=...>` и
+ищет версию в них. Отключить можно через
+`"portal_version_check_enabled": false` в `windows_pipeline.local.json`.
+
 Сборка релиза:
 
 ```bash

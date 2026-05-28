@@ -27,5 +27,7 @@
   "healthcheck_validate_certs": false,
   "healthcheck_retries": 30,
   "healthcheck_delay": 5,
+  "portal_version_check_enabled": true,
+  "portal_version_asset_limit": 20,
   "healthcheck_commands": []
 }
