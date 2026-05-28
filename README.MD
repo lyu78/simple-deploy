@@ -15,16 +15,15 @@
 wsl -d Ubuntu
 ```
 
-Дальше выполняйте команды внутри WSL Ubuntu. Замените `<public-repo-url>` на URL
-публичного репозитория.
+Дальше выполняйте команды внутри WSL Ubuntu.
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y python3-venv python3-pip git openssh-client netcat-openbsd
 
-REPO_URL="<public-repo-url>"
-mkdir -p ~/work
-cd ~/work
+REPO_URL="https://github.com/lyu78/simple-deploy"
+mkdir -p ~/simple-deploy-with-ansible
+cd ~/simple-deploy-with-ansible
 git clone "$REPO_URL" simple-deploy
 cd simple-deploy
 
@@ -61,7 +60,7 @@ ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
 вызывайте WSL явно:
 
 ```powershell
-wsl -e bash -lc 'cd ~/work/simple-deploy && ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml'
+wsl -e bash -lc 'cd ~/simple-deploy-with-ansible/simple-deploy && ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml'
 ```
 
 ## Как читать dry run
