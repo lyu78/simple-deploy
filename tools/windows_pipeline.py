@@ -598,12 +598,34 @@ def check_remote_directory(
     quoted_path = sh_quote(path)
     command = (
         "set -e; "
-        f"test -d {quoted_path} || "
-        f"{{ echo 'missing directory: {path}'; exit 10; }}; "
-        f"test -r {quoted_path} -a -w {quoted_path} -a -x {quoted_path} || "
-        f"{{ ls -ld {quoted_path}; echo 'directory is not rwx for current user: {path}'; exit 11; }}; "
-        f"tmp={quoted_path}/.simple-deploy-write-check-$$; "
-        "touch \"$tmp\" && rm -f \"$tmp\""
+        f"path={quoted_path}; "
+        'echo "checking path: $path"; '
+        "id; "
+        'if [ ! -e "$path" ]; then '
+        'echo "missing path or parent directory is not searchable"; '
+        'parent=$(dirname "$path"); '
+        'ls -ld "$parent" 2>&1 || true; '
+        "exit 10; "
+        "fi; "
+        'if [ ! -d "$path" ]; then '
+        'echo "path exists but is not a directory"; '
+        'ls -ld "$path" 2>&1 || true; '
+        "exit 11; "
+        "fi; "
+        'if [ ! -r "$path" ] || [ ! -w "$path" ] || [ ! -x "$path" ]; then '
+        'echo "directory is not rwx for current user"; '
+        'ls -ld "$path" 2>&1 || true; '
+        "exit 12; "
+        "fi; "
+        'tmp="$path/.simple-deploy-write-check-$$"; '
+        'if ! printf "simple-deploy write check\\n" > "$tmp"; then '
+        'echo "cannot create test file: $tmp"; '
+        "exit 13; "
+        "fi; "
+        'if ! rm -f "$tmp"; then '
+        'echo "cannot remove test file: $tmp"; '
+        "exit 14; "
+        "fi"
     )
     result = ssh_command(env, app_user, app_host, command, "APP", timeout=30)
     output = (result.stdout or result.stderr).strip()
