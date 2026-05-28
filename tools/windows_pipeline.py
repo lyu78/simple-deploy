@@ -795,19 +795,23 @@ def build(args: argparse.Namespace) -> int:
 
 def resolve_release_dir(env: dict[str, str], build_version: str, latest: bool) -> tuple[str, Path]:
     release_root = windows_release_root(env)
+    print(f"RESOLVE release root: {release_root}", flush=True)
     if latest:
         dirs = [path for path in release_root.iterdir() if path.is_dir()] if release_root.exists() else []
         if not dirs:
             raise RuntimeError(f"В {release_root} не найдены директории релизов")
         selected = max(dirs, key=lambda path: path.stat().st_mtime)
+        print(f"RESOLVE latest release: {selected.name} ({selected})", flush=True)
         return selected.name, selected
     if not build_version:
         raise RuntimeError("Укажите --build-version или --latest")
     selected = release_root / build_version
+    print(f"RESOLVE requested release: {selected.name} ({selected})", flush=True)
     return build_version, selected
 
 
 def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path) -> list[Artifact]:
+    print(f"RESOLVE artifacts in: {release_dir}", flush=True)
     if not release_dir.is_dir():
         raise RuntimeError(f"Директория релиза не существует: {release_dir}")
 
@@ -833,11 +837,13 @@ def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path
         if not matches:
             raise RuntimeError(f"В {release_dir} не найден архив по шаблону {pattern}")
         newest = max(matches, key=lambda path: path.stat().st_mtime)
+        print(f"RESOLVE artifact {name}: {newest.name} -> {extract_path}", flush=True)
         artifacts.append(Artifact(name, newest, remote_archive, extract_path))
     return artifacts
 
 
 def run_or_raise(label: str, result: CommandResult, mask: Iterable[str] = ()) -> None:
+    print(f"CHECK {label}", flush=True)
     if result.rc == 0:
         print(f"PASS {label}")
         return
@@ -874,6 +880,7 @@ def run_service_steps(env: dict[str, str], runtime: dict, phase: str) -> None:
     for step in steps:
         label = step.get("name") or step["command"]
         command = step["command"]
+        print(f"RUN service {phase}: {label}", flush=True)
         result = ssh_command(
             env,
             require_value(env, "APP_VM_USER"),
@@ -904,6 +911,7 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
 
     if phase == runtime.get("db_maintenance_sql_phase", "before_unpack"):
         for index, sql in enumerate(runtime.get("db_maintenance_sql", []), start=1):
+            print(f"RUN DB inline SQL {phase} #{index}", flush=True)
             result = ssh_command(env, db_user, db_host, psql_base, "DB", input_text=sql, timeout=120, mask=[password])
             run_or_raise(f"DB inline SQL {phase} #{index}", result, mask=[password])
 
@@ -912,15 +920,19 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
             continue
         path = ROOT / script["path"]
         sql = path.read_text(encoding="utf-8")
+        print(f"RUN DB SQL script {path}", flush=True)
         result = ssh_command(env, db_user, db_host, psql_base, "DB", input_text=sql, timeout=120, mask=[password])
         run_or_raise(f"DB SQL script {path}", result, mask=[password])
 
 
 def deploy(args: argparse.Namespace) -> int:
+    print("DEPLOY load config", flush=True)
     env = load_env(args.env_file, args.secrets_file, require_secrets=True)
     runtime = load_runtime_config(args.config_file)
     build_version, release_dir = resolve_release_dir(env, args.build_version, args.latest)
     artifacts = resolve_artifacts(env, build_version, release_dir)
+    print(f"DEPLOY build_version: {build_version}", flush=True)
+    print(f"DEPLOY release_dir: {release_dir}", flush=True)
 
     app_user = require_value(env, "APP_VM_USER")
     app_host = require_value(env, "APP_VM_HOST")
@@ -929,12 +941,15 @@ def deploy(args: argparse.Namespace) -> int:
     run_db_maintenance(env, runtime, "before_unpack")
     run_service_steps(env, runtime, "before_unpack")
 
+    print(f"RUN create remote release dir: {remote_dir}", flush=True)
     run_or_raise("create remote release dir", ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(remote_dir)}", "APP"))
     for artifact in artifacts:
+        print(f"RUN upload {artifact.name}: {artifact.local_path} -> {artifact.remote_archive}", flush=True)
         run_or_raise(f"upload {artifact.name}", scp_file(env, artifact.local_path, app_user, app_host, artifact.remote_archive))
 
     if runtime.get("backup_enabled", False):
         backup_root = f"{env.get('BACKUP_ROOT_BASE', '/tmp/simple-deploy-backups').rstrip('/')}/{build_version}"
+        print(f"RUN create backup root: {backup_root}", flush=True)
         run_or_raise("create backup root", ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(backup_root)}", "APP"))
         for artifact in artifacts:
             extract_path = artifact.extract_path.rstrip("/")
@@ -945,10 +960,12 @@ def deploy(args: argparse.Namespace) -> int:
                 f"tar -czf {sh_quote(backup_root + '/' + artifact.name + '.tar.gz')} "
                 f"-C {sh_quote(backup_parent)} {sh_quote(backup_name)}"
             )
+            print(f"RUN backup {artifact.name}: {artifact.extract_path}", flush=True)
             run_or_raise(f"backup {artifact.name}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
 
     for artifact in artifacts:
         command = remote_clean_unpack_command(artifact)
+        print(f"RUN unpack {artifact.name}: {artifact.remote_archive} -> {artifact.extract_path}", flush=True)
         run_or_raise(f"unpack {artifact.name}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
 
     run_service_steps(env, runtime, "after_unpack")
@@ -960,6 +977,7 @@ def deploy(args: argparse.Namespace) -> int:
             f". {sh_quote(require_value(env, 'APP_VENV_ACTIVATE_PATH'))} && "
             f"{command}"
         )
+        print(f"RUN management command: {command}", flush=True)
         run_or_raise(f"management command: {command}", ssh_command(env, app_user, app_host, remote, "APP", timeout=300))
 
     run_db_maintenance(env, runtime, "after_migrate")
@@ -985,7 +1003,9 @@ def healthcheck(env: dict[str, str], runtime: dict) -> None:
     url = f"https://{require_value(env, 'DEV_DOMAIN')}/"
     context = None if validate else ssl._create_unverified_context()
     last_error = ""
-    for _ in range(retries):
+    print(f"RUN healthcheck HTTP: {url} (retries={retries}, delay={delay}s)", flush=True)
+    for attempt in range(1, retries + 1):
+        print(f"RUN healthcheck attempt {attempt}/{retries}", flush=True)
         try:
             with request.urlopen(url, timeout=DEFAULT_TIMEOUT, context=context) as response:
                 if response.status in {200, 302, 401, 403}:
@@ -1006,6 +1026,7 @@ def healthcheck(env: dict[str, str], runtime: dict) -> None:
     app_user = require_value(env, "APP_VM_USER")
     app_host = require_value(env, "APP_VM_HOST")
     for command in runtime.get("healthcheck_commands", []):
+        print(f"RUN healthcheck command: {command}", flush=True)
         run_or_raise(f"healthcheck command: {command}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
 
 
