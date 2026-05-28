@@ -409,3 +409,7 @@ builder/settings/*/.env
 group_vars/vault.yml
 .vault-pass
 .venv-ansible/
+
+# Локальные секреты и настройки Windows-only runner
+local.secrets.env
+windows_pipeline.local.json

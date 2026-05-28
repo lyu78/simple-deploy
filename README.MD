@@ -3,9 +3,80 @@
 `simple-deploy` автоматизирует перенос изменений из внешнего контура разработки
 во внутренний контур, сборку релизных архивов и обновление локального DEV-стенда.
 
-Первый рекомендуемый запуск - безопасный Ansible dry run. Он ничего не собирает и
+Первый рекомендуемый запуск - безопасный dry run. Он ничего не собирает и
 не раскатывает, а показывает, какие части окружения уже готовы и что нужно
 исправить.
+
+## Windows-only без WSL/Docker
+
+Если на рабочей машине нет WSL и Docker, используйте Python-runner. Ему нужны
+только Python-библиотеки, Node.js/npm, Git for Windows/Git Bash и Windows
+OpenSSH (`ssh`, `scp`).
+
+Откройте Git Bash и выполните:
+
+```bash
+git clone https://github.com/lyu78/simple-deploy simple-deploy
+cd simple-deploy
+
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org --upgrade pip
+.venv/Scripts/python.exe -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.dev.txt
+
+cp .env.example .env
+cp local.secrets.env.example local.secrets.env
+cp windows_pipeline.example.json windows_pipeline.local.json
+```
+
+Заполните `.env` путями, VM-хостами и доменами. Для Windows-only режима можно
+оставить `PROJECT_ROOT_WSL` и `RELEASE_ROOT_WSL` пустыми; при необходимости
+задайте `RELEASE_ROOT_WINDOWS`.
+
+В `local.secrets.env` укажите доступ к PostgreSQL:
+
+```properties
+DB_LOGIN_USER=postgres
+DB_LOGIN_PASSWORD=<password>
+```
+
+`windows_pipeline.local.json` нужен для локальных service steps,
+healthcheck-команд, SQL-скриптов и включения backup. Если специальных команд нет,
+можно оставить пример без изменений.
+
+Диагностика:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py dry-run
+```
+
+Сборка релиза:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py build
+```
+
+Деплой уже собранного релиза:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py deploy --latest
+```
+
+или конкретной версии:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py deploy --build-version <версия>
+```
+
+Полный Windows-only pipeline:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py pipeline
+```
+
+Runner повторяет основной порядок Ansible-деплоя: DB maintenance, service steps,
+загрузка архивов через `scp`, распаковка, Django management-команды, повторные
+service steps и HTTP healthcheck. Ansible остается в репозитории как legacy-вариант
+для Linux/WSL control node.
 
 ## Быстрый старт из Windows в WSL
 

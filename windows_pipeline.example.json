@@ -1,0 +1,21 @@
+{
+  "backup_enabled": false,
+  "db_maintenance_enabled": true,
+  "db_psql_bin": "psql",
+  "db_psql_host": "localhost",
+  "db_maintenance_sql_phase": "before_unpack",
+  "db_maintenance_sql": [
+    "VACUUM ANALYZE;"
+  ],
+  "sql_scripts": [],
+  "management_commands": [
+    "python project/manage.py migrate",
+    "python project/manage.py sync_action_role"
+  ],
+  "service_steps": [],
+  "healthcheck_enabled": true,
+  "healthcheck_validate_certs": false,
+  "healthcheck_retries": 30,
+  "healthcheck_delay": 5,
+  "healthcheck_commands": []
+}
