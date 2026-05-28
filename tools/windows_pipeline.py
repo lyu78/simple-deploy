@@ -915,15 +915,19 @@ def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path
 
 def run_or_raise(label: str, result: CommandResult, mask: Iterable[str] = ()) -> None:
     print(f"CHECK {label}", flush=True)
-    if result.rc == 0:
-        print(f"PASS {label}")
-        return
     stdout = result.stdout.strip()
     stderr = result.stderr.strip()
     for secret in mask:
         if secret:
             stdout = stdout.replace(secret, "***")
             stderr = stderr.replace(secret, "***")
+    if result.rc == 0:
+        if stdout:
+            print(f"STDOUT {label}:\n{stdout}", flush=True)
+        if stderr:
+            print(f"STDERR {label}:\n{stderr}", flush=True)
+        print(f"PASS {label}")
+        return
     detail_parts = [f"rc={result.rc}"]
     if stdout:
         detail_parts.append(f"stdout:\n{stdout}")
