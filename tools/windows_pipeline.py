@@ -12,6 +12,7 @@ import fnmatch
 import json
 import os
 from pathlib import Path, PurePosixPath
+import shlex
 import shutil
 import ssl
 import subprocess
@@ -43,6 +44,7 @@ DEFAULT_RUNTIME_CONFIG = {
         "python project/manage.py migrate",
         "python project/manage.py sync_action_role",
     ],
+    "service_permission_checks_enabled": True,
     "service_steps": [],
     "healthcheck_enabled": True,
     "healthcheck_validate_certs": False,
@@ -384,6 +386,85 @@ def check_ssh_runtime(reporter: Reporter, env: dict[str, str]) -> dict[str, bool
     return result
 
 
+def derive_service_permission_check(command: str) -> str:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return ""
+    if not tokens:
+        return ""
+    if tokens[0] == "sudo":
+        return "sudo"
+    if tokens[0] != "systemctl":
+        return ""
+
+    verbs = {
+        "start",
+        "stop",
+        "restart",
+        "reload",
+        "try-restart",
+        "reload-or-restart",
+        "reload-or-try-restart",
+    }
+    for index, token in enumerate(tokens[1:], start=1):
+        if token in verbs:
+            options = tokens[1:index]
+            targets = tokens[index + 1 :]
+            if not targets:
+                return ""
+            parts = ["systemctl", *options, "--dry-run", token, *targets]
+            return " ".join(sh_quote(part) for part in parts)
+    return ""
+
+
+def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: dict) -> None:
+    if not runtime.get("service_permission_checks_enabled", True):
+        reporter.skip("service permission checks", "disabled")
+        return
+
+    steps = runtime.get("service_steps", [])
+    if not steps:
+        reporter.skip("service permission checks", "service_steps empty")
+        return
+
+    app_user = require_value(env, "APP_VM_USER")
+    app_host = require_value(env, "APP_VM_HOST")
+    for index, step in enumerate(steps, start=1):
+        label = step.get("name") or f"service step #{index}"
+        command = str(step.get("command", "")).strip()
+        check_command_text = str(step.get("permission_check_command", "")).strip()
+
+        if command.startswith("sudo ") or check_command_text.startswith("sudo "):
+            reporter.fail(
+                f"service permission {label}",
+                "service step must run as APP_VM_USER without sudo",
+            )
+            continue
+
+        if not check_command_text:
+            check_command_text = derive_service_permission_check(command)
+        if check_command_text == "sudo":
+            reporter.fail(
+                f"service permission {label}",
+                "service step must run as APP_VM_USER without sudo",
+            )
+            continue
+        if not check_command_text:
+            reporter.skip(
+                f"service permission {label}",
+                "set permission_check_command for non-systemctl command",
+            )
+            continue
+
+        result = ssh_command(app_user, app_host, check_command_text, timeout=30)
+        output = (result.stdout or result.stderr).strip()
+        if result.rc == 0:
+            reporter.pass_(f"service permission {label}", output.splitlines()[0] if output else check_command_text)
+        else:
+            reporter.fail(f"service permission {label}", output or f"rc={result.rc}")
+
+
 def check_http(reporter: Reporter, env: dict[str, str], validate_certs: bool) -> None:
     url = f"https://{require_value(env, 'DEV_DOMAIN')}/"
     context = None if validate_certs else ssl._create_unverified_context()
@@ -450,11 +531,14 @@ def dry_run(args: argparse.Namespace) -> bool:
         reporter.skip("DB SQL checks", "SSH runtime checks завершились ошибкой")
 
     if not ssh_state["app"]:
+        reporter.skip("service permission checks", "app VM unavailable")
         reporter.skip("DEV HTTP endpoint", "app VM недоступна, healthcheck неинформативен")
-    elif runtime.get("healthcheck_enabled", True):
-        check_http(reporter, env, bool(runtime.get("healthcheck_validate_certs", False)))
     else:
-        reporter.skip("DEV HTTP endpoint", "healthcheck disabled")
+        check_service_permissions(reporter, env, runtime)
+        if runtime.get("healthcheck_enabled", True):
+            check_http(reporter, env, bool(runtime.get("healthcheck_validate_certs", False)))
+        else:
+            reporter.skip("DEV HTTP endpoint", "healthcheck disabled")
 
     return reporter.result()
 

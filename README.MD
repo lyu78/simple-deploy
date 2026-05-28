@@ -43,6 +43,34 @@ DB_LOGIN_PASSWORD=<password>
 healthcheck-команд, SQL-скриптов и включения backup. Если специальных команд нет,
 можно оставить пример без изменений.
 
+Команды рестарта EXAMPLE задавайте в `service_steps` в нужном порядке. Поддерживаемые
+фазы: `before_unpack`, `after_unpack`, `after_migrate`; шаги без `phase`
+выполняются как `after_migrate`. Команды запускаются на app VM по SSH под
+`APP_VM_USER`, без `sudo`.
+
+```json
+{
+  "service_permission_checks_enabled": true,
+  "service_steps": [
+    {
+      "name": "restart example backend",
+      "phase": "after_migrate",
+      "command": "systemctl restart example-backend.service"
+    },
+    {
+      "name": "restart example worker",
+      "phase": "after_migrate",
+      "command": "systemctl restart example-worker.service"
+    }
+  ]
+}
+```
+
+Во время `dry-run` runner проверяет такие `systemctl`-шаги через
+`systemctl --dry-run ...` под `APP_VM_USER`. Для нестандартной команды добавьте
+`permission_check_command`, который безопасно проверяет право/готовность без
+реального рестарта.
+
 Диагностика:
 
 ```bash

@@ -12,7 +12,20 @@
     "python project/manage.py migrate",
     "python project/manage.py sync_action_role"
   ],
-  "service_steps": [],
+  "service_permission_checks_enabled": true,
+  "service_steps": [
+    {
+      "name": "restart example backend",
+      "phase": "after_migrate",
+      "command": "systemctl restart example-backend.service"
+    },
+    {
+      "name": "restart custom app",
+      "phase": "after_migrate",
+      "command": "/opt/example/bin/restart-example-app",
+      "permission_check_command": "test -x /opt/example/bin/restart-example-app"
+    }
+  ],
   "healthcheck_enabled": true,
   "healthcheck_validate_certs": false,
   "healthcheck_retries": 30,
