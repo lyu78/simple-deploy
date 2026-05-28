@@ -15,17 +15,12 @@ def run_command(cmd, cwd=None) -> bool:
     """Выполняет команду в оболочке и возвращает результат."""
     logging.info(f"Выполняю: {cmd}")
     result = subprocess.run(
-        cmd, shell=True, cwd=cwd, capture_output=True, text=True
+        cmd, shell=True, cwd=cwd, text=True
     )
 
     if result.returncode != 0:
         logging.error(f"Ошибка при выполнении команды: {cmd}")
-        logging.error(f"STDOUT: {result.stdout}")
-        logging.error(f"STDERR: {result.stderr}")
         return False
 
     logging.info(f"Успешно: {cmd}")
-    if result.stdout.strip():
-        logging.info(f"Вывод: {result.stdout}")
-
     return True

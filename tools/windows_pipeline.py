@@ -134,6 +134,26 @@ def run_command(
     return CommandResult(completed.returncode, stdout, stderr)
 
 
+def stream_command(
+    args: list[str],
+    cwd: Path | None = None,
+    timeout: int | None = None,
+    env: dict[str, str] | None = None,
+) -> int:
+    print(f"RUN {' '.join(args)}", flush=True)
+    try:
+        completed = subprocess.run(
+            args,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print(f"ERROR: timeout after {timeout}s", file=sys.stderr, flush=True)
+        return 124
+    return completed.returncode
+
+
 def load_dotenv_file(path: Path, required: bool) -> dict[str, str]:
     if not path.exists():
         if required:
@@ -621,19 +641,15 @@ def required_env_keys() -> list[str]:
 
 def build(args: argparse.Namespace) -> int:
     env = load_env(args.env_file, args.secrets_file, require_secrets=False)
+    print("BUILD prepare frontend env files", flush=True)
     prepare_frontend_env_files(env)
     build_env = prepare_build_env(env)
-    result = run_command(
-        [sys.executable, "create_release.py"],
+    return stream_command(
+        [sys.executable, "-u", "create_release.py"],
         cwd=ROOT / "builder",
         timeout=args.timeout,
         env=build_env,
     )
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    return result.rc
 
 
 def resolve_release_dir(env: dict[str, str], build_version: str, latest: bool) -> tuple[str, Path]:
