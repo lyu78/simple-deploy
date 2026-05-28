@@ -226,6 +226,15 @@ def load_env(env_file: Path, secrets_file: Path, require_secrets: bool) -> dict[
     config = load_dotenv_file(env_file, required=True)
     secrets = load_dotenv_file(secrets_file, required=require_secrets)
     merged = {**config, **secrets}
+
+    if require_secrets:
+        db_user = merged.get("DB_LOGIN_USER", "").strip()
+        db_password = merged.get("DB_LOGIN_PASSWORD", "").strip()
+        if not db_user:
+            raise RuntimeError("DB_LOGIN_USER must be set in local.secrets.env")
+        if not db_password or db_password == "change-me":
+            raise RuntimeError("DB_LOGIN_PASSWORD must be set in local.secrets.env")
+
     if "DB_LOGIN_USER" not in merged:
         merged["DB_LOGIN_USER"] = "postgres"
     if "DB_LOGIN_PASSWORD" not in merged:

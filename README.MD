@@ -52,6 +52,9 @@ DB_LOGIN_USER=postgres
 DB_LOGIN_PASSWORD=<password>
 ```
 
+Для `dry-run`, `deploy` и `pipeline` `DB_LOGIN_PASSWORD` обязателен: пустое
+значение и placeholder `change-me` считаются ошибкой конфигурации.
+
 `windows_pipeline.local.json` нужен для локальных service steps,
 healthcheck-команд, SQL-скриптов и включения backup. Если специальных команд нет,
 можно оставить пример без изменений.
