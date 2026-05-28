@@ -1,0 +1,15 @@
+coverage==7.8.2
+flake8-broken-line==1.0.0
+flake8-builtins==2.5.0 
+flake8-docstrings==1.7.0 
+flake8-import-order==0.18.2 
+flake8-quotes==3.4.0 
+flake8-return==1.2.0 
+flake8==7.1.1 
+pep8-naming==0.14.1
+pygments-pprint-sql==0.1.0 
+pygments==2.18.0 
+ruff==0.6.9 
+whitenoise==6.7.0
+python-dotenv>=1.0,<2
+pydantic>=2,<3

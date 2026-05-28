@@ -1,0 +1,63 @@
+---
+# Продуктовый контекст:
+# Роль технических работ с БД для обновления локального контура. Текущее продуктовое
+# решение - не выполнять destructive rename/drop БД во время обычных локальных обновлений.
+# Вместо этого Ansible может запускать согласованный maintenance SQL, например VACUUM,
+# и опциональные SQL-скрипты из репозитория вокруг фазы миграций. psql выполняется
+# на DB VM через SSH, чтобы управляющей WSL-машине не требовался PostgreSQL client.
+#
+# Inline SQL и SQL-файлы настраиваются в group_vars/dev.yml и разделяются по фазам,
+# чтобы будущие data-fix-скрипты можно было добавить без изменения playbook.
+
+- name: Установить дефолтную SQL-фазу
+  ansible.builtin.set_fact:
+    effective_sql_phase: "{{ sql_phase | default('before_migrate') }}"
+
+- name: Выполнить inline SQL для технических работ БД в настроенной фазе
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ssh \
+    -o BatchMode=yes \
+    -o NumberOfPasswordPrompts=1 \
+    -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    {{ db_vm_user }}@{{ db_vm_host }} \
+      'PGPASSWORD="{{ db_login_password }}" {{ db_psql_bin }} --set=ON_ERROR_STOP=1 --host="{{ db_psql_host }}" --port="{{ db_port }}" --username="{{ db_login_user }}" --dbname="{{ db_name }}"' <<'SQL'
+    {{ item }}
+    SQL
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  no_log: "{{ db_login_password | length > 0 }}"
+  loop: "{{ db_maintenance_sql }}"
+  when:
+    - db_maintenance_enabled | bool
+    - effective_sql_phase == db_maintenance_sql_phase
+    - db_maintenance_sql | length > 0
+
+- name: Выбрать SQL-скрипты для текущей фазы
+  ansible.builtin.set_fact:
+    selected_sql_scripts: "{{ sql_scripts | selectattr('phase', 'equalto', effective_sql_phase) | list }}"
+
+- name: Выполнить настроенные SQL-скрипты
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ssh \
+    -o BatchMode=yes \
+    -o NumberOfPasswordPrompts=1 \
+    -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    {{ db_vm_user }}@{{ db_vm_host }} \
+      'PGPASSWORD="{{ db_login_password }}" {{ db_psql_bin }} --set=ON_ERROR_STOP=1 --host="{{ db_psql_host }}" --port="{{ db_port }}" --username="{{ db_login_user }}" --dbname="{{ db_name }}"' < "{{ item.path }}"
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  no_log: "{{ db_login_password | length > 0 }}"
+  loop: "{{ selected_sql_scripts }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when:
+    - db_maintenance_enabled | bool
+    - selected_sql_scripts | length > 0

@@ -1,0 +1,10 @@
+.DS_store
+
+media/
+
+/build
+/node_modules
+!/config/build
+/.vscode
+/.idea
+/docs

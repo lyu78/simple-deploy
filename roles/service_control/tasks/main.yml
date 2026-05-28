@@ -1,0 +1,32 @@
+---
+# Продуктовый контекст:
+# Роль упорядоченного управления сервисами. На app VM много сервисных юнитов/процессов,
+# и порядок их рестарта важен. Чтобы преждевременно не привязываться только к systemd
+# или только к supervisor, первая версия принимает явные shell-команды, сгруппированные
+# по фазам: before_unpack, after_unpack и after_migrate.
+#
+# Так операционная последовательность видна в конфигурации, а позже команду можно
+# постепенно заменить shell-команды на более строгие Ansible-модули.
+
+- name: Установить дефолтную сервисную фазу
+  ansible.builtin.set_fact:
+    effective_service_phase: "{{ service_phase | default('after_migrate') }}"
+
+- name: Выбрать сервисные шаги для текущей фазы
+  ansible.builtin.set_fact:
+    selected_service_steps: "{{ service_steps | selectattr('phase', 'defined') | selectattr('phase', 'equalto', effective_service_phase) | list }}"
+
+- name: Добавить сервисные шаги без фазы в after_migrate
+  ansible.builtin.set_fact:
+    selected_service_steps: "{{ selected_service_steps + (service_steps | rejectattr('phase', 'defined') | list) }}"
+  when: effective_service_phase == 'after_migrate'
+
+- name: Выполнить упорядоченные сервисные команды
+  ansible.builtin.shell: "{{ item.command }}"
+  args:
+    chdir: "{{ item.chdir | default(omit) }}"
+    executable: /bin/bash
+  loop: "{{ selected_service_steps }}"
+  loop_control:
+    label: "{{ item.name | default(item.command) }}"
+  when: selected_service_steps | length > 0

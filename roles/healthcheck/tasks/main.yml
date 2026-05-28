@@ -1,0 +1,35 @@
+---
+# Продуктовый контекст:
+# Роль проверки работоспособности. Обновление имеет смысл только если локальный стенд
+# отвечает после артефактов, миграций и рестарта сервисов. Эта роль проверяет публичный
+# DEV URL и может запускать локальные диагностические команды на VM: статус сервисов,
+# проверку процессов или прикладные smoke-команды.
+
+- name: Проверить HTTP endpoint стенда
+  ansible.builtin.uri:
+    url: "{{ stand_url }}"
+    method: GET
+    validate_certs: "{{ healthcheck_validate_certs }}"
+    status_code:
+      - 200
+      - 302
+      - 401
+      - 403
+  delegate_to: localhost
+  register: stand_healthcheck
+  retries: "{{ healthcheck_retries }}"
+  delay: "{{ healthcheck_delay }}"
+  until: stand_healthcheck.status is defined and stand_healthcheck.status in [200, 302, 401, 403]
+  when: healthcheck_enabled | bool
+
+- name: Выполнить healthcheck-команды на app VM
+  ansible.builtin.shell: "{{ item }}"
+  args:
+    executable: /bin/bash
+  loop: "{{ healthcheck_commands }}"
+  loop_control:
+    label: "{{ item }}"
+  register: command_healthchecks
+  when:
+    - healthcheck_enabled | bool
+    - healthcheck_commands | length > 0

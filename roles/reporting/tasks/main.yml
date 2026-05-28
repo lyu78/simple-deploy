@@ -1,0 +1,20 @@
+---
+# Продуктовый контекст:
+# Итоговая сводка для оператора. Flow локального обновления затрагивает несколько
+# систем: локальные артефакты, app VM, базу данных, управление сервисами и HTTP-проверку.
+# Эта роль выводит выбранную сборку, пути артефактов, целевые пути, имя БД, команды
+# миграций и имена сервисных шагов, чтобы запуск можно было проверить по Ansible-выводу.
+
+- name: Показать итоговую сводку обновления
+  ansible.builtin.debug:
+    msg:
+      build_version: "{{ effective_build_version }}"
+      release_dir: "{{ selected_release_dir }}"
+      artifacts: "{{ resolved_artifacts | map(attribute='local_path') | list }}"
+      backend_release_path: "{{ backend_release_path }}"
+      frontend_release_path: "{{ frontend_release_path }}"
+      backup_enabled: "{{ backup_enabled }}"
+      db_name: "{{ db_name }}"
+      management_commands: "{{ management_commands }}"
+      service_steps: "{{ service_steps | map(attribute='name') | list }}"
+      stand_url: "{{ stand_url }}"

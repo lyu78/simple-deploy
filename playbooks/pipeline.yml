@@ -1,0 +1,31 @@
+---
+# Продуктовый контекст:
+# Единая точка входа для полного процесса обновления локального DEV-контура.
+# Этот playbook намеренно не содержит операционной логики: он только задает
+# порядок этапов, чтобы запуск вручную или по расписанию всегда шел через один
+# понятный сценарий.
+#
+# Этап 1. Подготовить релиз:
+# - проверить локальную конфигурацию из .env;
+# - подставить домены и технические параметры в builder/settings/*/.env;
+# - при необходимости запустить builder/create_release.py;
+# - выбрать версию релиза, которую нужно передать на раскатку.
+#
+# Этап 2. Обновить локальный контур:
+# - выполнить подготовительные SQL-операции, если они описаны в настройках;
+# - остановить или переключить сервисы перед распаковкой;
+# - доставить backend/frontend-архивы на app VM;
+# - применить Django-миграции и финальные SQL-операции;
+# - вернуть сервисы в рабочее состояние и выполнить healthcheck.
+#
+# Обычный запуск:
+# ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook -i inventories/dev/hosts.yml playbooks/pipeline.yml
+#
+# Раскатка уже собранного релиза без новой сборки:
+# ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook -i inventories/dev/hosts.yml playbooks/pipeline.yml -e run_build=false -e build_version=<версия>
+
+- name: Подготовить релиз на рабочей машине
+  ansible.builtin.import_playbook: stages/build_release.yml
+
+- name: Обновить локальный DEV-контур
+  ansible.builtin.import_playbook: stages/deploy_local_contour.yml

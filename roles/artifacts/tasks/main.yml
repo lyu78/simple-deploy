@@ -1,0 +1,64 @@
+---
+# Продуктовый контекст:
+# Роль раскатки артефактов. Она берет архивы, созданные существующими сборочными
+# скриптами, копирует их с управляющей машины Ansible на app VM и распаковывает
+# в настроенные рабочие директории.
+#
+# Роль намеренно работает именно с архивами: она не клонирует репозитории и не запускает
+# npm/python-сборку. Это отделяет деплой от синхронизации исходников и позволяет
+# обновлять локальный контур из известного результата сборки.
+
+- name: Определить артефакты релиза
+  ansible.builtin.include_tasks: resolve.yml
+
+- name: Создать директорию релиза на app VM
+  ansible.builtin.file:
+    path: "{{ remote_release_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Скопировать артефакты на app VM
+  ansible.builtin.copy:
+    src: "{{ item.local_path }}"
+    dest: "{{ item.remote_archive }}"
+    mode: "0644"
+  loop: "{{ resolved_artifacts }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Создать корневую директорию резервной копии при включенном режиме резервного копирования
+  ansible.builtin.file:
+    path: "{{ backup_root }}"
+    state: directory
+    mode: "0755"
+  when: backup_enabled | bool
+
+- name: Сохранить текущие директории деплоя при включенном режиме резервного копирования
+  ansible.builtin.shell: |
+    set -euo pipefail
+    tar -czf "{{ backup_root }}/{{ item.name }}.tar.gz" -C "$(dirname "{{ item.path }}")" "$(basename "{{ item.path }}")"
+  args:
+    executable: /bin/bash
+  loop: "{{ backup_items }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: backup_enabled | bool
+
+- name: Проверить наличие директорий для распаковки артефактов
+  ansible.builtin.file:
+    path: "{{ item.extract_path }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ resolved_artifacts }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Распаковать артефакты
+  ansible.builtin.unarchive:
+    src: "{{ item.remote_archive }}"
+    dest: "{{ item.extract_path }}"
+    remote_src: true
+    extra_opts: "{{ item.extra_opts | default([]) }}"
+  loop: "{{ resolved_artifacts }}"
+  loop_control:
+    label: "{{ item.name }}"

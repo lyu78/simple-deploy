@@ -1,0 +1,40 @@
+---
+# Продуктовый контекст:
+# Проверяет, что локальный .env заполнен до запуска сборки или раскатки.
+# Это делает ошибку настройки явной: пользователь правит .env один раз при
+# первичной настройке, а не передает значения в каждом запуске.
+
+- name: Проверить обязательные параметры локальной конфигурации
+  ansible.builtin.assert:
+    that:
+      - lookup('ansible.builtin.vars', item) | string | length > 0
+    fail_msg: "Не заполнен обязательный параметр {{ item }}. Проверьте {{ local_env_file }}."
+  loop:
+    - project_root_wsl
+    - release_root_wsl
+    - release_root_bash
+    - build_version_base
+    - git_bash_path
+    - backend_source_repo_path
+    - backend_target_repo_path
+    - backend_target_repo_path_bash
+    - frontend_source_repo_path
+    - frontend_target_repo_path
+    - app_vm_host
+    - app_vm_user
+    - db_vm_host
+    - db_vm_user
+    - db_port
+    - db_name
+    - remote_tmp_root
+    - backend_release_path
+    - frontend_release_path
+    - app_workdir
+    - app_venv_activate_path
+    - app_manage_py_path
+    - backup_root_base
+    - dev_domain
+    - test_domain
+    - prod_domain
+    - frontend_test_server_name
+    - frontend_prod_server_name
