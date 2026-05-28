@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import contextlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -29,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_FILE = ROOT / ".env"
 DEFAULT_SECRETS_FILE = ROOT / "local.secrets.env"
 DEFAULT_CONFIG_FILE = ROOT / "windows_pipeline.local.json"
+DEFAULT_LOG_DIR = ROOT / "logs"
 DEFAULT_TIMEOUT = 20
 
 
@@ -100,6 +102,43 @@ class Reporter:
         return not self.issues
 
 
+class Tee:
+    def __init__(self, *streams) -> None:
+        self.streams = streams
+
+    def write(self, text: str) -> int:
+        for stream in self.streams:
+            stream.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
+
+
+def create_log_file(command: str) -> Path:
+    DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    safe_command = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in command or "run")
+    return DEFAULT_LOG_DIR / f"{timestamp}-{safe_command}.log"
+
+
+@contextlib.contextmanager
+def tee_output(command: str):
+    log_path = create_log_file(command)
+    with log_path.open("w", encoding="utf-8") as log_file:
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        sys.stdout = Tee(original_stdout, log_file)
+        sys.stderr = Tee(original_stderr, log_file)
+        try:
+            print(f"RUN LOG {log_path}", flush=True)
+            yield log_path
+        finally:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+
+
 def run_command(
     args: list[str],
     cwd: Path | None = None,
@@ -141,17 +180,28 @@ def stream_command(
     env: dict[str, str] | None = None,
 ) -> int:
     print(f"RUN {' '.join(args)}", flush=True)
+    process = subprocess.Popen(
+        args,
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+    )
+    start = time.monotonic()
     try:
-        completed = subprocess.run(
-            args,
-            cwd=cwd,
-            env=env,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        print(f"ERROR: timeout after {timeout}s", file=sys.stderr, flush=True)
-        return 124
-    return completed.returncode
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            if timeout is not None and time.monotonic() - start > timeout:
+                process.kill()
+                print(f"ERROR: timeout after {timeout}s", file=sys.stderr, flush=True)
+                return 124
+        return process.wait()
+    finally:
+        if process.stdout is not None:
+            process.stdout.close()
 
 
 def load_dotenv_file(path: Path, required: bool) -> dict[str, str]:
@@ -887,18 +937,19 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    try:
-        if args.command == "dry-run":
-            return 0 if dry_run(args) else 1
-        if args.command == "build":
-            return build(args)
-        if args.command == "deploy":
-            return deploy(args)
-        if args.command == "pipeline":
-            return pipeline(args)
-    except Exception as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+    with tee_output(args.command):
+        try:
+            if args.command == "dry-run":
+                return 0 if dry_run(args) else 1
+            if args.command == "build":
+                return build(args)
+            if args.command == "deploy":
+                return deploy(args)
+            if args.command == "pipeline":
+                return pipeline(args)
+        except Exception as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
     return 1
 
 

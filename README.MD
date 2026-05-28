@@ -90,6 +90,9 @@ healthcheck-команд, SQL-скриптов и включения backup. Е�
 .venv/Scripts/python.exe tools/windows_pipeline.py dry-run
 ```
 
+Каждый запуск runner пишет вывод одновременно в консоль и в отдельный файл
+`logs/<timestamp>-<command>.log`. Директория `logs/` не попадает в git.
+
 Сборка релиза:
 
 ```bash

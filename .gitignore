@@ -413,3 +413,6 @@ group_vars/vault.yml
 # Локальные секреты и настройки Windows-only runner
 local.secrets.env
 windows_pipeline.local.json
+
+# Windows-only runner logs
+logs/
