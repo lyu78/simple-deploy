@@ -139,6 +139,19 @@ def tee_output(command: str):
             sys.stderr = original_stderr
 
 
+def decode_subprocess_output(data: bytes | str | None) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    for encoding in ("utf-8", "cp1251", "cp866"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 def run_command(
     args: list[str],
     cwd: Path | None = None,
@@ -151,21 +164,20 @@ def run_command(
         completed = subprocess.run(
             args,
             cwd=cwd,
-            input=input_text,
+            input=input_text.encode("utf-8") if input_text is not None else None,
             env=env,
-            text=True,
             capture_output=True,
             timeout=timeout,
         )
     except FileNotFoundError as exc:
         return CommandResult(127, "", str(exc))
     except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        stdout = decode_subprocess_output(exc.stdout)
+        stderr = decode_subprocess_output(exc.stderr)
         return CommandResult(124, stdout, stderr or f"timeout after {timeout}s")
 
-    stdout = completed.stdout or ""
-    stderr = completed.stderr or ""
+    stdout = decode_subprocess_output(completed.stdout)
+    stderr = decode_subprocess_output(completed.stderr)
     for secret in mask:
         if secret:
             stdout = stdout.replace(secret, "***")
@@ -184,16 +196,14 @@ def stream_command(
         args,
         cwd=cwd,
         env=env,
-        text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        bufsize=1,
     )
     start = time.monotonic()
     try:
         assert process.stdout is not None
         for line in process.stdout:
-            print(line, end="", flush=True)
+            print(decode_subprocess_output(line), end="", flush=True)
             if timeout is not None and time.monotonic() - start > timeout:
                 process.kill()
                 print(f"ERROR: timeout after {timeout}s", file=sys.stderr, flush=True)
@@ -293,6 +303,7 @@ def to_git_bash_path(path: str | Path) -> str:
 def prepare_build_env(env: dict[str, str]) -> dict[str, str]:
     build_env = os.environ.copy()
     build_env.update(env)
+    build_env.setdefault("PYTHONIOENCODING", "utf-8")
 
     release_root = windows_release_root(env)
     build_env.setdefault("RELEASE_ROOT_WINDOWS", str(release_root))
