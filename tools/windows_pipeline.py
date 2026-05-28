@@ -580,6 +580,47 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
             reporter.fail(f"service permission {label}", output or f"rc={result.rc}")
 
 
+def check_remote_directory(
+    reporter: Reporter,
+    env: dict[str, str],
+    name: str,
+    path_value: str,
+) -> None:
+    app_user = require_value(env, "APP_VM_USER")
+    app_host = require_value(env, "APP_VM_HOST")
+    path = path_value.rstrip("/")
+    quoted_path = sh_quote(path)
+    command = (
+        "set -e; "
+        f"test -d {quoted_path} || "
+        f"{{ echo 'missing directory: {path}'; exit 10; }}; "
+        f"test -r {quoted_path} -a -w {quoted_path} -a -x {quoted_path} || "
+        f"{{ ls -ld {quoted_path}; echo 'directory is not rwx for current user: {path}'; exit 11; }}; "
+        f"tmp={quoted_path}/.simple-deploy-write-check-$$; "
+        "touch \"$tmp\" && rm -f \"$tmp\""
+    )
+    result = ssh_command(env, app_user, app_host, command, "APP", timeout=30)
+    output = (result.stdout or result.stderr).strip()
+    if result.rc == 0:
+        reporter.pass_(f"app VM directory {name}", path)
+    else:
+        reporter.fail(f"app VM directory {name}", output or f"rc={result.rc}")
+
+
+def check_app_deploy_directories(reporter: Reporter, env: dict[str, str], runtime: dict) -> None:
+    directories = [
+        ("remote tmp root", require_value(env, "REMOTE_TMP_ROOT")),
+        ("backend release path", require_value(env, "BACKEND_RELEASE_PATH")),
+        ("frontend release path", require_value(env, "FRONTEND_RELEASE_PATH")),
+        ("app workdir", require_value(env, "APP_WORKDIR")),
+    ]
+    if runtime.get("backup_enabled", False):
+        directories.append(("backup root base", env.get("BACKUP_ROOT_BASE", "/tmp/simple-deploy-backups")))
+
+    for name, path in directories:
+        check_remote_directory(reporter, env, name, path)
+
+
 def check_http(reporter: Reporter, env: dict[str, str], validate_certs: bool) -> None:
     url = f"https://{require_value(env, 'DEV_DOMAIN')}/"
     context = None if validate_certs else ssl._create_unverified_context()
@@ -648,9 +689,11 @@ def dry_run(args: argparse.Namespace) -> bool:
         reporter.skip("DB SQL checks", "SSH runtime checks завершились ошибкой")
 
     if not ssh_state["app"]:
+        reporter.skip("app VM directory checks", "app VM unavailable")
         reporter.skip("service permission checks", "app VM unavailable")
         reporter.skip("DEV HTTP endpoint", "app VM недоступна, healthcheck неинформативен")
     else:
+        check_app_deploy_directories(reporter, env, runtime)
         check_service_permissions(reporter, env, runtime)
         if runtime.get("healthcheck_enabled", True):
             check_http(reporter, env, bool(runtime.get("healthcheck_validate_certs", False)))

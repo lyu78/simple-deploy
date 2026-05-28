@@ -84,6 +84,12 @@ healthcheck-команд, SQL-скриптов и включения backup. Е�
 `permission_check_command`, который безопасно проверяет право/готовность без
 реального рестарта.
 
+Также `dry-run` проверяет на app VM наличие и права `rwx` для директорий
+`REMOTE_TMP_ROOT`, `BACKEND_RELEASE_PATH`, `FRONTEND_RELEASE_PATH` и
+`APP_WORKDIR`. Проверка выполняется под `APP_VM_USER` и делает безопасный
+`touch`/`rm` внутри каждой директории. Если директории нет или пользователь не
+может писать туда без `sudo`, диагностика завершится `FAIL` до build/deploy.
+
 Диагностика:
 
 ```bash
