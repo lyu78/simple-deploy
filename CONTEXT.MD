@@ -5,6 +5,149 @@
 Рабочая машина является управляющей точкой: на ней лежат рабочие копии внешних и
 внутренних репозиториев, запускается сборщик и с нее Ansible подключается к VM.
 
+## Текущий Windows-only режим
+
+Актуальный рабочий путь для машины без WSL/Docker - `tools/windows_pipeline.py`.
+Runner использует Windows Python, Git, Node/npm, Git Bash и Windows OpenSSH
+(`ssh`, `scp`). Ansible остается в репозитории как legacy-вариант для Linux/WSL
+control node, но основная отладка в последних изменениях велась вокруг
+Windows-only runner.
+
+Команды:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py dry-run
+.venv/Scripts/python.exe tools/windows_pipeline.py build
+.venv/Scripts/python.exe tools/windows_pipeline.py deploy --latest
+.venv/Scripts/python.exe tools/windows_pipeline.py deploy --build-version <version>
+.venv/Scripts/python.exe tools/windows_pipeline.py pipeline
+```
+
+Каждый запуск пишет вывод одновременно в консоль и отдельный файл
+`logs/<timestamp>-<command>.log`; `logs/` игнорируется Git.
+
+SSH-доступ к VM не интерактивный: runner работает в batch-режиме и рассчитан на
+ключ или ssh-agent. В `.env` поддерживаются:
+
+- `SSH_KEY_PATH` - общий ключ для app/DB VM;
+- `APP_SSH_KEY_PATH` - ключ только для app VM;
+- `DB_SSH_KEY_PATH` - ключ только для DB VM.
+
+Относительные пути к ключам ищутся сначала от текущей директории запуска, затем
+от домашней директории Windows-пользователя. Пример для входа
+`ssh -i ./simple-deploy deploy-user@192.0.2.10`:
+
+```properties
+APP_SSH_KEY_PATH=./simple-deploy
+APP_VM_USER=deploy-user
+```
+
+Секреты PostgreSQL лежат в `local.secrets.env`. Для `dry-run`, `deploy` и
+`pipeline` `DB_LOGIN_USER` и `DB_LOGIN_PASSWORD` обязательны; пустой пароль и
+placeholder `change-me` считаются ошибкой конфигурации. Dry-run проверяет не
+только SSH до DB VM и наличие `psql`, но и реальный PostgreSQL login через
+`SELECT 1`.
+
+## Windows-only deploy contract
+
+`REMOTE_TMP_ROOT` - staging-директория на app VM. В нее через `scp` загружаются
+архивы релиза, после чего они распаковываются в финальные директории:
+
+- `BACKEND_RELEASE_PATH`;
+- `FRONTEND_RELEASE_PATH`.
+
+Dry-run под `APP_VM_USER` проверяет наличие и права `rwx` для `REMOTE_TMP_ROOT`,
+`BACKEND_RELEASE_PATH`, `FRONTEND_RELEASE_PATH`, `APP_WORKDIR` и, если включен
+backup, `BACKUP_ROOT_BASE`. Проверка выводит effective `id`, `stat`, `namei -l`,
+`getfacl` при наличии, затем реально создает и удаляет тестовый файл
+`.simple-deploy-write-check-$$`.
+
+Распаковка устроена так:
+
+1. target-директория должна существовать заранее;
+2. перед распаковкой удаляется содержимое первого уровня, кроме корневого `.env`;
+3. архив распаковывается с `--strip-components=1`.
+
+Это важно для React/frontend архива: если внутри архива лежит директория `build`,
+а `FRONTEND_RELEASE_PATH` уже указывает на финальный `build`, содержимое архива
+попадает прямо в target, без вложенного `build/build`. Аналогично backend архив с
+верхней директорией `example_backend_app` распаковывается содержимым в
+`BACKEND_RELEASE_PATH`.
+
+Django management-команды выполняются после распаковки так:
+
+```bash
+cd "$APP_WORKDIR"
+. "$APP_VENV_ACTIVATE_PATH"
+python "$APP_MANAGE_PY_PATH" migrate
+python "$APP_MANAGE_PY_PATH" sync_action_role
+```
+
+Если `management_commands` в `windows_pipeline.local.json` пустой, runner строит
+команды из `APP_MANAGE_PY_PATH`. Если локальный `windows_pipeline.local.json`
+содержит явные `management_commands`, они имеют приоритет. Dry-run проверяет, что
+`APP_MANAGE_PY_PATH` существует и читается относительно `APP_WORKDIR`.
+
+## Service steps и права
+
+Команды запуска/проверки сервисов задаются в `windows_pipeline.local.json` в
+`service_steps`. Поддерживаемые фазы: `before_unpack`, `after_unpack`,
+`after_migrate`; шаги без `phase` считаются `after_migrate`. Порядок выполнения
+соответствует порядку в JSON.
+
+Пример:
+
+```json
+{
+  "service_steps": [
+    {
+      "name": "start nginx",
+      "phase": "after_migrate",
+      "command": "sudo /bin/systemctl start nginx",
+      "permission_check_command": "sudo /bin/systemctl start nginx"
+    },
+    {
+      "name": "status nginx",
+      "phase": "after_migrate",
+      "command": "sudo /bin/systemctl status nginx",
+      "permission_check_command": "sudo /bin/systemctl status nginx"
+    }
+  ]
+}
+```
+
+Первоначальная цель была запускать systemctl без sudo через polkit, но на практике
+`systemctl --dry-run start ...` может проходить, а реальный `start` падать на
+authorization. Поэтому для надежной проверки права запуска нужно задавать
+`permission_check_command` с реальной командой. Если используется sudo, лучше не
+добавлять пользователя в полный sudo/wheel, а создать точечное правило
+`/etc/sudoers.d/simple-deploy` через `visudo` с `NOPASSWD` только для нужных
+`/bin/systemctl start/status ...` команд. Если `systemctl` лежит не в `/bin`,
+путь нужно проверить через `command -v systemctl` и использовать фактический путь.
+
+Dry-run для sudo service steps выполняет дополнительную проверку
+`sudo -n -l <команда>` под `APP_VM_USER`. Это проверяет, что sudoers разрешает
+именно эту команду без password prompt. Если `permission_check_command` задан как
+реальный `sudo /bin/systemctl start ...`, dry-run также выполнит саму команду;
+это допустимо только для идемпотентных start/status шагов.
+
+## Финальный healthcheck портала
+
+После deploy runner проверяет HTTP-доступность `https://DEV_DOMAIN/`, затем ищет
+текущий `build_version`:
+
+1. в HTML главной страницы;
+2. если это React и версия не найдена в HTML - в JS assets из `<script src=...>`
+   того же origin.
+
+Проверку можно отключить в `windows_pipeline.local.json`:
+
+```json
+"portal_version_check_enabled": false
+```
+
+Количество JS assets ограничивается `portal_version_asset_limit`.
+
 ## Главная точка входа
 
 Штатный запуск один:

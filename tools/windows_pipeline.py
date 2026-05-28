@@ -614,6 +614,23 @@ def derive_service_permission_check(command: str) -> str:
     return ""
 
 
+def sudo_list_command(command: str) -> str:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return ""
+    if not tokens or tokens[0] != "sudo":
+        return ""
+    sudo_tokens = tokens[1:]
+    while sudo_tokens and sudo_tokens[0].startswith("-"):
+        option = sudo_tokens.pop(0)
+        if option in {"-u", "-g", "-h", "-p"} and sudo_tokens:
+            sudo_tokens.pop(0)
+    if not sudo_tokens:
+        return ""
+    return "sudo -n -l " + " ".join(sh_quote(token) for token in sudo_tokens)
+
+
 def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: dict) -> None:
     if not runtime.get("service_permission_checks_enabled", True):
         reporter.skip("service permission checks", "disabled")
@@ -632,13 +649,6 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
         check_command_text = str(step.get("permission_check_command", "")).strip()
         derived_check = False
 
-        if command.startswith("sudo ") or check_command_text.startswith("sudo "):
-            reporter.fail(
-                f"service permission {label}",
-                "service step must run as APP_VM_USER without sudo",
-            )
-            continue
-
         if not check_command_text:
             check_command_text = derive_service_permission_check(command)
             derived_check = bool(check_command_text)
@@ -654,6 +664,16 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
                 "set permission_check_command for non-systemctl command",
             )
             continue
+
+        sudo_check = sudo_list_command(check_command_text or command)
+        if sudo_check:
+            sudo_result = ssh_command(env, app_user, app_host, sudo_check, "APP", timeout=30)
+            sudo_output = (sudo_result.stdout or sudo_result.stderr).strip()
+            if sudo_result.rc == 0:
+                reporter.pass_(f"sudo permission {label}", sudo_output.splitlines()[0] if sudo_output else sudo_check)
+            else:
+                reporter.fail(f"sudo permission {label}", sudo_output or f"rc={sudo_result.rc}")
+                continue
 
         result = ssh_command(env, app_user, app_host, check_command_text, "APP", timeout=30)
         output = (result.stdout or result.stderr).strip()

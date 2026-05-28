@@ -103,6 +103,11 @@ healthcheck-команд, SQL-скриптов и включения backup. Е�
 Такой check уже выполняет реальный `start`, поэтому используйте его для
 идемпотентных сервисов, где повторный start допустим.
 
+Если service step использует `sudo`, dry-run дополнительно выполняет
+`sudo -n -l <команда>` под `APP_VM_USER`, чтобы проверить sudoers без запроса
+пароля. Для этого в `/etc/sudoers.d/simple-deploy` должны быть разрешены точные
+пути команд, например `/bin/systemctl start nginx`.
+
 Также `dry-run` проверяет на app VM наличие и права `rwx` для директорий
 `REMOTE_TMP_ROOT`, `BACKEND_RELEASE_PATH`, `FRONTEND_RELEASE_PATH` и
 `APP_WORKDIR`. Проверка выполняется под `APP_VM_USER` и делает безопасный
