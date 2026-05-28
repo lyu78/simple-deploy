@@ -600,21 +600,30 @@ def check_remote_directory(
         "set -e; "
         f"path={quoted_path}; "
         'echo "checking path: $path"; '
+        'echo "effective user/groups:"; '
         "id; "
+        'echo "path permissions:"; '
+        'stat -c "target %A %a owner=%U(%u) group=%G(%g) %n" "$path" 2>&1 || true; '
+        'echo "parent permissions:"; '
+        'namei -l "$path" 2>&1 || true; '
+        'if command -v getfacl >/dev/null 2>&1; then '
+        'echo "target ACL:"; '
+        'getfacl -p "$path" 2>&1 || true; '
+        "fi; "
         'if [ ! -e "$path" ]; then '
         'echo "missing path or parent directory is not searchable"; '
         'parent=$(dirname "$path"); '
-        'ls -ld "$parent" 2>&1 || true; '
+        'stat -c "parent %A %a owner=%U(%u) group=%G(%g) %n" "$parent" 2>&1 || true; '
         "exit 10; "
         "fi; "
         'if [ ! -d "$path" ]; then '
         'echo "path exists but is not a directory"; '
-        'ls -ld "$path" 2>&1 || true; '
+        'stat -c "target %A %a owner=%U(%u) group=%G(%g) %n" "$path" 2>&1 || true; '
         "exit 11; "
         "fi; "
         'if [ ! -r "$path" ] || [ ! -w "$path" ] || [ ! -x "$path" ]; then '
-        'echo "directory is not rwx for current user"; '
-        'ls -ld "$path" 2>&1 || true; '
+        'echo "directory is not rwx for effective user/groups"; '
+        'stat -c "target %A %a owner=%U(%u) group=%G(%g) %n" "$path" 2>&1 || true; '
         "exit 12; "
         "fi; "
         'tmp="$path/.simple-deploy-write-check-$$"; '
