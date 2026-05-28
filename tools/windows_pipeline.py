@@ -483,7 +483,13 @@ def check_ssh_runtime(reporter: Reporter, env: dict[str, str]) -> dict[str, bool
     db_host = require_value(env, "DB_VM_HOST")
     result = {"app": False, "db": False}
 
-    app = ssh_command(env, app_user, app_host, "echo ok && command -v bash tar python >/dev/null", "APP")
+    app = ssh_command(
+        env,
+        app_user,
+        app_host,
+        "echo ok && command -v bash tar python find rm grep >/dev/null && tar --help | grep -q -- '--strip-components'",
+        "APP",
+    )
     if app.rc == 0:
         reporter.pass_("app VM SSH/runtime", app.stdout.strip())
         result["app"] = True
@@ -800,6 +806,21 @@ def run_or_raise(label: str, result: CommandResult, mask: Iterable[str] = ()) ->
     raise RuntimeError(f"{label}: {detail}")
 
 
+def remote_clean_unpack_command(artifact: Artifact) -> str:
+    target = artifact.extract_path.rstrip("/")
+    if target in {"", "/"}:
+        raise RuntimeError(f"Unsafe extract path for {artifact.name}: {artifact.extract_path}")
+    return (
+        "set -e; "
+        f"target={sh_quote(target)}; "
+        f"archive={sh_quote(artifact.remote_archive)}; "
+        'case "$target" in ""|"/") echo "unsafe extract path: $target"; exit 20;; esac; '
+        'test -d "$target"; '
+        'find "$target" -mindepth 1 -maxdepth 1 ! -name ".env" -exec rm -rf -- {} +; '
+        'tar -xzf "$archive" -C "$target" --strip-components=1'
+    )
+
+
 def run_service_steps(env: dict[str, str], runtime: dict, phase: str) -> None:
     steps = []
     for step in runtime.get("service_steps", []):
@@ -885,7 +906,7 @@ def deploy(args: argparse.Namespace) -> int:
             run_or_raise(f"backup {artifact.name}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
 
     for artifact in artifacts:
-        command = f"mkdir -p {sh_quote(artifact.extract_path)} && tar -xzf {sh_quote(artifact.remote_archive)} -C {sh_quote(artifact.extract_path)}"
+        command = remote_clean_unpack_command(artifact)
         run_or_raise(f"unpack {artifact.name}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
 
     run_service_steps(env, runtime, "after_unpack")

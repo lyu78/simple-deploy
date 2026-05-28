@@ -112,12 +112,14 @@ artifact_items:
     pattern: "backend_r_{{ effective_build_version }}*.tar.gz"
     remote_archive: "{{ remote_release_dir }}/backend.tar.gz"
     extract_path: "{{ backend_release_path }}"
-    extra_opts: []
+    extra_opts:
+      - "--strip-components=1"
   - name: frontend
     pattern: "frontend_r_{{ effective_build_version }}-bf_dev-env_{{ frontend_server_names.dev }}.tar.gz"
     remote_archive: "{{ remote_release_dir }}/frontend.tar.gz"
     extract_path: "{{ frontend_release_path }}"
-    extra_opts: []
+    extra_opts:
+      - "--strip-components=1"
 
 # Опциональная резервная копия текущей раскладки перед распаковкой. Пока целевая раскладка не подтверждена,
 # оставляем выключенным.

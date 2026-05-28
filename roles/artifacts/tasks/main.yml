@@ -53,6 +53,22 @@
   loop_control:
     label: "{{ item.name }}"
 
+- name: Очистить директории распаковки с сохранением корневого .env
+  ansible.builtin.shell: |
+    set -euo pipefail
+    target={{ item.extract_path | quote }}
+    case "$target" in ""|"/")
+      echo "unsafe extract path: $target"
+      exit 20
+      ;;
+    esac
+    find "$target" -mindepth 1 -maxdepth 1 ! -name ".env" -exec rm -rf -- {} +
+  args:
+    executable: /bin/bash
+  loop: "{{ resolved_artifacts }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: Распаковать артефакты
   ansible.builtin.unarchive:
     src: "{{ item.remote_archive }}"
