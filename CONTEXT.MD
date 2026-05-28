@@ -344,3 +344,15 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 - в Git хранятся только `builder/settings/*/.env.template` с плейсхолдерами
   `__ANSIBLE_*`;
 - `.venv-ansible/`, `__pycache__/` и локальные runtime-артефакты не коммитятся.
+## Planned backend DB artifact flow
+
+- Work is done on local branch `dev`.
+- Additional backend artifact generators live in `builder/scripts/additional_artifacts/`.
+- During backend build the generators are copied into `BACKEND_TARGET_REPO_PATH/scripts/` and run from the backend target repo root.
+- Backend build activates the backend venv via `BACKEND_BUILD_VENV_RELATIVE_PATH`, resolved relative to `BACKEND_TARGET_REPO_PATH`; default is `.venv/Scripts/activate.bat`.
+- Generated SQL files are selected only when their names contain the current short `HEAD` hash of the backend target repo.
+- The DB artifact archive must include the matching schema SQL, matching `run_all_insert` and `run_all_update` files, and the full `docs/database/scripts/` directory because `run_all_*` files use `\i` includes.
+- If INSERT scripts are not idempotent, `create_run_all_sql.py` exits non-zero and the build pipeline must fail before release archiving continues.
+- Deploy applies schema SQL on the DB VM, then data SQL (`run_all_insert`, then `run_all_update`), then app VM runs `manage.py migrate --fake` and `sync_action_role`.
+- Utility helpers for git output, strict single-file matching, and tar additions live in `builder/src/utils.py`; backend build keeps only backend-specific orchestration.
+- The generator copy step creates `<BACKEND_TARGET_REPO_PATH>/scripts` when it is absent and fails if that path exists but is not a directory.

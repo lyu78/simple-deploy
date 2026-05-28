@@ -355,6 +355,7 @@ def prepare_build_env(env: dict[str, str]) -> dict[str, str]:
 
     release_root = windows_release_root(env)
     build_env.setdefault("RELEASE_ROOT_WINDOWS", str(release_root))
+    build_env.setdefault("BACKEND_BUILD_VENV_RELATIVE_PATH", ".venv/Scripts/activate.bat")
     if not build_env.get("RELEASE_ROOT_BASH"):
         build_env["RELEASE_ROOT_BASH"] = to_git_bash_path(release_root)
     if not build_env.get("BACKEND_REPO_ROOT_BASH"):

@@ -36,7 +36,10 @@ def repo_manifest(repo_path: str) -> dict[str, str]:
     }
 
 
-def write_release_manifest(build_version: str) -> None:
+def write_release_manifest(
+    build_version: str,
+    backend_artifacts: dict[str, str] | None = None,
+) -> None:
     release_root = Path(get_required_env("RELEASE_ROOT_WINDOWS"))
     release_dir = release_root / build_version
     release_dir.mkdir(parents=True, exist_ok=True)
@@ -46,6 +49,9 @@ def write_release_manifest(build_version: str) -> None:
         "repositories": {
             "backend": repo_manifest(get_required_env("BACKEND_SOURCE_REPO_PATH")),
             "frontend": repo_manifest(get_required_env("FRONTEND_SOURCE_REPO_PATH")),
+        },
+        "artifacts": {
+            "backend_db": backend_artifacts or {},
         },
     }
     manifest_path = release_dir / "release_manifest.json"
@@ -65,7 +71,7 @@ if __name__ == "__main__":
     build_version = get_new_build_version()
     branch_name = get_new_branch_name(build_version=build_version)
 
-    build_backend(
+    backend_artifacts = build_backend(
         build_version=build_version,
         branch_name=branch_name,
     )
@@ -75,7 +81,7 @@ if __name__ == "__main__":
         branch_name=branch_name,
     )
 
-    write_release_manifest(build_version)
+    write_release_manifest(build_version, backend_artifacts=backend_artifacts)
 
     # TODO собирать summary и roles нужно на этапе пре-пушей.
 

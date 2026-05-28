@@ -26,6 +26,8 @@ project_root_wsl: "{{ lookup('ansible.builtin.ini', 'PROJECT_ROOT_WSL type=prope
 builder_dir_wsl: "{{ project_root_wsl }}/builder"
 default_release_root_wsl: "{{ project_root_wsl }}/releases"
 release_root_wsl: "{{ lookup('ansible.builtin.ini', 'RELEASE_ROOT_WSL type=properties file=' ~ local_env_file ~ ' default=') | default(default_release_root_wsl, true) }}"
+default_release_root_windows: "{{ release_root_wsl | regex_replace('^/mnt/([A-Za-z])/(.*)$', '\\1:/\\2') }}"
+release_root_windows: "{{ lookup('ansible.builtin.ini', 'RELEASE_ROOT_WINDOWS type=properties file=' ~ local_env_file ~ ' default=') | default(default_release_root_windows, true) }}"
 default_release_root_bash: "{{ release_root_wsl | regex_replace('^/mnt/([A-Za-z])/', '/\\1/') }}"
 release_root_bash: "{{ lookup('ansible.builtin.ini', 'RELEASE_ROOT_BASH type=properties file=' ~ local_env_file ~ ' default=') | default(default_release_root_bash, true) }}"
 local_release_root: "{{ release_root_wsl }}"
@@ -42,6 +44,7 @@ git_bash_path: "{{ lookup('ansible.builtin.ini', 'GIT_BASH_PATH type=properties 
 backend_source_repo_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_SOURCE_REPO_PATH type=properties file=' ~ local_env_file) }}"
 backend_target_repo_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_TARGET_REPO_PATH type=properties file=' ~ local_env_file) }}"
 backend_target_repo_path_bash: "{{ lookup('ansible.builtin.ini', 'BACKEND_TARGET_REPO_PATH_BASH type=properties file=' ~ local_env_file) }}"
+backend_build_venv_relative_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_BUILD_VENV_RELATIVE_PATH type=properties file=' ~ local_env_file ~ ' default=') | default('.venv/Scripts/activate.bat', true) }}"
 frontend_source_repo_path: "{{ lookup('ansible.builtin.ini', 'FRONTEND_SOURCE_REPO_PATH type=properties file=' ~ local_env_file) }}"
 frontend_target_repo_path: "{{ lookup('ansible.builtin.ini', 'FRONTEND_TARGET_REPO_PATH type=properties file=' ~ local_env_file) }}"
 
@@ -84,10 +87,12 @@ frontend_env_files:
 build_environment:
   BUILD_VERSION_BASE: "{{ build_version_base }}"
   GIT_BASH_PATH: "{{ git_bash_path }}"
+  RELEASE_ROOT_WINDOWS: "{{ release_root_windows }}"
   RELEASE_ROOT_BASH: "{{ release_root_bash }}"
   BACKEND_REPO_ROOT_BASH: "{{ backend_target_repo_path_bash }}"
   BACKEND_SOURCE_REPO_PATH: "{{ backend_source_repo_path }}"
   BACKEND_TARGET_REPO_PATH: "{{ backend_target_repo_path }}"
+  BACKEND_BUILD_VENV_RELATIVE_PATH: "{{ backend_build_venv_relative_path }}"
   FRONTEND_SOURCE_REPO_PATH: "{{ frontend_source_repo_path }}"
   FRONTEND_TARGET_REPO_PATH: "{{ frontend_target_repo_path }}"
   FRONTEND_DEV_SERVER_NAME: "{{ frontend_server_names.dev }}"
@@ -121,6 +126,12 @@ artifact_items:
     extra_opts:
       - "--strip-components=1"
 
+db_migrations_artifact:
+  name: db_migrations
+  pattern: "db_migrations_r_{{ effective_build_version }}-c_*.tar.gz"
+  remote_archive: "{{ remote_release_dir }}/db_migrations.tar.gz"
+  remote_extract_path: "{{ remote_release_dir }}/db_migrations"
+
 # Опциональная резервная копия текущей раскладки перед распаковкой. Пока целевая раскладка не подтверждена,
 # оставляем выключенным.
 backup_enabled: false
@@ -153,7 +164,7 @@ sql_scripts: []
 #     phase: before_migrate
 
 management_commands:
-  - "python {{ app_manage_py_path }} migrate"
+  - "python {{ app_manage_py_path }} migrate --fake"
   - "python {{ app_manage_py_path }} sync_action_role"
 
 # Упорядоченные команды для сложной последовательности systemd/supervisor/service.

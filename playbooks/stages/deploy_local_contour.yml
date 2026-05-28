@@ -60,6 +60,7 @@
     - role: db_maintenance
       vars:
         sql_phase: before_migrate
+    - role: db_migrations
     - role: app_update
     - role: db_maintenance
       vars:

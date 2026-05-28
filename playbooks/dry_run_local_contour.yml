@@ -35,12 +35,14 @@
     dry_run_required_vars:
       - project_root_wsl
       - release_root_wsl
+      - release_root_windows
       - release_root_bash
       - build_version_base
       - git_bash_path
       - backend_source_repo_path
       - backend_target_repo_path
       - backend_target_repo_path_bash
+      - backend_build_venv_relative_path
       - frontend_source_repo_path
       - frontend_target_repo_path
       - app_vm_host
@@ -554,7 +556,7 @@
           register: artifact_find_results
           changed_when: false
           failed_when: false
-          loop: "{{ artifact_items }}"
+          loop: "{{ artifact_items + [db_migrations_artifact] }}"
           loop_control:
             label: "{{ item.name }}"
 
@@ -684,7 +686,7 @@
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
         {{ db_vm_user }}@{{ db_vm_host }} \
-          '{{ db_psql_bin }} --version'
+          'command -v bash && command -v tar && {{ db_psql_bin }} --version'
       args:
         executable: /bin/bash
       register: psql_version_result

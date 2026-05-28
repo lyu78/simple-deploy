@@ -12,12 +12,14 @@
   loop:
     - project_root_wsl
     - release_root_wsl
+    - release_root_windows
     - release_root_bash
     - build_version_base
     - git_bash_path
     - backend_source_repo_path
     - backend_target_repo_path
     - backend_target_repo_path_bash
+    - backend_build_venv_relative_path
     - frontend_source_repo_path
     - frontend_target_repo_path
     - app_vm_host
