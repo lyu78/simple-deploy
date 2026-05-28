@@ -148,6 +148,32 @@ APP_MANAGE_PY_PATH=manage.py
 ищет версию в них. Отключить можно через
 `"portal_version_check_enabled": false` в `windows_pipeline.local.json`.
 
+Письмо об успешном deploy отправляется через установленный Outlook на рабочей
+машине. Включите его в `windows_pipeline.local.json` и задайте получателей:
+
+```json
+{
+  "outlook_email_enabled": true,
+  "outlook_email_recipients": [
+    "dev-team@example.local",
+    "owner@example.local"
+  ],
+  "outlook_email_cc": [],
+  "outlook_email_subject": "Деплой успешно завершен: {build_version}",
+  "outlook_email_required": false
+}
+```
+
+Доступные шаблоны для темы и тела письма: `{build_version}`, `{stand_url}`,
+`{dev_domain}`, `{release_dir}`, `{artifacts_text}`, `{release_changelog_text}`.
+Changelog строится по двум `release_manifest.json`: текущего и предыдущего
+релиза, отдельно для `BACKEND_SOURCE_REPO_PATH` и `FRONTEND_SOURCE_REPO_PATH`.
+Если SHA совпадают, для репозитория будет указано `Изменений нет.` Если
+`outlook_email_required` равен `false`, ошибка Outlook будет записана как `WARN`
+и не превратит уже успешный deploy в ошибку.
+`dry-run` проверяет получателей, тему, тело, корректность шаблонов и доступность
+Outlook COM на рабочей машине.
+
 Сборка релиза:
 
 ```bash

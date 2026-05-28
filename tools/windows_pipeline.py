@@ -34,6 +34,7 @@ DEFAULT_SECRETS_FILE = ROOT / "local.secrets.env"
 DEFAULT_CONFIG_FILE = ROOT / "windows_pipeline.local.json"
 DEFAULT_LOG_DIR = ROOT / "logs"
 DEFAULT_TIMEOUT = 20
+RELEASE_MANIFEST_NAME = "release_manifest.json"
 
 
 DEFAULT_RUNTIME_CONFIG = {
@@ -54,6 +55,19 @@ DEFAULT_RUNTIME_CONFIG = {
     "portal_version_check_enabled": True,
     "portal_version_asset_limit": 20,
     "healthcheck_commands": [],
+    "outlook_email_enabled": False,
+    "outlook_email_recipients": [],
+    "outlook_email_cc": [],
+    "outlook_email_subject": "Деплой успешно завершен: {build_version}",
+    "outlook_email_body": (
+        "Деплой успешно завершен.\n\n"
+        "Версия сборки: {build_version}\n"
+        "Стенд: {stand_url}\n"
+        "Каталог релиза: {release_dir}\n\n"
+        "Артефакты:\n{artifacts_text}\n\n"
+        "Изменения с предыдущего релиза:\n{release_changelog_text}"
+    ),
+    "outlook_email_required": False,
 }
 
 
@@ -582,6 +596,66 @@ def check_db_psql_login(reporter: Reporter, env: dict[str, str], runtime: dict) 
         reporter.fail("DB psql login", output or f"rc={result.rc}")
 
 
+def check_outlook_email_config(reporter: Reporter, runtime: dict) -> None:
+    if not runtime.get("outlook_email_enabled", False):
+        reporter.skip("Outlook email", "отключено в windows_pipeline.local.json")
+        return
+
+    recipients = normalize_email_list(runtime.get("outlook_email_recipients", []))
+    if recipients:
+        reporter.pass_("Outlook email recipients", ", ".join(recipients))
+    else:
+        reporter.fail("Outlook email recipients", "задайте outlook_email_recipients")
+
+    cc = normalize_email_list(runtime.get("outlook_email_cc", []))
+    reporter.pass_("Outlook email cc", ", ".join(cc) if cc else "не задано")
+
+    subject = str(runtime.get("outlook_email_subject", "")).strip()
+    if subject:
+        reporter.pass_("Outlook email subject", subject)
+    else:
+        reporter.fail("Outlook email subject", "задайте outlook_email_subject")
+
+    body = str(runtime.get("outlook_email_body", "")).strip()
+    if body:
+        reporter.pass_("Outlook email body", f"{len(body)} символов")
+    else:
+        reporter.fail("Outlook email body", "задайте outlook_email_body")
+
+    sample_context = {
+        "build_version": "dry-run",
+        "release_dir": str(ROOT / "releases" / "dry-run"),
+        "dev_domain": "dev.example.local",
+        "stand_url": "https://dev.example.local/",
+        "artifacts_text": "- backend: dry-run\n- frontend: dry-run",
+        "release_changelog_text": "Изменений нет.",
+    }
+    try:
+        format_outlook_template(subject, sample_context)
+        format_outlook_template(body, sample_context)
+        reporter.pass_("Outlook email templates", "шаблоны темы и тела корректны")
+    except Exception as exc:
+        reporter.fail("Outlook email templates", str(exc))
+
+    reporter.pass_(
+        "Outlook email required",
+        "да" if runtime.get("outlook_email_required", False) else "нет",
+    )
+
+    check_command(
+        reporter,
+        "Outlook COM",
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "$ErrorActionPreference='Stop'; $outlook = New-Object -ComObject Outlook.Application; 'ok'",
+        ],
+    )
+
+
 def derive_service_permission_check(command: str) -> str:
     try:
         tokens = shlex.split(command)
@@ -900,6 +974,8 @@ def dry_run(args: argparse.Namespace) -> bool:
         origin_url = check_repo(reporter, name, path)
         check_origin_network(reporter, f"{name} origin network", origin_url)
 
+    check_outlook_email_config(reporter, runtime)
+
     try:
         ssh_state = check_ssh_runtime(reporter, env)
     except Exception as exc:
@@ -1108,6 +1184,224 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
         run_or_raise(f"DB SQL script {path}", result, mask=mask)
 
 
+def load_release_manifest(release_dir: Path) -> dict | None:
+    manifest_path = release_dir / RELEASE_MANIFEST_NAME
+    if not manifest_path.exists():
+        return None
+    with manifest_path.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def find_previous_release_manifest(release_dir: Path) -> tuple[Path, dict] | None:
+    release_root = release_dir.parent
+    if not release_root.exists():
+        return None
+    candidates = [
+        path
+        for path in release_root.iterdir()
+        if path.is_dir() and path.resolve() != release_dir.resolve() and (path / RELEASE_MANIFEST_NAME).exists()
+    ]
+    for candidate in sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True):
+        manifest = load_release_manifest(candidate)
+        if manifest:
+            return candidate, manifest
+    return None
+
+
+def git_log_merge_commits(repo_path: str, previous_sha: str, current_sha: str) -> list[dict[str, str]]:
+    result = run_command(
+        [
+            "git",
+            "-C",
+            repo_path,
+            "log",
+            f"{previous_sha}..{current_sha}",
+            "--first-parent",
+            "--merges",
+            "--pretty=format:%H%x1f%s%x1f%b%x1e",
+        ],
+        timeout=60,
+    )
+    if result.rc != 0:
+        detail = (result.stderr or result.stdout).strip() or f"rc={result.rc}"
+        raise RuntimeError(detail)
+
+    commits = []
+    for raw_entry in result.stdout.strip("\x1e\n").split("\x1e"):
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+        parts = entry.split("\x1f", 2)
+        if len(parts) != 3:
+            continue
+        commits.append({"sha": parts[0].strip(), "subject": parts[1].strip(), "body": parts[2].strip()})
+    return commits
+
+
+def merge_request_line(commit: dict[str, str]) -> str | None:
+    body = commit["body"]
+    mr_match = re.search(r"See merge request\s+(.+?!(\d+))", body)
+    if not mr_match:
+        return None
+
+    title = ""
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("See merge request"):
+            title = stripped
+            break
+    if not title:
+        title = commit["subject"]
+    return f"- !{mr_match.group(2)} {title}"
+
+
+def repo_changelog_text(name: str, current_repo: dict, previous_repo: dict) -> str:
+    current_sha = str(current_repo.get("commit_sha", "")).strip()
+    previous_sha = str(previous_repo.get("commit_sha", "")).strip()
+    repo_path = str(current_repo.get("source_repo_path", "")).strip()
+
+    if not current_sha or not previous_sha:
+        return f"{name}:\nМетаданные коммитов неполные, список изменений недоступен."
+    if current_sha == previous_sha:
+        return f"{name}:\nИзменений нет."
+    if not repo_path:
+        return f"{name}:\nПуть к source-репозиторию не задан, список изменений недоступен."
+
+    try:
+        commits = git_log_merge_commits(repo_path, previous_sha, current_sha)
+    except Exception as exc:
+        return f"{name}:\nПРЕДУПРЕЖДЕНИЕ: не удалось построить список изменений: {exc}"
+    lines = [line for commit in commits if (line := merge_request_line(commit))]
+    if not lines:
+        return f"{name}:\nИзменения есть, но в first-parent истории не найдены влитые merge request."
+    return f"{name}:\n" + "\n".join(lines)
+
+
+def release_changelog_text(release_dir: Path) -> str:
+    current_manifest = load_release_manifest(release_dir)
+    if not current_manifest:
+        return "Метаданные текущего релиза не найдены, список изменений недоступен."
+
+    previous = find_previous_release_manifest(release_dir)
+    if not previous:
+        return "Метаданные предыдущего релиза не найдены, список изменений недоступен."
+    previous_dir, previous_manifest = previous
+
+    current_repos = current_manifest.get("repositories", {})
+    previous_repos = previous_manifest.get("repositories", {})
+    sections = [f"Предыдущий релиз: {previous_manifest.get('build_version', previous_dir.name)}"]
+    repo_names = {"backend": "Backend", "frontend": "Frontend"}
+    for repo_key, label in repo_names.items():
+        current_repo = current_repos.get(repo_key)
+        previous_repo = previous_repos.get(repo_key)
+        if not current_repo or not previous_repo:
+            sections.append(f"{label}:\nМетаданные релиза неполные, список изменений недоступен.")
+            continue
+        sections.append(repo_changelog_text(label, current_repo, previous_repo))
+    return "\n\n".join(sections)
+
+
+class SafeFormatDict(dict):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def normalize_email_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = re.split(r"[;,]", value)
+    elif isinstance(value, list):
+        items = [str(item) for item in value]
+    else:
+        items = [str(value)]
+    return [item.strip() for item in items if item.strip()]
+
+
+def format_outlook_template(template: object, context: dict[str, object]) -> str:
+    return str(template).format_map(SafeFormatDict(context))
+
+
+def deploy_summary_lines(build_version: str, release_dir: Path, artifacts: list[Artifact]) -> list[str]:
+    lines = [
+        f"build_version: {build_version}",
+        f"release_dir: {release_dir}",
+    ]
+    for artifact in artifacts:
+        lines.append(f"{artifact.name}: {artifact.local_path} -> {artifact.extract_path}")
+    return lines
+
+
+def send_outlook_success_email(
+    env: dict[str, str],
+    runtime: dict,
+    build_version: str,
+    release_dir: Path,
+    artifacts: list[Artifact],
+) -> None:
+    if not runtime.get("outlook_email_enabled", False):
+        print("SKIP Outlook success email: отключено")
+        return
+
+    recipients = normalize_email_list(runtime.get("outlook_email_recipients", []))
+    if not recipients:
+        print("SKIP Outlook success email: список получателей пуст")
+        return
+
+    cc = normalize_email_list(runtime.get("outlook_email_cc", []))
+    artifact_lines = [f"- {artifact.name}: {artifact.local_path} -> {artifact.extract_path}" for artifact in artifacts]
+    try:
+        changelog_text = release_changelog_text(release_dir)
+    except Exception as exc:
+        changelog_text = f"ПРЕДУПРЕЖДЕНИЕ: не удалось построить список изменений релиза: {exc}"
+        print(f"WARN release changelog failed: {exc}", flush=True)
+    context = {
+        "build_version": build_version,
+        "release_dir": str(release_dir),
+        "dev_domain": require_value(env, "DEV_DOMAIN"),
+        "stand_url": f"https://{require_value(env, 'DEV_DOMAIN')}/",
+        "artifacts_text": "\n".join(artifact_lines),
+        "release_changelog_text": changelog_text,
+    }
+    subject = format_outlook_template(runtime.get("outlook_email_subject", ""), context)
+    body = format_outlook_template(runtime.get("outlook_email_body", ""), context)
+    payload = {
+        "to": recipients,
+        "cc": cc,
+        "subject": subject,
+        "body": body,
+    }
+    powershell = """
+$ErrorActionPreference = 'Stop'
+$payload = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$outlook = New-Object -ComObject Outlook.Application
+$mail = $outlook.CreateItem(0)
+$mail.To = ($payload.to -join ';')
+if ($payload.cc -and $payload.cc.Count -gt 0) {
+    $mail.CC = ($payload.cc -join ';')
+}
+$mail.Subject = [string]$payload.subject
+$mail.Body = [string]$payload.body
+$mail.Send()
+Write-Output 'sent'
+""".strip()
+
+    print(f"RUN Outlook success email: {', '.join(recipients)}", flush=True)
+    result = run_command(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", powershell],
+        input_text=json.dumps(payload),
+        timeout=60,
+    )
+    if result.rc == 0:
+        print("PASS Outlook success email")
+        return
+
+    detail = (result.stderr or result.stdout).strip() or f"rc={result.rc}"
+    if runtime.get("outlook_email_required", False):
+        raise RuntimeError(f"Не удалось отправить письмо через Outlook: {detail}")
+    print(f"WARN Outlook success email failed: {detail}", flush=True)
+
+
 def deploy(args: argparse.Namespace) -> int:
     print("DEPLOY load config", flush=True)
     env = load_env(args.env_file, args.secrets_file, require_secrets=True)
@@ -1172,10 +1466,10 @@ def deploy(args: argparse.Namespace) -> int:
         print("SKIP healthcheck: disabled")
 
     print("DEPLOY SUMMARY")
-    print(f"build_version: {build_version}")
-    print(f"release_dir: {release_dir}")
-    for artifact in artifacts:
-        print(f"{artifact.name}: {artifact.local_path} -> {artifact.extract_path}")
+    for line in deploy_summary_lines(build_version, release_dir, artifacts):
+        print(line)
+
+    send_outlook_success_email(env, runtime, build_version, release_dir, artifacts)
     return 0
 
 

@@ -29,5 +29,13 @@
   "healthcheck_delay": 5,
   "portal_version_check_enabled": true,
   "portal_version_asset_limit": 20,
-  "healthcheck_commands": []
+  "healthcheck_commands": [],
+  "outlook_email_enabled": false,
+  "outlook_email_recipients": [
+    "dev-team@example.local"
+  ],
+  "outlook_email_cc": [],
+  "outlook_email_subject": "Деплой успешно завершен: {build_version}",
+  "outlook_email_body": "Деплой успешно завершен.\n\nВерсия сборки: {build_version}\nСтенд: {stand_url}\nКаталог релиза: {release_dir}\n\nАртефакты:\n{artifacts_text}\n\nИзменения с предыдущего релиза:\n{release_changelog_text}",
+  "outlook_email_required": false
 }
