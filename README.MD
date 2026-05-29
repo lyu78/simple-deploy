@@ -1,45 +1,45 @@
 # simple-deploy
 
-## Backend DB artifacts
+## Backend DB-артефакты
 
-During backend build, SQL artifact generators are copied into the build-only
-`BACKEND_SOURCE_REPO_PATH/build_scripts/` directory, executed from the backend
-source repo root, and currently kept after packaging for debugging. The next
-build recreates this directory from `builder/scripts/additional_artifacts/`, so
-the build does not depend on files from the backend project's regular
-`scripts/` directory.
-The Python venv for these generators is resolved under `BACKEND_SOURCE_REPO_PATH`
-using `BACKEND_BUILD_VENV_RELATIVE_PATH`; when it is absent, build creates it
-through Git Bash with `python -m venv`. Before every generator run, build installs
-backend production dependencies into that venv with `pip install --trusted-host`
-from `BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH` (default `requirements.txt`) and
-does not install dev requirements. SQL generators run through Git Bash with the
-source venv `python.exe -Xutf8`; build does not call `cmd.exe` or `activate.bat`
-for this step.
-The schema summary generator `create_sql_migrations.py` is temporarily disabled.
-Only run_all artifacts are generated from source repo state; target repo is used
-only for the synced backend code archive.
+Во время backend build SQL-генераторы копируются в служебную директорию
+`BACKEND_SOURCE_REPO_PATH/build_scripts/`, запускаются из корня source repo и
+сейчас временно остаются после упаковки для отладки. Следующий build пересоздает
+эту директорию из `builder/scripts/additional_artifacts/`, поэтому сборка не
+зависит от файлов из штатной директории `scripts/` backend-проекта.
 
-The build logs the `build_scripts` create/copy/run steps, the exact generator
-commands, lookup directories/patterns for generated SQL files, and the debug
-skip of `build_scripts` cleanup.
+Python-окружение для генераторов ищется внутри `BACKEND_SOURCE_REPO_PATH` по
+`BACKEND_BUILD_VENV_RELATIVE_PATH`; если его нет, build создает venv через Git
+Bash командой `python -m venv`. Перед каждым запуском генераторов build
+устанавливает production-зависимости backend в этот venv через
+`pip install --trusted-host` из `BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH`
+(по умолчанию `requirements.txt`). Dev requirements не ставятся. SQL-генераторы
+запускаются через Git Bash с `python.exe -Xutf8` из source venv; `cmd.exe` и
+`activate.bat` на этом шаге не используются.
 
-The build currently creates two self-contained DB archives:
+Генератор schema summary `create_sql_migrations.py` временно отключен. Сейчас из
+состояния source repo генерируются только run_all-артефакты; target repo нужен
+только для архива синхронизированного backend-кода.
 
-- `db_insert_r_<release>-c_<commit>.tar.gz` contains `run_all_insert_<commit>.sql` and only SQL files referenced by its `\i` includes.
-- `db_update_r_<release>-c_<commit>.tar.gz` contains `run_all_update_<commit>.sql` and only SQL files referenced by its `\i` includes.
+Build логирует создание, копирование и запуск `build_scripts`, точные команды
+генераторов, директории/паттерны поиска сгенерированных SQL-файлов и временный
+пропуск очистки `build_scripts`.
 
-During Windows runner deploy, applying schema summary SQL is temporarily
-disabled. The build does not create `db_schema_r_<release>-c_<commit>.tar.gz`,
-and deploy does not upload, unpack or execute
-`docs/database/summary/summary_sql_*.sql` on the DB VM.
+Сейчас build создает два самодостаточных DB-архива:
 
-The post-deploy source repo MR for `docs/database/summary` is also temporarily
-disabled while schema summary generation is disabled.
+- `db_insert_r_<release>-c_<commit>.tar.gz` содержит `run_all_insert_<commit>.sql` и только SQL-файлы, на которые он ссылается через `\i`.
+- `db_update_r_<release>-c_<commit>.tar.gz` содержит `run_all_update_<commit>.sql` и только SQL-файлы, на которые он ссылается через `\i`.
 
-Generated `run_all_insert` and `run_all_update` files include `\timing on`,
-temporarily set `synchronous_commit = OFF`, apply PostgreSQL parallel/work memory
-session settings, and restore `synchronous_commit = ON` at the end.
+Применение schema summary SQL в Windows runner deploy временно отключено. Сборка
+не создает `db_schema_r_<release>-c_<commit>.tar.gz`, а deploy не загружает, не
+распаковывает и не выполняет `docs/database/summary/summary_sql_*.sql` на DB VM.
+
+Post-deploy MR в source repo для `docs/database/summary` тоже временно отключен,
+пока отключена генерация schema summary.
+
+Сгенерированные `run_all_insert` и `run_all_update` включают `\timing on`,
+временно выставляют `synchronous_commit = OFF`, применяют session settings для
+parallel/work memory PostgreSQL и в конце возвращают `synchronous_commit = ON`.
 
 `simple-deploy` автоматизирует перенос изменений из внешнего контура разработки
 во внутренний контур, сборку релизных архивов и обновление локального DEV-стенда.
@@ -201,13 +201,12 @@ APP_MANAGE_PY_PATH=manage.py
 }
 ```
 
-Required local setup: installed and configured desktop Outlook, an Outlook
-profile available for the current Windows user, non-empty
-`outlook_email_recipients`, `outlook_email_subject`, and `outlook_email_body` in
-`windows_pipeline.local.json`. `dry-run` validates recipients, templates and
-Outlook COM creation before deploy. After successful deploy the email includes
-`release_manifest.json` from the release directory as an attachment when the
-file exists.
+Локально должен быть установлен и настроен desktop Outlook, а профиль Outlook
+должен быть доступен текущему Windows-пользователю. В
+`windows_pipeline.local.json` должны быть непустые `outlook_email_recipients`,
+`outlook_email_subject` и `outlook_email_body`. `dry-run` проверяет получателей,
+шаблоны и создание Outlook COM до deploy. После успешного deploy письмо
+прикладывает `release_manifest.json` из директории релиза, если файл существует.
 
 Доступные шаблоны для темы и тела письма: `{build_version}`, `{stand_url}`,
 `{dev_domain}`, `{release_dir}`, `{artifacts_text}`, `{release_changelog_text}`.
