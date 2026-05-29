@@ -15,7 +15,6 @@ from src.build_backend import (  # noqa: E402
     _cleanup_build_scripts,
     _create_db_sql_artifact,
     _ensure_backend_build_venv,
-    _ensure_schema_summary_sql,
     _prepare_build_scripts,
     _run_additional_artifact_generators,
     _run_all_include_paths,
@@ -120,13 +119,6 @@ class BuildBackendArtifactTests(unittest.TestCase):
             self._tar_names(archive_name),
             ["docs/database/summary/summary_sql_2026_abc123.sql"],
         )
-
-    def test_missing_schema_summary_gets_noop_fallback(self):
-        fallback = _ensure_schema_summary_sql(self.repo, "abc123")
-
-        self.assertEqual(fallback.name, "summary_sql_noop_abc123.sql")
-        self.assertTrue(fallback.is_file())
-        self.assertIn("No new migrations detected", fallback.read_text(encoding="utf-8"))
 
     def test_missing_include_fails(self):
         run_all = self._write(
