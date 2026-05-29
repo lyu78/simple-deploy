@@ -2,17 +2,25 @@
 
 ## Backend DB artifacts
 
-During backend build, SQL artifact generators are copied into the transient
+During backend build, SQL artifact generators are copied into the build-only
 `BACKEND_SOURCE_REPO_PATH/build_scripts/` directory, executed from the backend
-source repo root, and removed after DB artifacts are packaged. The build does
-not use or leave files in the backend project's regular `scripts/` directory.
+source repo root, and currently kept after packaging for debugging. The next
+build recreates this directory from `builder/scripts/additional_artifacts/`, so
+the build does not depend on files from the backend project's regular
+`scripts/` directory.
 The Python venv for these generators is resolved under `BACKEND_SOURCE_REPO_PATH`
 using `BACKEND_BUILD_VENV_RELATIVE_PATH`; when it is absent, build creates it
 through Git Bash with `python -m venv` and does not install dev requirements.
-SQL generators run through Git Bash with the source venv `python.exe`; build does
-not call `cmd.exe` or `activate.bat` for this step. DB summary/run_all artifacts
-are generated from source repo state; target repo is used only for the synced
-backend code archive.
+SQL generators run through Git Bash with the source venv `python.exe -Xutf8`;
+build does not call `cmd.exe` or `activate.bat` for this step.
+`create_sql_migrations.py` also calls Django management commands through the
+same interpreter with `-Xutf8` and tolerant UTF-8 decoding for captured output.
+DB summary/run_all artifacts are generated from source repo state; target repo is
+used only for the synced backend code archive.
+
+The build logs the `build_scripts` create/copy/run steps, the exact generator
+commands, the summary SQL output path, lookup directories/patterns for generated
+SQL files, and the debug skip of `build_scripts` cleanup.
 
 The build creates three self-contained DB archives:
 
@@ -179,9 +187,16 @@ APP_MANAGE_PY_PATH=manage.py
   ],
   "outlook_email_cc": [],
   "outlook_email_subject": "Деплой успешно завершен: {build_version}",
+  "outlook_email_body": "Deploy completed.\n\nBuild: {build_version}\nStand: {stand_url}\nRelease dir: {release_dir}\n\nArtifacts:\n{artifacts_text}\n\nChanges:\n{release_changelog_text}",
   "outlook_email_required": false
 }
 ```
+
+Required local setup: installed and configured desktop Outlook, an Outlook
+profile available for the current Windows user, non-empty
+`outlook_email_recipients`, `outlook_email_subject`, and `outlook_email_body` in
+`windows_pipeline.local.json`. `dry-run` validates recipients, templates and
+Outlook COM creation before deploy.
 
 Доступные шаблоны для темы и тела письма: `{build_version}`, `{stand_url}`,
 `{dev_domain}`, `{release_dir}`, `{artifacts_text}`, `{release_changelog_text}`.

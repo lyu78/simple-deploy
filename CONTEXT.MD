@@ -145,6 +145,19 @@ Dry-run для sudo service steps сначала смотрит общий сп�
 
 Количество JS assets ограничивается `portal_version_asset_limit`.
 
+## Outlook email
+
+Success email is configured in `windows_pipeline.local.json`, not `.env`. To
+enable it set `outlook_email_enabled: true`, provide non-empty
+`outlook_email_recipients`, `outlook_email_subject`, and `outlook_email_body`,
+and keep desktop Outlook installed/configured for the current Windows user.
+Optional `outlook_email_cc` adds copy recipients. `outlook_email_required:
+false` logs Outlook send failures as WARN after an otherwise successful deploy;
+`true` makes them fail the pipeline. `dry-run` validates recipients, templates
+and Outlook COM creation. Available template variables are `{build_version}`,
+`{stand_url}`, `{dev_domain}`, `{release_dir}`, `{artifacts_text}`, and
+`{release_changelog_text}`.
+
 ## Главная точка входа
 
 Штатный запуск один:
@@ -345,8 +358,8 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 
 - Work is done on local branch `dev`.
 - Additional backend artifact generators live in `builder/scripts/additional_artifacts/`.
-- During backend build the DB artifact generators are copied into transient `BACKEND_SOURCE_REPO_PATH/build_scripts/`, run from the backend source repo root, and the directory is removed after DB artifacts are packaged. DB summary/run_all intermediate files are generated from source repo state; target repo is only used for the synced backend code archive.
-- Backend build resolves the backend venv via `BACKEND_BUILD_VENV_RELATIVE_PATH` relative to `BACKEND_SOURCE_REPO_PATH`; default is `.venv/Scripts/activate.bat`. If the venv is missing, build creates it through Git Bash with `python -m venv` and does not install dev requirements. SQL generators then run through Git Bash with the source venv `python.exe`, not through `cmd.exe` or `activate.bat`.
+- During backend build the DB artifact generators are copied into build-only `BACKEND_SOURCE_REPO_PATH/build_scripts/` and run from the backend source repo root. For current debugging this directory is kept after packaging; the next build recreates it from `builder/scripts/additional_artifacts/`. DB summary/run_all intermediate files are generated from source repo state; target repo is only used for the synced backend code archive.
+- Backend build resolves the backend venv via `BACKEND_BUILD_VENV_RELATIVE_PATH` relative to `BACKEND_SOURCE_REPO_PATH`; default is `.venv/Scripts/activate.bat`. If the venv is missing, build creates it through Git Bash with `python -m venv` and does not install dev requirements. SQL generators then run through Git Bash with the source venv `python.exe -Xutf8`, not through `cmd.exe` or `activate.bat`. `create_sql_migrations.py` also calls Django management commands through `sys.executable -Xutf8` with tolerant UTF-8 decoding for captured output.
 - Generated SQL files are selected only when their names contain the current short `HEAD` hash of the backend source repo.
 - `create_sql_migrations.py` always writes a matching `summary_sql_*_<commit>.sql`; if no new Django migrations are detected, the file is a no-op summary entrypoint so the schema artifact still exists.
 - Backend build creates three DB artifact archives: schema, insert, and update. The insert/update archives include their matching `run_all_*` entrypoint and only the `docs/database/scripts/` files referenced by that entrypoint's `\i` includes.
@@ -354,4 +367,5 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 - If INSERT scripts are not idempotent, `create_run_all_sql.py` exits non-zero and the build pipeline must fail before release archiving continues.
 - Deploy applies schema SQL on the DB VM, then data SQL (`run_all_insert`, then `run_all_update`), then app VM runs `manage.py migrate --fake` and `sync_action_role`.
 - Utility helpers for git output, strict single-file matching, and tar additions live in `builder/src/utils.py`; backend build keeps only backend-specific orchestration.
+- Backend DB artifact logging prints build_scripts create/copy/run steps, exact generator commands, summary SQL output path, lookup directories/patterns for generated SQL, and the debug skip of build_scripts cleanup.
 - The generator copy step recreates `<BACKEND_SOURCE_REPO_PATH>/build_scripts` for each build and fails if that path exists but is not a directory.
