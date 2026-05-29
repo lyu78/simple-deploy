@@ -1400,7 +1400,9 @@ if ($payload.cc -and $payload.cc.Count -gt 0) {
     $mail.CC = ($payload.cc -join ';')
 }
 $mail.Subject = [string]$payload.subject
-$mail.Body = [string]$payload.body
+$mail.BodyFormat = 2
+$encodedBody = [System.Net.WebUtility]::HtmlEncode([string]$payload.body)
+$mail.HTMLBody = "<html><body style=""font-family: Arial, sans-serif; font-size: 10pt; white-space: pre-wrap;"">$encodedBody</body></html>"
 if ($payload.attachments) {
     foreach ($attachment in $payload.attachments) {
         if (-not [string]::IsNullOrWhiteSpace([string]$attachment)) {

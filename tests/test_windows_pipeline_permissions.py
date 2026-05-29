@@ -66,6 +66,10 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
             payload = json.loads(run_mock.call_args.kwargs["input_text"])
             self.assertEqual(payload["attachments"], [str(manifest)])
+            powershell = run_mock.call_args.args[0][-1]
+            self.assertIn("font-family: Arial", powershell)
+            self.assertIn("font-size: 10pt", powershell)
+            self.assertIn("HtmlEncode", powershell)
 
 
 if __name__ == "__main__":
