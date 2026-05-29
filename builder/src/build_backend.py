@@ -2,6 +2,7 @@
 
 from datetime import datetime
 import logging
+import os
 from pathlib import Path
 import re
 import shutil
@@ -36,6 +37,12 @@ logging.basicConfig(level=logging.INFO)
 INCLUDE_RE = re.compile(r"^\s*\\i\s+['\"]?([^'\"\s]+)['\"]?")
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
+DEFAULT_BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH = "requirements.txt"
+PIP_TRUSTED_HOSTS = (
+    "pypi.org",
+    "files.pythonhosted.org",
+    "pypi.python.org",
+)
 
 
 def _log_build_step(message: str) -> None:
@@ -127,10 +134,44 @@ def _python_path_from_activation_script(venv_activate_path: Path) -> Path:
     return python_path
 
 
+def _backend_build_requirements_path(source_repo_path: Path) -> Path:
+    requirements_relative_path = (
+        get_required_env("BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH")
+        if "BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH" in os.environ
+        else DEFAULT_BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH
+    )
+    requirements_path = source_repo_path / Path(requirements_relative_path)
+    if not requirements_path.is_file():
+        raise RuntimeError(f"Backend build requirements file not found: {requirements_path}")
+    return requirements_path
+
+
+def _pip_trusted_host_args() -> str:
+    return " ".join(f"--trusted-host {shlex.quote(host)}" for host in PIP_TRUSTED_HOSTS)
+
+
+def _install_backend_build_requirements(source_repo_path: Path, python_path: Path) -> None:
+    requirements_path = _backend_build_requirements_path(source_repo_path)
+    bash_python = shlex.quote(_to_git_bash_path(python_path))
+    bash_requirements = shlex.quote(_to_git_bash_path(requirements_path))
+    trusted_hosts = _pip_trusted_host_args()
+
+    _log_build_step(f"install backend build requirements: {requirements_path}")
+    _run_git_bash(
+        f"{bash_python} -m pip install {trusted_hosts} --upgrade pip",
+        cwd=source_repo_path,
+    )
+    _run_git_bash(
+        f"{bash_python} -m pip install {trusted_hosts} -r {bash_requirements}",
+        cwd=source_repo_path,
+    )
+
+
 def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_dir: Path) -> None:
     """Run SQL artifact generators through the backend source virtualenv."""
     venv_activate_path = _ensure_backend_build_venv(source_repo_path)
     python_path = _python_path_from_activation_script(venv_activate_path)
+    _install_backend_build_requirements(source_repo_path, python_path)
     bash_python = shlex.quote(_to_git_bash_path(python_path))
     scripts = [
         "create_sql_migrations.py",

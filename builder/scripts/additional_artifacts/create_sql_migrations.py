@@ -95,6 +95,12 @@ for file in os.listdir(SUMMARY_DIR):
         migrations_list.append(row.replace("-- ", ""))
 
 migrations_plan = run_python_manage("showmigrations", "--plan")
+if migrations_plan.returncode != 0:
+    raise RuntimeError(
+        "showmigrations --plan failed:\n"
+        f"stdout:\n{migrations_plan.stdout}\n"
+        f"stderr:\n{migrations_plan.stderr}"
+    )
 
 statuses_names = migrations_plan.stdout.split("\n")
 
@@ -129,6 +135,12 @@ for m, v in migrations.items():
 
     summary_sql += f"-- {m}\n\n"
     result = run_python_manage("sqlmigrate", v[1], v[2])
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"sqlmigrate failed for {m}:\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
     summary_sql += result.stdout
     summary_sql += "\n\n"
     generated_any = True

@@ -10,9 +10,12 @@ the build does not depend on files from the backend project's regular
 `scripts/` directory.
 The Python venv for these generators is resolved under `BACKEND_SOURCE_REPO_PATH`
 using `BACKEND_BUILD_VENV_RELATIVE_PATH`; when it is absent, build creates it
-through Git Bash with `python -m venv` and does not install dev requirements.
-SQL generators run through Git Bash with the source venv `python.exe -Xutf8`;
-build does not call `cmd.exe` or `activate.bat` for this step.
+through Git Bash with `python -m venv`. Before every generator run, build installs
+backend production dependencies into that venv with `pip install --trusted-host`
+from `BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH` (default `requirements.txt`) and
+does not install dev requirements. SQL generators run through Git Bash with the
+source venv `python.exe -Xutf8`; build does not call `cmd.exe` or `activate.bat`
+for this step.
 `create_sql_migrations.py` also calls Django management commands through the
 same interpreter with `-Xutf8` and tolerant UTF-8 decoding for captured output.
 DB summary/run_all artifacts are generated from source repo state; target repo is

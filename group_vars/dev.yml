@@ -45,6 +45,7 @@ backend_source_repo_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_SOURCE_REPO
 backend_target_repo_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_TARGET_REPO_PATH type=properties file=' ~ local_env_file) }}"
 backend_target_repo_path_bash: "{{ lookup('ansible.builtin.ini', 'BACKEND_TARGET_REPO_PATH_BASH type=properties file=' ~ local_env_file) }}"
 backend_build_venv_relative_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_BUILD_VENV_RELATIVE_PATH type=properties file=' ~ local_env_file ~ ' default=') | default('.venv/Scripts/activate.bat', true) }}"
+backend_build_requirements_relative_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH type=properties file=' ~ local_env_file ~ ' default=') | default('requirements.txt', true) }}"
 frontend_source_repo_path: "{{ lookup('ansible.builtin.ini', 'FRONTEND_SOURCE_REPO_PATH type=properties file=' ~ local_env_file) }}"
 frontend_target_repo_path: "{{ lookup('ansible.builtin.ini', 'FRONTEND_TARGET_REPO_PATH type=properties file=' ~ local_env_file) }}"
 
@@ -93,6 +94,7 @@ build_environment:
   BACKEND_SOURCE_REPO_PATH: "{{ backend_source_repo_path }}"
   BACKEND_TARGET_REPO_PATH: "{{ backend_target_repo_path }}"
   BACKEND_BUILD_VENV_RELATIVE_PATH: "{{ backend_build_venv_relative_path }}"
+  BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH: "{{ backend_build_requirements_relative_path }}"
   FRONTEND_SOURCE_REPO_PATH: "{{ frontend_source_repo_path }}"
   FRONTEND_TARGET_REPO_PATH: "{{ frontend_target_repo_path }}"
   FRONTEND_DEV_SERVER_NAME: "{{ frontend_server_names.dev }}"

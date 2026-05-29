@@ -472,7 +472,7 @@
           {{
             (backend_source_repo_path ~ '/' ~ backend_build_venv_relative_path)
             if backend_source_venv_stat.stat.exists | default(false)
-            else ('не найден в source repo; build создаст venv автоматически без установки dev requirements')
+            else ('не найден в source repo; build создаст venv автоматически и установит production requirements без dev requirements')
           }}
 
     - name: Проверить локальные Git remote

@@ -15,6 +15,7 @@ from src.build_backend import (  # noqa: E402
     _cleanup_build_scripts,
     _create_db_sql_artifact,
     _ensure_backend_build_venv,
+    _install_backend_build_requirements,
     _prepare_build_scripts,
     _run_additional_artifact_generators,
     _run_all_include_paths,
@@ -189,6 +190,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         activate_path.parent.mkdir(parents=True)
         activate_path.write_text("", encoding="utf-8")
         python_path.write_text("", encoding="utf-8")
+        (source_repo / "requirements.txt").write_text("Django==4.2\n", encoding="utf-8")
         build_scripts_dir = source_repo / "build_scripts"
         build_scripts_dir.mkdir()
 
@@ -200,17 +202,50 @@ class BuildBackendArtifactTests(unittest.TestCase):
             with patch("src.build_backend._run_git_bash") as run_mock:
                 _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
-        self.assertEqual(run_mock.call_count, 2)
-        first_args, first_kwargs = run_mock.call_args_list[0]
-        second_args, second_kwargs = run_mock.call_args_list[1]
+        self.assertEqual(run_mock.call_count, 4)
+        pip_upgrade_args, pip_upgrade_kwargs = run_mock.call_args_list[0]
+        pip_install_args, pip_install_kwargs = run_mock.call_args_list[1]
+        first_args, first_kwargs = run_mock.call_args_list[2]
+        second_args, second_kwargs = run_mock.call_args_list[3]
+        self.assertIn("/.venv/Scripts/python.exe", pip_upgrade_args[0])
+        self.assertIn("-m pip install", pip_upgrade_args[0])
+        self.assertIn("--trusted-host pypi.org", pip_upgrade_args[0])
+        self.assertIn("--upgrade pip", pip_upgrade_args[0])
+        self.assertIn("/.venv/Scripts/python.exe", pip_install_args[0])
+        self.assertIn("-r", pip_install_args[0])
+        self.assertIn("requirements.txt", pip_install_args[0])
+        self.assertIn("--trusted-host files.pythonhosted.org", pip_install_args[0])
         self.assertIn("/.venv/Scripts/python.exe", first_args[0])
         self.assertIn("-Xutf8", first_args[0])
         self.assertIn("build_scripts/create_sql_migrations.py", first_args[0])
         self.assertIn("/.venv/Scripts/python.exe", second_args[0])
         self.assertIn("-Xutf8", second_args[0])
         self.assertIn("build_scripts/create_run_all_sql.py", second_args[0])
+        self.assertEqual(pip_upgrade_kwargs["cwd"], source_repo)
+        self.assertEqual(pip_install_kwargs["cwd"], source_repo)
         self.assertEqual(first_kwargs["cwd"], source_repo)
         self.assertEqual(second_kwargs["cwd"], source_repo)
+
+    def test_backend_build_requirements_path_can_be_configured(self):
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+        requirements_path = source_repo / "requirements/prod.txt"
+        requirements_path.parent.mkdir()
+        requirements_path.write_text("Django==4.2\n", encoding="utf-8")
+        python_path = source_repo / ".venv/Scripts/python.exe"
+        python_path.parent.mkdir(parents=True)
+        python_path.write_text("", encoding="utf-8")
+
+        env = {
+            "BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH": "requirements/prod.txt",
+            "GIT_BASH_PATH": "bash",
+        }
+        with patch.dict("os.environ", env):
+            with patch("src.build_backend._run_git_bash") as run_mock:
+                _install_backend_build_requirements(source_repo, python_path)
+
+        self.assertEqual(run_mock.call_count, 2)
+        self.assertIn("requirements/prod.txt", run_mock.call_args_list[1].args[0])
 
 
 if __name__ == "__main__":
