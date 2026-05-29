@@ -458,6 +458,23 @@
       loop_control:
         label: "{{ item.item.name }}"
 
+    - name: Проверить backend build venv в source repo
+      ansible.builtin.stat:
+        path: "{{ backend_source_repo_path }}/{{ backend_build_venv_relative_path }}"
+      delegate_to: localhost
+      register: backend_source_venv_stat
+
+    - name: Показать статус backend build venv
+      ansible.builtin.debug:
+        msg: >-
+          DRY-RUN {{ 'PASS' if backend_source_venv_stat.stat.exists | default(false) else 'WARN' }}
+          backend build venv:
+          {{
+            (backend_source_repo_path ~ '/' ~ backend_build_venv_relative_path)
+            if backend_source_venv_stat.stat.exists | default(false)
+            else ('не найден в source repo; build создаст venv автоматически без установки dev requirements')
+          }}
+
     - name: Проверить локальные Git remote
       ansible.builtin.shell: |
         set -euo pipefail

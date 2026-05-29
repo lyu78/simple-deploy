@@ -6,6 +6,9 @@ During backend build, SQL artifact generators are copied into the transient
 `BACKEND_TARGET_REPO_PATH/build_scripts/` directory, executed from the backend
 target repo root, and removed after DB artifacts are packaged. The build does
 not use or leave files in the backend project's regular `scripts/` directory.
+The Python venv for these generators is resolved under `BACKEND_SOURCE_REPO_PATH`
+using `BACKEND_BUILD_VENV_RELATIVE_PATH`; when it is absent, build creates it
+with `python -m venv` and does not install dev requirements.
 
 The build creates three self-contained DB archives:
 

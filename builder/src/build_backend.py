@@ -68,13 +68,27 @@ def _cleanup_build_scripts(build_scripts_dir: Path) -> None:
         shutil.rmtree(build_scripts_dir)
 
 
-def _run_additional_artifact_generators(repo_path: Path, build_scripts_dir: Path) -> None:
-    """Run SQL artifact generators through the backend virtualenv."""
+def _ensure_backend_build_venv(source_repo_path: Path) -> Path:
+    """Return source backend venv activation path, creating venv when absent."""
     venv_relative_path = get_required_env("BACKEND_BUILD_VENV_RELATIVE_PATH")
-    venv_activate_path = repo_path / Path(venv_relative_path)
+    venv_activate_path = source_repo_path / Path(venv_relative_path)
+
+    if venv_activate_path.is_file():
+        return venv_activate_path
+
+    venv_dir = venv_activate_path.parents[1]
+    logging.info("Backend source venv not found, creating: %s", venv_dir)
+    subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], cwd=source_repo_path, check=True)
 
     if not venv_activate_path.is_file():
-        raise RuntimeError(f"Backend venv activation script not found: {venv_activate_path}")
+        raise RuntimeError(f"Backend venv activation script not found after creation: {venv_activate_path}")
+
+    return venv_activate_path
+
+
+def _run_additional_artifact_generators(repo_path: Path, source_repo_path: Path, build_scripts_dir: Path) -> None:
+    """Run SQL artifact generators through the backend source virtualenv."""
+    venv_activate_path = _ensure_backend_build_venv(source_repo_path)
 
     commands = [
         f'call "{venv_activate_path}"',
@@ -134,7 +148,7 @@ def _create_db_sql_artifact(
     return archive_name
 
 
-def _create_db_migrations_archives(repo_path: str, build_version: str) -> dict[str, str]:
+def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_version: str) -> dict[str, str]:
     """Create separate schema/insert/update DB archives for the current backend commit."""
     repo = Path(repo_path)
     release_dir = Path(get_required_env("RELEASE_ROOT_WINDOWS")) / build_version
@@ -144,7 +158,7 @@ def _create_db_migrations_archives(repo_path: str, build_version: str) -> dict[s
     build_scripts_dir = _prepare_build_scripts(repo)
 
     try:
-        _run_additional_artifact_generators(repo, build_scripts_dir)
+        _run_additional_artifact_generators(repo, Path(source_repo_path), build_scripts_dir)
 
         schema_sql = one_match(
             repo / "docs" / "database" / "summary",
@@ -248,6 +262,7 @@ def build_backend(
 
     db_artifact_manifest = _create_db_migrations_archives(
         repo_path=repo2_path,
+        source_repo_path=repo1_path,
         build_version=build_version,
     )
 

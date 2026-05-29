@@ -5,6 +5,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "builder"))
@@ -13,6 +14,7 @@ from src.build_backend import (  # noqa: E402
     _add_run_all_includes_to_tar,
     _cleanup_build_scripts,
     _create_db_sql_artifact,
+    _ensure_backend_build_venv,
     _prepare_build_scripts,
     _run_all_include_paths,
 )
@@ -155,6 +157,24 @@ class BuildBackendArtifactTests(unittest.TestCase):
             self.assertIn(f"{setting}\n", content)
         self.assertTrue(content.rstrip().endswith("SET synchronous_commit = ON;"))
         self.assertIn("\\i 'docs/database/scripts/app/insert/a.sql'\n", content)
+
+    def test_missing_backend_build_venv_is_created_in_source_repo(self):
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+        activate_path = source_repo / ".venv/Scripts/activate.bat"
+
+        def fake_run(*args, **kwargs):
+            activate_path.parent.mkdir(parents=True)
+            activate_path.write_text("", encoding="utf-8")
+
+        with patch.dict("os.environ", {"BACKEND_BUILD_VENV_RELATIVE_PATH": ".venv/Scripts/activate.bat"}):
+            with patch("src.build_backend.subprocess.run", side_effect=fake_run) as run_mock:
+                self.assertEqual(_ensure_backend_build_venv(source_repo), activate_path)
+
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args[0][1:3], ["-m", "venv"])
+        self.assertEqual(Path(args[0][3]), source_repo / ".venv")
+        self.assertEqual(kwargs["cwd"], source_repo)
 
 
 if __name__ == "__main__":
