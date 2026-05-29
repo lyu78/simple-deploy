@@ -158,6 +158,26 @@ def _add_run_all_includes_to_tar(archive: tarfile.TarFile, repo: Path, run_all_s
         add_file_to_tar(archive, repo / include_path, include_path.as_posix())
 
 
+def _ensure_schema_summary_sql(repo: Path, commit_hash: str) -> Path:
+    summary_dir = repo / "docs" / "database" / "summary"
+    matches = sorted(summary_dir.glob(f"summary_sql_*_{commit_hash}.sql"))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Expected exactly one summary SQL for commit {commit_hash} in {summary_dir}, found: {len(matches)}."
+        )
+
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    fallback_path = summary_dir / f"summary_sql_noop_{commit_hash}.sql"
+    fallback_path.write_text(
+        f"-- No new migrations detected for commit {commit_hash}.\n",
+        encoding="utf-8",
+    )
+    logging.warning("Schema summary SQL was not generated, created no-op file: %s", fallback_path)
+    return fallback_path
+
+
 def _create_db_sql_artifact(
     release_dir: Path,
     artifact_type: str,
@@ -187,10 +207,7 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
     try:
         _run_additional_artifact_generators(repo, Path(source_repo_path), build_scripts_dir)
 
-        schema_sql = one_match(
-            repo / "docs" / "database" / "summary",
-            f"summary_sql_*_{commit_hash}.sql",
-        )
+        schema_sql = _ensure_schema_summary_sql(repo, commit_hash)
         run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
         run_all_update = one_match(build_scripts_dir, f"run_all_update_{commit_hash}.sql")
 
