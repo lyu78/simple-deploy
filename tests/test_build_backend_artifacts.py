@@ -191,15 +191,13 @@ class BuildBackendArtifactTests(unittest.TestCase):
 
     def test_artifact_generators_run_through_git_bash_with_source_venv_python(self):
         source_repo = self.root / "source"
-        target_repo = self.root / "target"
         source_repo.mkdir()
-        target_repo.mkdir()
         activate_path = source_repo / ".venv/Scripts/activate.bat"
         python_path = source_repo / ".venv/Scripts/python.exe"
         activate_path.parent.mkdir(parents=True)
         activate_path.write_text("", encoding="utf-8")
         python_path.write_text("", encoding="utf-8")
-        build_scripts_dir = target_repo / "build_scripts"
+        build_scripts_dir = source_repo / "build_scripts"
         build_scripts_dir.mkdir()
 
         env = {
@@ -208,13 +206,13 @@ class BuildBackendArtifactTests(unittest.TestCase):
         }
         with patch.dict("os.environ", env):
             with patch("src.build_backend._run_git_bash") as run_mock:
-                _run_additional_artifact_generators(target_repo, source_repo, build_scripts_dir)
+                _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
         args, kwargs = run_mock.call_args
         self.assertIn("/.venv/Scripts/python.exe", args[0])
         self.assertIn("build_scripts/create_sql_migrations.py", args[0])
         self.assertIn("build_scripts/create_run_all_sql.py", args[0])
-        self.assertEqual(kwargs["cwd"], target_repo)
+        self.assertEqual(kwargs["cwd"], source_repo)
 
 
 if __name__ == "__main__":

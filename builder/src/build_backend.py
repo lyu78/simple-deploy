@@ -113,7 +113,7 @@ def _python_path_from_activation_script(venv_activate_path: Path) -> Path:
     return python_path
 
 
-def _run_additional_artifact_generators(repo_path: Path, source_repo_path: Path, build_scripts_dir: Path) -> None:
+def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_dir: Path) -> None:
     """Run SQL artifact generators through the backend source virtualenv."""
     venv_activate_path = _ensure_backend_build_venv(source_repo_path)
     python_path = _python_path_from_activation_script(venv_activate_path)
@@ -122,8 +122,8 @@ def _run_additional_artifact_generators(repo_path: Path, source_repo_path: Path,
         f"{bash_python} {shlex.quote(f'{BUILD_SCRIPTS_DIR_NAME}/create_sql_migrations.py')}",
         f"{bash_python} {shlex.quote(f'{BUILD_SCRIPTS_DIR_NAME}/create_run_all_sql.py')}",
     ]
-    logging.info("Running backend DB artifact generators from %s with %s", repo_path, python_path)
-    _run_git_bash(" && ".join(commands), cwd=repo_path)
+    logging.info("Running backend DB artifact generators from %s with %s", source_repo_path, python_path)
+    _run_git_bash(" && ".join(commands), cwd=source_repo_path)
 
 
 def _run_all_include_paths(repo: Path, run_all_sql: Path) -> list[Path]:
@@ -198,16 +198,17 @@ def _create_db_sql_artifact(
 def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_version: str) -> dict[str, str]:
     """Create separate schema/insert/update DB archives for the current backend commit."""
     repo = Path(repo_path)
+    source_repo = Path(source_repo_path)
     release_dir = Path(get_required_env("RELEASE_ROOT_WINDOWS")) / build_version
     release_dir.mkdir(parents=True, exist_ok=True)
 
-    commit_hash = git_output(repo_path, "rev-parse", "--short", "HEAD")
-    build_scripts_dir = _prepare_build_scripts(repo)
+    commit_hash = git_output(source_repo_path, "rev-parse", "--short", "HEAD")
+    build_scripts_dir = _prepare_build_scripts(source_repo)
 
     try:
-        _run_additional_artifact_generators(repo, Path(source_repo_path), build_scripts_dir)
+        _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
-        schema_sql = _ensure_schema_summary_sql(repo, commit_hash)
+        schema_sql = _ensure_schema_summary_sql(source_repo, commit_hash)
         run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
         run_all_update = one_match(build_scripts_dir, f"run_all_update_{commit_hash}.sql")
 
@@ -229,7 +230,7 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
             commit_hash,
             lambda archive: (
                 add_file_to_tar(archive, run_all_insert, run_all_insert.name),
-                _add_run_all_includes_to_tar(archive, repo, run_all_insert),
+                _add_run_all_includes_to_tar(archive, source_repo, run_all_insert),
             ),
         )
         update_archive = _create_db_sql_artifact(
@@ -239,7 +240,7 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
             commit_hash,
             lambda archive: (
                 add_file_to_tar(archive, run_all_update, run_all_update.name),
-                _add_run_all_includes_to_tar(archive, repo, run_all_update),
+                _add_run_all_includes_to_tar(archive, source_repo, run_all_update),
             ),
         )
     finally:

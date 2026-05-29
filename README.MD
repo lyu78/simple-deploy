@@ -3,14 +3,16 @@
 ## Backend DB artifacts
 
 During backend build, SQL artifact generators are copied into the transient
-`BACKEND_TARGET_REPO_PATH/build_scripts/` directory, executed from the backend
-target repo root, and removed after DB artifacts are packaged. The build does
+`BACKEND_SOURCE_REPO_PATH/build_scripts/` directory, executed from the backend
+source repo root, and removed after DB artifacts are packaged. The build does
 not use or leave files in the backend project's regular `scripts/` directory.
 The Python venv for these generators is resolved under `BACKEND_SOURCE_REPO_PATH`
 using `BACKEND_BUILD_VENV_RELATIVE_PATH`; when it is absent, build creates it
 through Git Bash with `python -m venv` and does not install dev requirements.
 SQL generators run through Git Bash with the source venv `python.exe`; build does
-not call `cmd.exe` or `activate.bat` for this step.
+not call `cmd.exe` or `activate.bat` for this step. DB summary/run_all artifacts
+are generated from source repo state; target repo is used only for the synced
+backend code archive.
 
 The build creates three self-contained DB archives:
 

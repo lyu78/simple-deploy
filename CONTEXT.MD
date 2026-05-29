@@ -345,14 +345,14 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 
 - Work is done on local branch `dev`.
 - Additional backend artifact generators live in `builder/scripts/additional_artifacts/`.
-- During backend build the generators are copied into transient `BACKEND_TARGET_REPO_PATH/build_scripts/`, run from the backend target repo root, and the directory is removed after DB artifacts are packaged.
+- During backend build the DB artifact generators are copied into transient `BACKEND_SOURCE_REPO_PATH/build_scripts/`, run from the backend source repo root, and the directory is removed after DB artifacts are packaged. DB summary/run_all intermediate files are generated from source repo state; target repo is only used for the synced backend code archive.
 - Backend build resolves the backend venv via `BACKEND_BUILD_VENV_RELATIVE_PATH` relative to `BACKEND_SOURCE_REPO_PATH`; default is `.venv/Scripts/activate.bat`. If the venv is missing, build creates it through Git Bash with `python -m venv` and does not install dev requirements. SQL generators then run through Git Bash with the source venv `python.exe`, not through `cmd.exe` or `activate.bat`.
-- Generated SQL files are selected only when their names contain the current short `HEAD` hash of the backend target repo.
+- Generated SQL files are selected only when their names contain the current short `HEAD` hash of the backend source repo.
 - `create_sql_migrations.py` always writes a matching `summary_sql_*_<commit>.sql`; if no new Django migrations are detected, the file is a no-op summary entrypoint so the schema artifact still exists.
 - Backend artifact packaging also has a fallback: if no matching summary SQL exists after generator execution, it creates `summary_sql_noop_<commit>.sql` and packages that schema entrypoint.
 - Backend build creates three DB artifact archives: schema, insert, and update. The insert/update archives include their matching `run_all_*` entrypoint and only the `docs/database/scripts/` files referenced by that entrypoint's `\i` includes.
-- `run_all_insert` and `run_all_update` are generated inside `build_scripts`, then packaged at archive root. They include `\timing on`, disable `synchronous_commit` during execution, apply PostgreSQL parallel/work memory session settings, and restore `synchronous_commit` at the end.
+- `run_all_insert` and `run_all_update` are generated inside source `build_scripts`, then packaged at archive root. They include `\timing on`, disable `synchronous_commit` during execution, apply PostgreSQL parallel/work memory session settings, and restore `synchronous_commit` at the end.
 - If INSERT scripts are not idempotent, `create_run_all_sql.py` exits non-zero and the build pipeline must fail before release archiving continues.
 - Deploy applies schema SQL on the DB VM, then data SQL (`run_all_insert`, then `run_all_update`), then app VM runs `manage.py migrate --fake` and `sync_action_role`.
 - Utility helpers for git output, strict single-file matching, and tar additions live in `builder/src/utils.py`; backend build keeps only backend-specific orchestration.
-- The generator copy step recreates `<BACKEND_TARGET_REPO_PATH>/build_scripts` for each build and fails if that path exists but is not a directory.
+- The generator copy step recreates `<BACKEND_SOURCE_REPO_PATH>/build_scripts` for each build and fails if that path exists but is not a directory.
