@@ -1652,7 +1652,7 @@ def deploy(args: argparse.Namespace) -> int:
     else:
         print("SKIP healthcheck: disabled")
 
-    create_backend_summary_mr(env, build_version)
+    print("SKIP backend summary MR: schema summary SQL generation is temporarily disabled", flush=True)
 
     print("DEPLOY SUMMARY")
     for line in deploy_summary_lines(build_version, release_dir, artifacts):

@@ -137,7 +137,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
 
         self.assertTrue(build_scripts_dir.is_dir())
         self.assertFalse(stale_file.exists())
-        self.assertTrue((build_scripts_dir / "create_sql_migrations.py").is_file())
+        self.assertFalse((build_scripts_dir / "create_sql_migrations.py").exists())
         self.assertTrue((build_scripts_dir / "create_run_all_sql.py").is_file())
 
         _cleanup_build_scripts(build_scripts_dir)
@@ -202,11 +202,10 @@ class BuildBackendArtifactTests(unittest.TestCase):
             with patch("src.build_backend._run_git_bash") as run_mock:
                 _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
-        self.assertEqual(run_mock.call_count, 4)
+        self.assertEqual(run_mock.call_count, 3)
         pip_upgrade_args, pip_upgrade_kwargs = run_mock.call_args_list[0]
         pip_install_args, pip_install_kwargs = run_mock.call_args_list[1]
         first_args, first_kwargs = run_mock.call_args_list[2]
-        second_args, second_kwargs = run_mock.call_args_list[3]
         self.assertIn("/.venv/Scripts/python.exe", pip_upgrade_args[0])
         self.assertIn("-m pip install", pip_upgrade_args[0])
         self.assertIn("--trusted-host pypi.org", pip_upgrade_args[0])
@@ -217,14 +216,10 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertIn("--trusted-host files.pythonhosted.org", pip_install_args[0])
         self.assertIn("/.venv/Scripts/python.exe", first_args[0])
         self.assertIn("-Xutf8", first_args[0])
-        self.assertIn("build_scripts/create_sql_migrations.py", first_args[0])
-        self.assertIn("/.venv/Scripts/python.exe", second_args[0])
-        self.assertIn("-Xutf8", second_args[0])
-        self.assertIn("build_scripts/create_run_all_sql.py", second_args[0])
+        self.assertIn("build_scripts/create_run_all_sql.py", first_args[0])
         self.assertEqual(pip_upgrade_kwargs["cwd"], source_repo)
         self.assertEqual(pip_install_kwargs["cwd"], source_repo)
         self.assertEqual(first_kwargs["cwd"], source_repo)
-        self.assertEqual(second_kwargs["cwd"], source_repo)
 
     def test_backend_build_requirements_path_can_be_configured(self):
         source_repo = self.root / "source"

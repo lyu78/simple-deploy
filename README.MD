@@ -16,31 +16,26 @@ from `BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH` (default `requirements.txt`) and
 does not install dev requirements. SQL generators run through Git Bash with the
 source venv `python.exe -Xutf8`; build does not call `cmd.exe` or `activate.bat`
 for this step.
-`create_sql_migrations.py` also calls Django management commands through the
-same interpreter with `-Xutf8` and tolerant UTF-8 decoding for captured output.
-DB summary/run_all artifacts are generated from source repo state; target repo is
-used only for the synced backend code archive.
+The schema summary generator `create_sql_migrations.py` is temporarily disabled.
+Only run_all artifacts are generated from source repo state; target repo is used
+only for the synced backend code archive.
 
 The build logs the `build_scripts` create/copy/run steps, the exact generator
-commands, the summary SQL output path, lookup directories/patterns for generated
-SQL files, and the debug skip of `build_scripts` cleanup.
+commands, lookup directories/patterns for generated SQL files, and the debug
+skip of `build_scripts` cleanup.
 
-The build creates three self-contained DB archives:
+The build currently creates two self-contained DB archives:
 
-- `db_schema_r_<release>-c_<commit>.tar.gz` contains the schema SQL from `docs/database/summary/`.
 - `db_insert_r_<release>-c_<commit>.tar.gz` contains `run_all_insert_<commit>.sql` and only SQL files referenced by its `\i` includes.
 - `db_update_r_<release>-c_<commit>.tar.gz` contains `run_all_update_<commit>.sql` and only SQL files referenced by its `\i` includes.
 
-During Windows runner deploy, applying `db_schema_r_<release>-c_<commit>.tar.gz`
-is temporarily disabled. The build still creates the schema archive, but deploy
-does not upload, unpack or execute `docs/database/summary/summary_sql_*.sql` on
-the DB VM.
+During Windows runner deploy, applying schema summary SQL is temporarily
+disabled. The build does not create `db_schema_r_<release>-c_<commit>.tar.gz`,
+and deploy does not upload, unpack or execute
+`docs/database/summary/summary_sql_*.sql` on the DB VM.
 
-After a successful Windows runner deploy and healthcheck, any changed files under
-`BACKEND_SOURCE_REPO_PATH/docs/database/summary` are committed on a new source
-repo branch `feature/db-summary-<release>-<timestamp>` and pushed with GitLab
-merge request push options targeting `dev`. Only the summary directory is added;
-debug `build_scripts` files are left out.
+The post-deploy source repo MR for `docs/database/summary` is also temporarily
+disabled while schema summary generation is disabled.
 
 Generated `run_all_insert` and `run_all_update` files include `\timing on`,
 temporarily set `synchronous_commit = OFF`, apply PostgreSQL parallel/work memory

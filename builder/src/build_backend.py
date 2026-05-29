@@ -37,6 +37,7 @@ logging.basicConfig(level=logging.INFO)
 INCLUDE_RE = re.compile(r"^\s*\\i\s+['\"]?([^'\"\s]+)['\"]?")
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
+SCHEMA_SUMMARY_SQL_ENABLED = False
 DEFAULT_BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH = "requirements.txt"
 PIP_TRUSTED_HOSTS = (
     "pypi.org",
@@ -83,6 +84,9 @@ def _prepare_build_scripts(repo_path: Path) -> Path:
 
     try:
         for script_path in source_dir.glob("*.py"):
+            if not SCHEMA_SUMMARY_SQL_ENABLED and script_path.name == "create_sql_migrations.py":
+                _log_build_step(f"skip generator copy while schema summary SQL is disabled: {script_path.name}")
+                continue
             _log_build_step(f"copy generator: {script_path.name} -> {target_dir / script_path.name}")
             shutil.copy2(script_path, target_dir / script_path.name)
     except Exception:
@@ -173,10 +177,11 @@ def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_di
     python_path = _python_path_from_activation_script(venv_activate_path)
     _install_backend_build_requirements(source_repo_path, python_path)
     bash_python = shlex.quote(_to_git_bash_path(python_path))
-    scripts = [
-        "create_sql_migrations.py",
-        "create_run_all_sql.py",
-    ]
+    scripts = ["create_run_all_sql.py"]
+    if SCHEMA_SUMMARY_SQL_ENABLED:
+        scripts.insert(0, "create_sql_migrations.py")
+    else:
+        _log_build_step("skip schema summary SQL generator: temporarily disabled")
     _log_build_step(f"run generators from source repo: {source_repo_path}")
     _log_build_step(f"use source venv python: {python_path}")
     for script_name in scripts:
@@ -250,11 +255,14 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
     try:
         _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
-        _log_matching_files(
-            source_repo / "docs" / "database" / "summary",
-            f"summary_sql_*_{commit_hash}.sql",
-            "schema summary SQL",
-        )
+        if SCHEMA_SUMMARY_SQL_ENABLED:
+            _log_matching_files(
+                source_repo / "docs" / "database" / "summary",
+                f"summary_sql_*_{commit_hash}.sql",
+                "schema summary SQL",
+            )
+        else:
+            _log_build_step("skip schema summary SQL archive: temporarily disabled")
         _log_matching_files(
             build_scripts_dir,
             f"run_all_insert_{commit_hash}.sql",
@@ -266,24 +274,26 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
             "run_all update SQL",
         )
 
-        schema_sql = one_match(
-            source_repo / "docs" / "database" / "summary",
-            f"summary_sql_*_{commit_hash}.sql",
-        )
         run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
         run_all_update = one_match(build_scripts_dir, f"run_all_update_{commit_hash}.sql")
 
-        schema_archive = _create_db_sql_artifact(
-            release_dir,
-            "schema",
-            build_version,
-            commit_hash,
-            lambda archive: add_file_to_tar(
-                archive,
-                schema_sql,
-                f"docs/database/summary/{schema_sql.name}",
-            ),
-        )
+        schema_archive = None
+        if SCHEMA_SUMMARY_SQL_ENABLED:
+            schema_sql = one_match(
+                source_repo / "docs" / "database" / "summary",
+                f"summary_sql_*_{commit_hash}.sql",
+            )
+            schema_archive = _create_db_sql_artifact(
+                release_dir,
+                "schema",
+                build_version,
+                commit_hash,
+                lambda archive: add_file_to_tar(
+                    archive,
+                    schema_sql,
+                    f"docs/database/summary/{schema_sql.name}",
+                ),
+            )
         insert_archive = _create_db_sql_artifact(
             release_dir,
             "insert",
@@ -307,12 +317,14 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
     finally:
         _cleanup_build_scripts(build_scripts_dir)
 
-    return {
+    manifest = {
         "backend_commit_short_hash": commit_hash,
-        "db_schema_archive": schema_archive,
         "db_insert_archive": insert_archive,
         "db_update_archive": update_archive,
     }
+    if schema_archive:
+        manifest["db_schema_archive"] = schema_archive
+    return manifest
 
 
 def build_backend(
