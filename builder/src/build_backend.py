@@ -87,8 +87,7 @@ def _prepare_build_scripts(repo_path: Path) -> Path:
 
 def _cleanup_build_scripts(build_scripts_dir: Path) -> None:
     if build_scripts_dir.is_dir():
-        _log_build_step(f"cleanup build_scripts directory: {build_scripts_dir}")
-        shutil.rmtree(build_scripts_dir)
+        _log_build_step(f"skip cleanup build_scripts directory for debug: {build_scripts_dir}")
 
 
 def _log_matching_files(root: Path, pattern: str, label: str) -> None:

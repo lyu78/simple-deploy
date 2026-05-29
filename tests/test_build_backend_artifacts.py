@@ -129,7 +129,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _run_all_include_paths(self.repo, run_all)
 
-    def test_build_scripts_directory_is_transient(self):
+    def test_build_scripts_directory_is_kept_for_debug(self):
         stale_file = self._write("build_scripts/stale.sql")
 
         build_scripts_dir = _prepare_build_scripts(self.repo)
@@ -141,7 +141,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
 
         _cleanup_build_scripts(build_scripts_dir)
 
-        self.assertFalse(build_scripts_dir.exists())
+        self.assertTrue(build_scripts_dir.exists())
 
     def test_run_all_preamble_contains_postgres_session_settings(self):
         module = load_create_run_all_sql_module()
