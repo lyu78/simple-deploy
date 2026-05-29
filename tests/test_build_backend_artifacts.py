@@ -204,8 +204,10 @@ class BuildBackendArtifactTests(unittest.TestCase):
         first_args, first_kwargs = run_mock.call_args_list[0]
         second_args, second_kwargs = run_mock.call_args_list[1]
         self.assertIn("/.venv/Scripts/python.exe", first_args[0])
+        self.assertIn("-Xutf8", first_args[0])
         self.assertIn("build_scripts/create_sql_migrations.py", first_args[0])
         self.assertIn("/.venv/Scripts/python.exe", second_args[0])
+        self.assertIn("-Xutf8", second_args[0])
         self.assertIn("build_scripts/create_run_all_sql.py", second_args[0])
         self.assertEqual(first_kwargs["cwd"], source_repo)
         self.assertEqual(second_kwargs["cwd"], source_repo)

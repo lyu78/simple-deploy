@@ -140,7 +140,7 @@ def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_di
     _log_build_step(f"use source venv python: {python_path}")
     for script_name in scripts:
         script_path = f"{BUILD_SCRIPTS_DIR_NAME}/{script_name}"
-        command = f"{bash_python} {shlex.quote(script_path)}"
+        command = f"{bash_python} -Xutf8 {shlex.quote(script_path)}"
         _log_build_step("")
         _log_build_step(f"run generator: {script_path}")
         _log_build_step(f"command: {command}")

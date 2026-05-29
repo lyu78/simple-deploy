@@ -21,6 +21,7 @@ import os
 from datetime import datetime
 import logging
 import subprocess
+import sys
 
 UNUSED = "-- Unused migration"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -51,6 +52,22 @@ log_step(f"base dir: {BASE_DIR}")
 log_step(f"summary dir: {SUMMARY_DIR}")
 log_step(f"commit hash: {COMMIT_HASH}")
 
+
+def run_python_manage(*args):
+    return subprocess.run(
+        [
+            sys.executable,
+            "-Xutf8",
+            "example_backend_app/manage.py",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
 summary_sql = ""
 
 migrations = {}
@@ -77,14 +94,7 @@ for file in os.listdir(SUMMARY_DIR):
 
         migrations_list.append(row.replace("-- ", ""))
 
-migrations_plan = subprocess.run(
-    [
-        'python',
-        'example_backend_app/manage.py',
-        'showmigrations',
-        '--plan'
-    ], capture_output=True, text=True
-)
+migrations_plan = run_python_manage("showmigrations", "--plan")
 
 statuses_names = migrations_plan.stdout.split("\n")
 
@@ -118,14 +128,7 @@ for m, v in migrations.items():
     logging.info(f"Формирование для {m}.")
 
     summary_sql += f"-- {m}\n\n"
-    result = subprocess.run(
-        [
-            'python',
-            'example_backend_app/manage.py',
-            'sqlmigrate',
-            v[1],
-            v[2]
-        ], capture_output=True, text=True)
+    result = run_python_manage("sqlmigrate", v[1], v[2])
     summary_sql += result.stdout
     summary_sql += "\n\n"
     generated_any = True
