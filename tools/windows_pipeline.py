@@ -1377,11 +1377,18 @@ def send_outlook_success_email(
     }
     subject = format_outlook_template(runtime.get("outlook_email_subject", ""), context)
     body = format_outlook_template(runtime.get("outlook_email_body", ""), context)
+    manifest_path = release_dir / RELEASE_MANIFEST_NAME
+    attachment_paths = [str(manifest_path)] if manifest_path.is_file() else []
+    if attachment_paths:
+        print(f"INFO Outlook success email attachment: {manifest_path}", flush=True)
+    else:
+        print(f"WARN Outlook success email attachment missing: {manifest_path}", flush=True)
     payload = {
         "to": recipients,
         "cc": cc,
         "subject": subject,
         "body": body,
+        "attachments": attachment_paths,
     }
     powershell = """
 $ErrorActionPreference = 'Stop'
@@ -1394,6 +1401,13 @@ if ($payload.cc -and $payload.cc.Count -gt 0) {
 }
 $mail.Subject = [string]$payload.subject
 $mail.Body = [string]$payload.body
+if ($payload.attachments) {
+    foreach ($attachment in $payload.attachments) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$attachment)) {
+            [void]$mail.Attachments.Add([string]$attachment)
+        }
+    }
+}
 $mail.Send()
 Write-Output 'sent'
 """.strip()

@@ -156,7 +156,9 @@ false` logs Outlook send failures as WARN after an otherwise successful deploy;
 `true` makes them fail the pipeline. `dry-run` validates recipients, templates
 and Outlook COM creation. Available template variables are `{build_version}`,
 `{stand_url}`, `{dev_domain}`, `{release_dir}`, `{artifacts_text}`, and
-`{release_changelog_text}`.
+`{release_changelog_text}`. After successful deploy the email attaches
+`release_manifest.json` from the release directory when the file exists; a
+missing manifest is logged as WARN and does not block the email by itself.
 
 ## Главная точка входа
 

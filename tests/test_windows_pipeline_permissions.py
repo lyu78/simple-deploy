@@ -1,8 +1,15 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 from tools.windows_pipeline import (
+    Artifact,
+    CommandResult,
     derive_service_permission_check,
     is_sudo_command,
+    send_outlook_success_email,
     sudo_list_command,
 )
 
@@ -28,6 +35,37 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
     def test_is_sudo_command(self):
         self.assertTrue(is_sudo_command("sudo /bin/systemctl restart nginx"))
         self.assertFalse(is_sudo_command("/bin/systemctl restart nginx"))
+
+    def test_outlook_success_email_attaches_release_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            release_dir = Path(tmp)
+            manifest = release_dir / "release_manifest.json"
+            manifest.write_text("{}", encoding="utf-8")
+            runtime = {
+                "outlook_email_enabled": True,
+                "outlook_email_recipients": ["dev-team@example.local"],
+                "outlook_email_subject": "Release {build_version}",
+                "outlook_email_body": "Artifacts:\n{artifacts_text}",
+            }
+            env = {"DEV_DOMAIN": "dev.example.local"}
+            artifacts = [
+                Artifact(
+                    name="backend",
+                    local_path=release_dir / "backend.tar.gz",
+                    remote_archive="/tmp/backend.tar.gz",
+                    extract_path="/opt/backend",
+                )
+            ]
+
+            with patch("tools.windows_pipeline.release_changelog_text", return_value="none"):
+                with patch(
+                    "tools.windows_pipeline.run_command",
+                    return_value=CommandResult(0, "sent", ""),
+                ) as run_mock:
+                    send_outlook_success_email(env, runtime, "1.2.3", release_dir, artifacts)
+
+            payload = json.loads(run_mock.call_args.kwargs["input_text"])
+            self.assertEqual(payload["attachments"], [str(manifest)])
 
 
 if __name__ == "__main__":

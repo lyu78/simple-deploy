@@ -196,7 +196,9 @@ Required local setup: installed and configured desktop Outlook, an Outlook
 profile available for the current Windows user, non-empty
 `outlook_email_recipients`, `outlook_email_subject`, and `outlook_email_body` in
 `windows_pipeline.local.json`. `dry-run` validates recipients, templates and
-Outlook COM creation before deploy.
+Outlook COM creation before deploy. After successful deploy the email includes
+`release_manifest.json` from the release directory as an attachment when the
+file exists.
 
 Доступные шаблоны для темы и тела письма: `{build_version}`, `{stand_url}`,
 `{dev_domain}`, `{release_dir}`, `{artifacts_text}`, `{release_changelog_text}`.
