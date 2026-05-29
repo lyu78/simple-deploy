@@ -70,6 +70,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             self.assertIn("font-family: Arial", powershell)
             self.assertIn("font-size: 10pt", powershell)
             self.assertIn("HtmlEncode", powershell)
+            self.assertIn("<br>", powershell)
 
 
 if __name__ == "__main__":
