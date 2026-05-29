@@ -28,6 +28,12 @@ The build creates three self-contained DB archives:
 - `db_insert_r_<release>-c_<commit>.tar.gz` contains `run_all_insert_<commit>.sql` and only SQL files referenced by its `\i` includes.
 - `db_update_r_<release>-c_<commit>.tar.gz` contains `run_all_update_<commit>.sql` and only SQL files referenced by its `\i` includes.
 
+During Windows runner deploy, `db_schema_r_<release>-c_<commit>.tar.gz` is
+uploaded to the DB VM, unpacked under `REMOTE_TMP_ROOT/<release>/db_schema`, and
+its single `docs/database/summary/summary_sql_*.sql` entrypoint is executed
+through remote `psql --set=ON_ERROR_STOP=1 -f` before Django management
+commands run on the app VM.
+
 Generated `run_all_insert` and `run_all_update` files include `\timing on`,
 temporarily set `synchronous_commit = OFF`, apply PostgreSQL parallel/work memory
 session settings, and restore `synchronous_commit = ON` at the end.

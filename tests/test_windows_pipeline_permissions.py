@@ -9,6 +9,8 @@ from tools.windows_pipeline import (
     CommandResult,
     derive_service_permission_check,
     is_sudo_command,
+    resolve_db_schema_artifact,
+    scp_file,
     send_outlook_success_email,
     sudo_list_command,
 )
@@ -35,6 +37,41 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
     def test_is_sudo_command(self):
         self.assertTrue(is_sudo_command("sudo /bin/systemctl restart nginx"))
         self.assertFalse(is_sudo_command("/bin/systemctl restart nginx"))
+
+    def test_resolve_db_schema_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            release_dir = Path(tmp)
+            artifact_path = release_dir / "db_schema_r_1.2.3-c_abc123.tar.gz"
+            artifact_path.write_text("", encoding="utf-8")
+
+            artifact = resolve_db_schema_artifact(
+                {"REMOTE_TMP_ROOT": "/tmp/simple-deploy"},
+                "1.2.3",
+                release_dir,
+            )
+
+            self.assertEqual(artifact.local_path, artifact_path)
+            self.assertEqual(artifact.remote_archive, "/tmp/simple-deploy/1.2.3/db_schema.tar.gz")
+            self.assertEqual(artifact.remote_extract_path, "/tmp/simple-deploy/1.2.3/db_schema")
+            self.assertEqual(artifact.entrypoint_dir, "docs/database/summary")
+            self.assertEqual(artifact.entrypoint_pattern, "summary_sql_*.sql")
+
+    def test_scp_file_uses_requested_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local_path = Path(tmp) / "db_schema.tar.gz"
+            local_path.write_text("", encoding="utf-8")
+
+            with patch("tools.windows_pipeline.ssh_key_args", return_value=["DB_KEY"]) as key_mock:
+                with patch(
+                    "tools.windows_pipeline.run_command",
+                    return_value=CommandResult(0, "", ""),
+                ) as run_mock:
+                    scp_file({}, local_path, "db-user", "db.example.local", "/tmp/db_schema.tar.gz", scope="DB")
+
+            key_mock.assert_called_once_with({}, "DB")
+            command = run_mock.call_args.args[0]
+            self.assertIn("DB_KEY", command)
+            self.assertIn(f"db-user@db.example.local:/tmp/db_schema.tar.gz", command)
 
     def test_outlook_success_email_attaches_release_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

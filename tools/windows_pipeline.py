@@ -86,6 +86,16 @@ class Artifact:
     extract_path: str
 
 
+@dataclass
+class DbSqlArtifact:
+    name: str
+    local_path: Path
+    remote_archive: str
+    remote_extract_path: str
+    entrypoint_dir: str
+    entrypoint_pattern: str
+
+
 class Reporter:
     def __init__(self) -> None:
         self.issues: list[str] = []
@@ -516,11 +526,18 @@ def ssh_command(
     )
 
 
-def scp_file(env: dict[str, str], local_path: Path, user: str, host: str, remote_path: str) -> CommandResult:
+def scp_file(
+    env: dict[str, str],
+    local_path: Path,
+    user: str,
+    host: str,
+    remote_path: str,
+    scope: str = "APP",
+) -> CommandResult:
     return run_command(
         [
             "scp",
-            *ssh_key_args(env, "APP"),
+            *ssh_key_args(env, scope),
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=10",
             "-o", "StrictHostKeyChecking=no",
@@ -1108,6 +1125,33 @@ def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path
     return artifacts
 
 
+def resolve_db_schema_artifact(env: dict[str, str], build_version: str, release_dir: Path) -> DbSqlArtifact:
+    print(f"RESOLVE DB schema artifact in: {release_dir}", flush=True)
+    if not release_dir.is_dir():
+        raise RuntimeError(f"Директория релиза не существует: {release_dir}")
+
+    pattern = f"db_schema_r_{build_version}-c_*.tar.gz"
+    matches = [path for path in release_dir.iterdir() if path.is_file() and fnmatch.fnmatch(path.name, pattern)]
+    if not matches:
+        raise RuntimeError(f"В {release_dir} не найден DB schema архив по шаблону {pattern}")
+
+    newest = max(matches, key=lambda path: path.stat().st_mtime)
+    remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    artifact = DbSqlArtifact(
+        name="db_schema",
+        local_path=newest,
+        remote_archive=f"{remote_dir}/db_schema.tar.gz",
+        remote_extract_path=f"{remote_dir}/db_schema",
+        entrypoint_dir="docs/database/summary",
+        entrypoint_pattern="summary_sql_*.sql",
+    )
+    print(
+        f"RESOLVE DB schema artifact: {artifact.local_path.name} -> {artifact.remote_extract_path}",
+        flush=True,
+    )
+    return artifact
+
+
 def run_or_raise(label: str, result: CommandResult, mask: Iterable[str] = ()) -> None:
     print(f"CHECK {label}", flush=True)
     stdout = result.stdout.strip()
@@ -1145,6 +1189,58 @@ def remote_clean_unpack_command(artifact: Artifact) -> str:
         'find "$target" -mindepth 1 -maxdepth 1 ! -name ".env" -exec rm -rf -- {} +; '
         'tar -xzf "$archive" -C "$target" --strip-components=1'
     )
+
+
+def remote_db_schema_unpack_command(artifact: DbSqlArtifact) -> str:
+    return (
+        "set -e; "
+        f"archive={sh_quote(artifact.remote_archive)}; "
+        f"target={sh_quote(artifact.remote_extract_path)}; "
+        'case "$target" in ""|"/") echo "unsafe extract path: $target"; exit 20;; esac; '
+        'rm -rf "$target"; '
+        'mkdir -p "$target"; '
+        'tar -xzf "$archive" -C "$target"; '
+        f"entrypoint_dir=\"$target/{artifact.entrypoint_dir}\"; "
+        'test -d "$entrypoint_dir"; '
+        f'test "$(find "$entrypoint_dir" -maxdepth 1 -type f -name {sh_quote(artifact.entrypoint_pattern)} | wc -l)" -eq 1'
+    )
+
+
+def run_db_schema_summary(env: dict[str, str], runtime: dict, artifact: DbSqlArtifact) -> None:
+    db_user = require_value(env, "DB_VM_USER")
+    db_host = require_value(env, "DB_VM_HOST")
+    remote_dir = str(PurePosixPath(artifact.remote_archive).parent)
+    psql_base, mask = db_psql_base_command(env, runtime)
+
+    print(f"RUN create DB remote release dir: {remote_dir}", flush=True)
+    run_or_raise(
+        "create DB remote release dir",
+        ssh_command(env, db_user, db_host, f"mkdir -p {sh_quote(remote_dir)}", "DB"),
+    )
+
+    print(f"RUN upload {artifact.name}: {artifact.local_path} -> {artifact.remote_archive}", flush=True)
+    run_or_raise(
+        f"upload {artifact.name}",
+        scp_file(env, artifact.local_path, db_user, db_host, artifact.remote_archive, scope="DB"),
+    )
+
+    print(f"RUN unpack {artifact.name}: {artifact.remote_archive} -> {artifact.remote_extract_path}", flush=True)
+    run_or_raise(
+        f"unpack {artifact.name}",
+        ssh_command(env, db_user, db_host, remote_db_schema_unpack_command(artifact), "DB", timeout=120),
+    )
+
+    command = (
+        "set -e; "
+        f"cd {sh_quote(artifact.remote_extract_path)}; "
+        f"sql_file=$(find {sh_quote(artifact.entrypoint_dir)} -maxdepth 1 -type f "
+        f"-name {sh_quote(artifact.entrypoint_pattern)} | sort | tail -n 1); "
+        'test -n "$sql_file"; '
+        f"{psql_base} -f \"$sql_file\""
+    )
+    print(f"RUN DB schema summary SQL: {artifact.remote_extract_path}/{artifact.entrypoint_dir}", flush=True)
+    result = ssh_command(env, db_user, db_host, command, "DB", timeout=300, mask=mask)
+    run_or_raise("DB schema summary SQL", result, mask=mask)
 
 
 def run_service_steps(env: dict[str, str], runtime: dict, phase: str) -> None:
@@ -1437,6 +1533,7 @@ def deploy(args: argparse.Namespace) -> int:
     runtime = load_runtime_config(args.config_file)
     build_version, release_dir = resolve_release_dir(env, args.build_version, args.latest)
     artifacts = resolve_artifacts(env, build_version, release_dir)
+    db_schema_artifact = resolve_db_schema_artifact(env, build_version, release_dir)
     print(f"DEPLOY build_version: {build_version}", flush=True)
     print(f"DEPLOY release_dir: {release_dir}", flush=True)
 
@@ -1476,6 +1573,7 @@ def deploy(args: argparse.Namespace) -> int:
 
     run_service_steps(env, runtime, "after_unpack")
     run_db_maintenance(env, runtime, "before_migrate")
+    run_db_schema_summary(env, runtime, db_schema_artifact)
 
     for command in management_commands(env, runtime):
         remote = (
