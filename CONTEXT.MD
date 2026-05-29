@@ -346,7 +346,7 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 - Work is done on local branch `dev`.
 - Additional backend artifact generators live in `builder/scripts/additional_artifacts/`.
 - During backend build the generators are copied into transient `BACKEND_TARGET_REPO_PATH/build_scripts/`, run from the backend target repo root, and the directory is removed after DB artifacts are packaged.
-- Backend build activates the backend venv via `BACKEND_BUILD_VENV_RELATIVE_PATH`, resolved relative to `BACKEND_SOURCE_REPO_PATH`; default is `.venv/Scripts/activate.bat`. If the venv is missing, build creates it with `python -m venv` and does not install dev requirements.
+- Backend build resolves the backend venv via `BACKEND_BUILD_VENV_RELATIVE_PATH` relative to `BACKEND_SOURCE_REPO_PATH`; default is `.venv/Scripts/activate.bat`. If the venv is missing, build creates it through Git Bash with `python -m venv` and does not install dev requirements. SQL generators then run through Git Bash with the source venv `python.exe`, not through `cmd.exe` or `activate.bat`.
 - Generated SQL files are selected only when their names contain the current short `HEAD` hash of the backend target repo.
 - Backend build creates three DB artifact archives: schema, insert, and update. The insert/update archives include their matching `run_all_*` entrypoint and only the `docs/database/scripts/` files referenced by that entrypoint's `\i` includes.
 - `run_all_insert` and `run_all_update` are generated inside `build_scripts`, then packaged at archive root. They include `\timing on`, disable `synchronous_commit` during execution, apply PostgreSQL parallel/work memory session settings, and restore `synchronous_commit` at the end.

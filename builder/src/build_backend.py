@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -35,6 +36,19 @@ logging.basicConfig(level=logging.INFO)
 INCLUDE_RE = re.compile(r"^\s*\\i\s+['\"]?([^'\"\s]+)['\"]?")
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
+
+
+def _to_git_bash_path(path: Path) -> str:
+    resolved = path.resolve()
+    text = resolved.as_posix()
+    if len(text) >= 3 and text[1:3] == ":/":
+        return f"/{text[0].lower()}{text[2:]}"
+    return text
+
+
+def _run_git_bash(command: str, cwd: Path) -> None:
+    bash_path = get_required_env("GIT_BASH_PATH")
+    subprocess.run([bash_path, "-lc", command], cwd=cwd, check=True)
 
 
 def _prepare_build_scripts(repo_path: Path) -> Path:
@@ -78,7 +92,10 @@ def _ensure_backend_build_venv(source_repo_path: Path) -> Path:
 
     venv_dir = venv_activate_path.parents[1]
     logging.info("Backend source venv not found, creating: %s", venv_dir)
-    subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], cwd=source_repo_path, check=True)
+    _run_git_bash(
+        f"python -m venv {shlex.quote(_to_git_bash_path(venv_dir))}",
+        cwd=source_repo_path,
+    )
 
     if not venv_activate_path.is_file():
         raise RuntimeError(f"Backend venv activation script not found after creation: {venv_activate_path}")
@@ -86,17 +103,24 @@ def _ensure_backend_build_venv(source_repo_path: Path) -> Path:
     return venv_activate_path
 
 
+def _python_path_from_activation_script(venv_activate_path: Path) -> Path:
+    scripts_dir = venv_activate_path.parent
+    python_path = scripts_dir / "python.exe"
+    if not python_path.is_file():
+        raise RuntimeError(f"Backend venv python not found: {python_path}")
+    return python_path
+
+
 def _run_additional_artifact_generators(repo_path: Path, source_repo_path: Path, build_scripts_dir: Path) -> None:
     """Run SQL artifact generators through the backend source virtualenv."""
     venv_activate_path = _ensure_backend_build_venv(source_repo_path)
-
+    python_path = _python_path_from_activation_script(venv_activate_path)
+    bash_python = shlex.quote(_to_git_bash_path(python_path))
     commands = [
-        f'call "{venv_activate_path}"',
-        f"python {BUILD_SCRIPTS_DIR_NAME}\\create_sql_migrations.py",
-        f"python {BUILD_SCRIPTS_DIR_NAME}\\create_run_all_sql.py",
+        f"{bash_python} {shlex.quote(f'{BUILD_SCRIPTS_DIR_NAME}/create_sql_migrations.py')}",
+        f"{bash_python} {shlex.quote(f'{BUILD_SCRIPTS_DIR_NAME}/create_run_all_sql.py')}",
     ]
-    command = " && ".join(commands)
-    subprocess.run(["cmd.exe", "/C", command], cwd=repo_path, check=True)
+    _run_git_bash(" && ".join(commands), cwd=repo_path)
 
 
 def _run_all_include_paths(repo: Path, run_all_sql: Path) -> list[Path]:

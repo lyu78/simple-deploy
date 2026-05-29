@@ -16,6 +16,7 @@ from src.build_backend import (  # noqa: E402
     _create_db_sql_artifact,
     _ensure_backend_build_venv,
     _prepare_build_scripts,
+    _run_additional_artifact_generators,
     _run_all_include_paths,
 )
 from src.utils import add_file_to_tar  # noqa: E402
@@ -163,18 +164,49 @@ class BuildBackendArtifactTests(unittest.TestCase):
         source_repo.mkdir()
         activate_path = source_repo / ".venv/Scripts/activate.bat"
 
-        def fake_run(*args, **kwargs):
+        def fake_run_git_bash(*args, **kwargs):
             activate_path.parent.mkdir(parents=True)
             activate_path.write_text("", encoding="utf-8")
 
-        with patch.dict("os.environ", {"BACKEND_BUILD_VENV_RELATIVE_PATH": ".venv/Scripts/activate.bat"}):
-            with patch("src.build_backend.subprocess.run", side_effect=fake_run) as run_mock:
+        env = {
+            "BACKEND_BUILD_VENV_RELATIVE_PATH": ".venv/Scripts/activate.bat",
+            "GIT_BASH_PATH": "bash",
+        }
+        with patch.dict("os.environ", env):
+            with patch("src.build_backend._run_git_bash", side_effect=fake_run_git_bash) as run_mock:
                 self.assertEqual(_ensure_backend_build_venv(source_repo), activate_path)
 
         args, kwargs = run_mock.call_args
-        self.assertEqual(args[0][1:3], ["-m", "venv"])
-        self.assertEqual(Path(args[0][3]), source_repo / ".venv")
+        self.assertIn("python -m venv", args[0])
+        self.assertIn("/.venv", args[0])
         self.assertEqual(kwargs["cwd"], source_repo)
+
+    def test_artifact_generators_run_through_git_bash_with_source_venv_python(self):
+        source_repo = self.root / "source"
+        target_repo = self.root / "target"
+        source_repo.mkdir()
+        target_repo.mkdir()
+        activate_path = source_repo / ".venv/Scripts/activate.bat"
+        python_path = source_repo / ".venv/Scripts/python.exe"
+        activate_path.parent.mkdir(parents=True)
+        activate_path.write_text("", encoding="utf-8")
+        python_path.write_text("", encoding="utf-8")
+        build_scripts_dir = target_repo / "build_scripts"
+        build_scripts_dir.mkdir()
+
+        env = {
+            "BACKEND_BUILD_VENV_RELATIVE_PATH": ".venv/Scripts/activate.bat",
+            "GIT_BASH_PATH": "bash",
+        }
+        with patch.dict("os.environ", env):
+            with patch("src.build_backend._run_git_bash") as run_mock:
+                _run_additional_artifact_generators(target_repo, source_repo, build_scripts_dir)
+
+        args, kwargs = run_mock.call_args
+        self.assertIn("/.venv/Scripts/python.exe", args[0])
+        self.assertIn("build_scripts/create_sql_migrations.py", args[0])
+        self.assertIn("build_scripts/create_run_all_sql.py", args[0])
+        self.assertEqual(kwargs["cwd"], target_repo)
 
 
 if __name__ == "__main__":
