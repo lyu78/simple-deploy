@@ -200,11 +200,15 @@ class BuildBackendArtifactTests(unittest.TestCase):
             with patch("src.build_backend._run_git_bash") as run_mock:
                 _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
-        args, kwargs = run_mock.call_args
-        self.assertIn("/.venv/Scripts/python.exe", args[0])
-        self.assertIn("build_scripts/create_sql_migrations.py", args[0])
-        self.assertIn("build_scripts/create_run_all_sql.py", args[0])
-        self.assertEqual(kwargs["cwd"], source_repo)
+        self.assertEqual(run_mock.call_count, 2)
+        first_args, first_kwargs = run_mock.call_args_list[0]
+        second_args, second_kwargs = run_mock.call_args_list[1]
+        self.assertIn("/.venv/Scripts/python.exe", first_args[0])
+        self.assertIn("build_scripts/create_sql_migrations.py", first_args[0])
+        self.assertIn("/.venv/Scripts/python.exe", second_args[0])
+        self.assertIn("build_scripts/create_run_all_sql.py", second_args[0])
+        self.assertEqual(first_kwargs["cwd"], source_repo)
+        self.assertEqual(second_kwargs["cwd"], source_repo)
 
 
 if __name__ == "__main__":

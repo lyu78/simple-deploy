@@ -42,6 +42,15 @@ def get_commit_hash():
 
 COMMIT_HASH = get_commit_hash()
 
+
+def log_step(message):
+    print(f"[backend-db-artifacts:create_sql_migrations] {message}", flush=True)
+
+
+log_step(f"base dir: {BASE_DIR}")
+log_step(f"summary dir: {SUMMARY_DIR}")
+log_step(f"commit hash: {COMMIT_HASH}")
+
 summary_sql = ""
 
 migrations = {}
@@ -125,11 +134,13 @@ if not generated_any:
     summary_sql += "-- No new migrations detected for this commit.\n"
     logging.info("Новых миграций не обнаружено.")
 
-with open(
-    f"{SUMMARY_DIR}/summary_sql_{datetime_now}_{COMMIT_HASH}.sql",
-    "w", encoding="utf-8"
-) as file:
+output_path = os.path.join(SUMMARY_DIR, f"summary_sql_{datetime_now}_{COMMIT_HASH}.sql")
+log_step(f"write summary SQL: {output_path}")
+
+with open(output_path, "w", encoding="utf-8") as file:
     file.write(summary_sql)
+
+log_step(f"summary SQL written: {output_path}")
 
 if result and result.stderr:
     logging.error(result.stderr)

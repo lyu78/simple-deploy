@@ -38,6 +38,10 @@ DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
 
 
+def _log_build_step(message: str) -> None:
+    print(f"[backend-db-artifacts] {message}", flush=True)
+
+
 def _to_git_bash_path(path: Path) -> str:
     resolved = path.resolve()
     text = resolved.as_posix()
@@ -63,14 +67,16 @@ def _prepare_build_scripts(repo_path: Path) -> Path:
     if target_dir.exists():
         if not target_dir.is_dir():
             raise RuntimeError(f"Backend build scripts path exists but is not a directory: {target_dir}")
-        logging.info("Removing stale backend build scripts directory: %s", target_dir)
+        _log_build_step(f"remove stale build_scripts directory: {target_dir}")
         shutil.rmtree(target_dir)
 
-    logging.info("Copying backend artifact generators from %s to %s", source_dir, target_dir)
+    _log_build_step(f"create build_scripts directory: {target_dir}")
+    _log_build_step(f"copy artifact generators from: {source_dir}")
     target_dir.mkdir(parents=True)
 
     try:
         for script_path in source_dir.glob("*.py"):
+            _log_build_step(f"copy generator: {script_path.name} -> {target_dir / script_path.name}")
             shutil.copy2(script_path, target_dir / script_path.name)
     except Exception:
         _cleanup_build_scripts(target_dir)
@@ -81,7 +87,16 @@ def _prepare_build_scripts(repo_path: Path) -> Path:
 
 def _cleanup_build_scripts(build_scripts_dir: Path) -> None:
     if build_scripts_dir.is_dir():
+        _log_build_step(f"cleanup build_scripts directory: {build_scripts_dir}")
         shutil.rmtree(build_scripts_dir)
+
+
+def _log_matching_files(root: Path, pattern: str, label: str) -> None:
+    matches = sorted(root.glob(pattern))
+    match_names = ", ".join(match.name for match in matches) if matches else "none"
+    _log_build_step(f"{label} lookup directory: {root}")
+    _log_build_step(f"{label} lookup pattern: {pattern}")
+    _log_build_step(f"{label} matches: {match_names}")
 
 
 def _ensure_backend_build_venv(source_repo_path: Path) -> Path:
@@ -118,12 +133,19 @@ def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_di
     venv_activate_path = _ensure_backend_build_venv(source_repo_path)
     python_path = _python_path_from_activation_script(venv_activate_path)
     bash_python = shlex.quote(_to_git_bash_path(python_path))
-    commands = [
-        f"{bash_python} {shlex.quote(f'{BUILD_SCRIPTS_DIR_NAME}/create_sql_migrations.py')}",
-        f"{bash_python} {shlex.quote(f'{BUILD_SCRIPTS_DIR_NAME}/create_run_all_sql.py')}",
+    scripts = [
+        "create_sql_migrations.py",
+        "create_run_all_sql.py",
     ]
-    logging.info("Running backend DB artifact generators from %s with %s", source_repo_path, python_path)
-    _run_git_bash(" && ".join(commands), cwd=source_repo_path)
+    _log_build_step(f"run generators from source repo: {source_repo_path}")
+    _log_build_step(f"use source venv python: {python_path}")
+    for script_name in scripts:
+        script_path = f"{BUILD_SCRIPTS_DIR_NAME}/{script_name}"
+        command = f"{bash_python} {shlex.quote(script_path)}"
+        _log_build_step("")
+        _log_build_step(f"run generator: {script_path}")
+        _log_build_step(f"command: {command}")
+        _run_git_bash(command, cwd=source_repo_path)
 
 
 def _run_all_include_paths(repo: Path, run_all_sql: Path) -> list[Path]:
@@ -187,6 +209,22 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
 
     try:
         _run_additional_artifact_generators(source_repo, build_scripts_dir)
+
+        _log_matching_files(
+            source_repo / "docs" / "database" / "summary",
+            f"summary_sql_*_{commit_hash}.sql",
+            "schema summary SQL",
+        )
+        _log_matching_files(
+            build_scripts_dir,
+            f"run_all_insert_{commit_hash}.sql",
+            "run_all insert SQL",
+        )
+        _log_matching_files(
+            build_scripts_dir,
+            f"run_all_update_{commit_hash}.sql",
+            "run_all update SQL",
+        )
 
         schema_sql = one_match(
             source_repo / "docs" / "database" / "summary",
