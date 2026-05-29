@@ -100,6 +100,7 @@ for m in migrations:
 summary_sql += f"{UNUSED}\n"
 
 result = None
+generated_any = False
 
 for m, v in migrations.items():
     if m in migrations_list:
@@ -118,15 +119,17 @@ for m, v in migrations.items():
         ], capture_output=True, text=True)
     summary_sql += result.stdout
     summary_sql += "\n\n"
+    generated_any = True
 
-if result:
-    with open(
-        f"{SUMMARY_DIR}/summary_sql_{datetime_now}_{COMMIT_HASH}.sql",
-        "w", encoding="utf-8"
-    ) as file:
-        file.write(summary_sql)
-else:
+if not generated_any:
+    summary_sql += "-- No new migrations detected for this commit.\n"
     logging.info("Новых миграций не обнаружено.")
+
+with open(
+    f"{SUMMARY_DIR}/summary_sql_{datetime_now}_{COMMIT_HASH}.sql",
+    "w", encoding="utf-8"
+) as file:
+    file.write(summary_sql)
 
 if result and result.stderr:
     logging.error(result.stderr)

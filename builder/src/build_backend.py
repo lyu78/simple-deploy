@@ -63,8 +63,10 @@ def _prepare_build_scripts(repo_path: Path) -> Path:
     if target_dir.exists():
         if not target_dir.is_dir():
             raise RuntimeError(f"Backend build scripts path exists but is not a directory: {target_dir}")
+        logging.info("Removing stale backend build scripts directory: %s", target_dir)
         shutil.rmtree(target_dir)
 
+    logging.info("Copying backend artifact generators from %s to %s", source_dir, target_dir)
     target_dir.mkdir(parents=True)
 
     try:
@@ -120,6 +122,7 @@ def _run_additional_artifact_generators(repo_path: Path, source_repo_path: Path,
         f"{bash_python} {shlex.quote(f'{BUILD_SCRIPTS_DIR_NAME}/create_sql_migrations.py')}",
         f"{bash_python} {shlex.quote(f'{BUILD_SCRIPTS_DIR_NAME}/create_run_all_sql.py')}",
     ]
+    logging.info("Running backend DB artifact generators from %s with %s", repo_path, python_path)
     _run_git_bash(" && ".join(commands), cwd=repo_path)
 
 
