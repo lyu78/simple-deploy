@@ -42,7 +42,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
     def test_resolve_db_schema_artifact(self):
         with tempfile.TemporaryDirectory() as tmp:
             release_dir = Path(tmp)
-            artifact_path = release_dir / "db_schema_r_1.2.3-c_abc123.tar.gz"
+            artifact_path = release_dir / "db_schema_dev_r_1.2.3-c_abc123.tar.gz"
             artifact_path.write_text("", encoding="utf-8")
 
             artifact = resolve_db_schema_artifact(
@@ -52,10 +52,10 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             )
 
             self.assertEqual(artifact.local_path, artifact_path)
-            self.assertEqual(artifact.remote_archive, "/tmp/simple-deploy/1.2.3/db_schema.tar.gz")
-            self.assertEqual(artifact.remote_extract_path, "/tmp/simple-deploy/1.2.3/db_schema")
+            self.assertEqual(artifact.remote_archive, "/tmp/simple-deploy/1.2.3/db_schema_dev.tar.gz")
+            self.assertEqual(artifact.remote_extract_path, "/tmp/simple-deploy/1.2.3/db_schema_dev")
             self.assertEqual(artifact.entrypoint_dir, "docs/database/summary")
-            self.assertEqual(artifact.entrypoint_pattern, "summary_sql_*.sql")
+            self.assertEqual(artifact.entrypoint_pattern, "summary_sql_dev_*.sql")
 
     def test_scp_file_uses_requested_scope(self):
         with tempfile.TemporaryDirectory() as tmp:

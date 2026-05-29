@@ -1,161 +1,286 @@
+#!/usr/bin/env python3
+"""Генератор SQL-артефактов Django schema migrations по контурам.
+
+Модуль запускается из временной директории ``build_scripts`` внутри рабочей
+копии backend source repo. Его задача - собрать SQL для DEV/TEST/PROD без
+подключения к реальной PostgreSQL БД и без Docker-контейнера. Состояние
+контуров передается сборщиком через переменную окружения
+``SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON``:
+
+    {"dev": "<commit>", "test": "<commit>", "prod": "<commit>"}
+
+Для каждого контура скрипт сравнивает свой baseline commit с текущим ``HEAD``,
+находит измененные Django migration-файлы, строит SQL через Django migration
+API и записывает отдельный entrypoint вида ``summary_sql_<contour>_*.sql``.
+Дополнительно создается ``schema_migrations_metadata.json``: переносимый
+манифест с диапазонами ``from_commit -> to_commit`` и списком migration id,
+которые попали в каждый SQL-файл.
+
+Важное ограничение: это генерация schema DDL, а не проверка состояния БД.
+Скрипт не читает таблицу ``django_migrations`` и не знает, какие миграции уже
+фактически применены на контуре. Источником истины для диапазона является
+локальная история релизов/контуров в simple-deploy.
 """
-Скрипт создания миграций в формате sql.
 
-Запускается из корня докер-контейнера основного бэкенда.
+from __future__ import annotations
 
-После первичного применения sql-скрипта необходимо выполнить
-команду python manage.py migrate --fake
-
-Если на чистую БД, до применения db_init применить все скрипты
-из /docs/database/summary в хронологическом порядке, структура БД
-будет соответствовать структуре после makemigrations.
-
-Затем, для проверки работоспособности, можно использовать db_init
-только для накатывания фикстур.
-
-Фактически, скрипты не отличаются для тестового и продуктивного контура
-за исключением скрипта назначения владельца, который добавляется вручную #TODO.
-"""
-
-import os
 from datetime import datetime
-import logging
+import json
+import os
+from pathlib import Path
+import re
 import subprocess
 import sys
-
-UNUSED = "-- Unused migration"
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SUMMARY_DIR = os.path.join(BASE_DIR, "docs", "database", "summary")
-
-# Получаем хэш коммита
-def get_commit_hash():
-    try:
-        result = subprocess.run(
-            ['git', 'rev-parse', '--short', 'HEAD'],
-            cwd=BASE_DIR,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return result.stdout.strip()
-    except Exception:
-        return "unknown"
-
-COMMIT_HASH = get_commit_hash()
+import types
 
 
-def log_step(message):
+CONTOURS = ("dev", "test", "prod")
+SCRIPT_DIR = Path(__file__).resolve().parent
+BASE_DIR = SCRIPT_DIR.parent
+BASELINES_ENV = "SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"
+METADATA_FILE = "schema_migrations_metadata.json"
+MIGRATION_PATH_RE = re.compile(r"(^|/)(?P<app>[^/]+)/migrations/(?P<name>[0-9][^/]+)\.py$")
+DJANGO_READY = False
+
+
+def log(message: str) -> None:
+    """Печатает сообщение генератора с единым префиксом для build-логов."""
     print(f"[backend-db-artifacts:create_sql_migrations] {message}", flush=True)
 
 
-log_step(f"base dir: {BASE_DIR}")
-log_step(f"summary dir: {SUMMARY_DIR}")
-log_step(f"commit hash: {COMMIT_HASH}")
-
-
-def run_python_manage(*args):
-    return subprocess.run(
-        [
-            sys.executable,
-            "-Xutf8",
-            "example_backend_app/manage.py",
-            *args,
-        ],
+def run(command: list[str], check: bool = True) -> subprocess.CompletedProcess:
+    """Запускает команду из корня backend source repo и возвращает результат."""
+    result = subprocess.run(
+        command,
+        cwd=BASE_DIR,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
     )
-
-
-summary_sql = ""
-
-migrations = {}
-
-migrations_list = []
-
-for file in os.listdir(SUMMARY_DIR):
-    is_migration = False
-    path = os.path.join(SUMMARY_DIR, file)
-
-    with open(path) as f:
-        rows = f.read().splitlines()
-
-    for row in rows:
-        if row != UNUSED and not is_migration:
-            continue
-
-        if row == UNUSED and not is_migration:
-            is_migration = True
-            continue
-
-        if row == UNUSED and is_migration:
-            break
-
-        migrations_list.append(row.replace("-- ", ""))
-
-migrations_plan = run_python_manage("showmigrations", "--plan")
-if migrations_plan.returncode != 0:
-    raise RuntimeError(
-        "showmigrations --plan failed:\n"
-        f"stdout:\n{migrations_plan.stdout}\n"
-        f"stderr:\n{migrations_plan.stderr}"
-    )
-
-statuses_names = migrations_plan.stdout.split("\n")
-
-print(statuses_names)
-
-for value in statuses_names:
-    if not value:
-        continue
-    v = value.split("  ")
-    migrations[v[1]] = (
-        v[0],  # [x]
-        v[1].split(".")[0],  # app_users
-        v[1].split(".")[1]   # 0001_...
-    )
-
-datetime_now = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-
-summary_sql += f"-- {datetime_now}\n{UNUSED}\n"
-for m in migrations:
-    if m not in migrations_list:
-        summary_sql += f"-- {m}\n"
-summary_sql += f"{UNUSED}\n"
-
-result = None
-generated_any = False
-
-for m, v in migrations.items():
-    if m in migrations_list:
-        logging.warning(f"{m} произведена ранее, пропускаем!")
-        continue
-    logging.info(f"Формирование для {m}.")
-
-    summary_sql += f"-- {m}\n\n"
-    result = run_python_manage("sqlmigrate", v[1], v[2])
-    if result.returncode != 0:
+    if check and result.returncode != 0:
         raise RuntimeError(
-            f"sqlmigrate failed for {m}:\n"
+            f"Command failed: {' '.join(command)}\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
         )
-    summary_sql += result.stdout
-    summary_sql += "\n\n"
-    generated_any = True
+    return result
 
-if not generated_any:
-    summary_sql += "-- No new migrations detected for this commit.\n"
-    logging.info("Новых миграций не обнаружено.")
 
-output_path = os.path.join(SUMMARY_DIR, f"summary_sql_{datetime_now}_{COMMIT_HASH}.sql")
-log_step(f"write summary SQL: {output_path}")
+def git_output(*args: str) -> str:
+    """Выполняет ``git`` в backend source repo и возвращает очищенный stdout."""
+    return run(["git", *args]).stdout.strip()
 
-with open(output_path, "w", encoding="utf-8") as file:
-    file.write(summary_sql)
 
-log_step(f"summary SQL written: {output_path}")
+def load_baselines() -> dict[str, str]:
+    """Читает baseline commit для каждого контура из переменной окружения."""
+    raw = os.environ.get(BASELINES_ENV, "").strip()
+    if not raw:
+        raise RuntimeError(f"{BASELINES_ENV} is required")
+    data = json.loads(raw)
+    missing = [contour for contour in CONTOURS if not str(data.get(contour, "")).strip()]
+    if missing:
+        raise RuntimeError(f"Missing schema baselines for contours: {', '.join(missing)}")
+    return {contour: str(data[contour]).strip() for contour in CONTOURS}
 
-if result and result.stderr:
-    logging.error(result.stderr)
+
+def changed_migration_ids(from_commit: str, to_commit: str) -> list[tuple[str, str, str]]:
+    """Возвращает migration-файлы, измененные между двумя Git-коммитами."""
+    if from_commit == to_commit:
+        return []
+    result = run(
+        [
+            "git",
+            "diff",
+            "--name-only",
+            "--diff-filter=AMR",
+            f"{from_commit}..{to_commit}",
+            "--",
+            "*/migrations/*.py",
+        ]
+    )
+    migrations = []
+    seen = set()
+    for raw_path in result.stdout.splitlines():
+        path = raw_path.strip().replace("\\", "/")
+        if not path or path.endswith("/__init__.py"):
+            continue
+        match = MIGRATION_PATH_RE.search(path)
+        if not match:
+            continue
+        app = match.group("app")
+        name = match.group("name")
+        key = f"{app}.{name}"
+        if key in seen:
+            continue
+        seen.add(key)
+        migrations.append((key, app, name))
+    return sorted(migrations, key=lambda item: item[0])
+
+
+def ensure_django_ready() -> None:
+    """Инициализирует Django один раз для offline-генерации SQL."""
+    global DJANGO_READY
+    if DJANGO_READY:
+        return
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "example_backend_app.settings.base")
+    sys.path.insert(0, str(BASE_DIR / "example_backend_app"))
+    import django
+
+    django.setup()
+    DJANGO_READY = True
+
+
+def sqlmigrate(app_label: str, migration_name: str) -> str:
+    """Генерирует SQL для одной Django migration без чтения реальной БД."""
+    ensure_django_ready()
+    from django.apps import apps
+    from django.db import DEFAULT_DB_ALIAS, connections
+    from django.db.migrations.loader import MigrationLoader
+
+    connection = connections[DEFAULT_DB_ALIAS]
+    install_offline_postgres_compose(connection)
+    loader = MigrationLoader(None, replace_migrations=False)
+    try:
+        apps.get_app_config(app_label)
+    except LookupError as exc:
+        raise RuntimeError(str(exc)) from exc
+    if app_label not in loader.migrated_apps:
+        raise RuntimeError(f"App '{app_label}' does not have migrations")
+    migration = loader.get_migration_by_prefix(app_label, migration_name)
+    target = (app_label, migration.name)
+
+    loader.connection = connection
+    state = loader.project_state(target, at_end=False)
+    with connection.schema_editor(collect_sql=True, atomic=False) as schema_editor:
+        install_offline_schema_editor_helpers(schema_editor)
+        migration.apply(state, schema_editor, collect_sql=True)
+    return "\n".join(schema_editor.collected_sql)
+
+
+def install_offline_postgres_compose(connection) -> None:
+    """Подменяет PostgreSQL ``compose_sql`` на вариант без cursor/mogrify."""
+    if getattr(connection.ops, "_simple_deploy_offline_compose", False):
+        return
+    try:
+        from psycopg2.extensions import adapt
+    except Exception:
+        return
+
+    def offline_compose_sql(sql: str, params) -> str:
+        if not params:
+            return sql
+        parts = str(sql).split("%s")
+        if len(parts) - 1 != len(params):
+            return str(sql)
+        output = [parts[0]]
+        for value, tail in zip(params, parts[1:]):
+            quoted = adapt(value).getquoted()
+            if isinstance(quoted, bytes):
+                quoted = quoted.decode("utf-8")
+            output.append(str(quoted))
+            output.append(tail)
+        return "".join(output)
+
+    connection.ops.compose_sql = offline_compose_sql
+    connection.ops._simple_deploy_offline_compose = True
+
+
+def install_offline_schema_editor_helpers(schema_editor) -> None:
+    """Добавляет best-effort helpers для операций, которым нужны имена constraints."""
+    def offline_constraint_names(
+        self,
+        model,
+        column_names=None,
+        unique=None,
+        primary_key=None,
+        index=None,
+        foreign_key=None,
+        check=None,
+        type_=None,
+        exclude=None,
+    ):
+        columns = list(column_names or [])
+        table = model._meta.db_table
+        if primary_key:
+            return [f"{table}_pkey"]
+        if unique and columns:
+            return [self._create_index_name(table, columns, suffix="_uniq")]
+        if index and columns:
+            return [self._create_index_name(table, columns, suffix="_idx")]
+        if foreign_key and columns:
+            return [self._create_index_name(table, columns, suffix="_fk")]
+        return []
+
+    schema_editor._constraint_names = types.MethodType(offline_constraint_names, schema_editor)
+
+
+def write_contour_sql(
+    contour: str,
+    from_commit: str,
+    to_commit: str,
+    to_short_commit: str,
+    timestamp: str,
+) -> dict:
+    """Создает SQL-файл для одного контура и возвращает metadata блока."""
+    migrations = changed_migration_ids(from_commit, to_commit)
+    output_name = f"summary_sql_{contour}_{timestamp}_{from_commit[:12]}..{to_short_commit}.sql"
+    output_path = SCRIPT_DIR / output_name
+    log(f"write {contour} schema SQL: {output_path}")
+
+    with output_path.open("w", encoding="utf-8") as file:
+        file.write(f"-- Contour: {contour}\n")
+        file.write(f"-- From backend commit: {from_commit}\n")
+        file.write(f"-- To backend commit: {to_commit}\n")
+        file.write(f"-- Generated at: {timestamp}\n\n")
+        if not migrations:
+            file.write("-- No Django migrations changed in this range.\n")
+        for migration_id, app, migration_name in migrations:
+            file.write(f"-- Migration: {migration_id}\n\n")
+            file.write(sqlmigrate(app, migration_name))
+            file.write("\n\n")
+
+    return {
+        "contour": contour,
+        "from_commit": from_commit,
+        "to_commit": to_commit,
+        "entrypoint": output_name,
+        "migrations": [migration_id for migration_id, _, _ in migrations],
+    }
+
+
+def main() -> None:
+    """Точка входа генератора: читает baselines, пишет SQL и metadata."""
+    baselines = load_baselines()
+    to_commit = git_output("rev-parse", "HEAD")
+    to_short_commit = git_output("rev-parse", "--short", "HEAD")
+    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+
+    log(f"base dir: {BASE_DIR}")
+    log(f"script dir: {SCRIPT_DIR}")
+    log(f"to commit: {to_commit}")
+
+    metadata = {
+        "to_commit": to_commit,
+        "to_short_commit": to_short_commit,
+        "generated_at": timestamp,
+        "contours": {},
+    }
+    for contour in CONTOURS:
+        from_commit = baselines[contour]
+        run(["git", "rev-parse", "--verify", f"{from_commit}^{{commit}}"])
+        metadata["contours"][contour] = write_contour_sql(
+            contour,
+            from_commit,
+            to_commit,
+            to_short_commit,
+            timestamp,
+        )
+
+    metadata_path = SCRIPT_DIR / METADATA_FILE
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    log(f"metadata written: {metadata_path}")
+
+
+if __name__ == "__main__":
+    main()

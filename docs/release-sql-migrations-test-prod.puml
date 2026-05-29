@@ -1,0 +1,114 @@
+@startuml
+!pragma charset UTF-8
+skinparam defaultFontName Arial
+skinparam sequenceMessageAlign center
+skinparam Padding 4
+skinparam ParticipantPadding 42
+skinparam BoxPadding 21
+skinparam BoxMargin 15
+skinparam ArrowThickness 1
+skinparam BoxBorderThickness 1
+skinparam ParticipantBorderThickness 1
+skinparam SequenceLifeLineBorderThickness 1
+skinparam TitleFontSize 36
+skinparam TitleFontStyle bold
+skinparam TitleBorderThickness 0
+skinparam TitleBackgroundColor white
+skinparam ParticipantFontSize 22
+skinparam ArrowFontSize 19
+skinparam BoxFontSize 25
+skinparam BoxFontStyle bold
+skinparam ResponseMessageBelowArrow true
+skinparam maxMessageSize 999
+title simple-deploy: передача релиза на TEST и PROD
+
+actor "Оператор" as operator
+
+box "Рабочая Windows-машина" #F7F7F7
+participant "windows_pipeline.py\nCLI runner" as runner
+database "SQLite state\nlocal_state/simple_deploy.sqlite3" as state
+end box
+
+box "Артефакты релиза" #FFF7E6
+collections "release directory\nRELEASE_ROOT_WINDOWS/<build_version>" as release_dir
+participant "release_manifest.json\nbackend commit + SQL ranges" as manifest
+collections "backend/frontend tar.gz" as app_artifacts
+collections "db_schema_test.tar.gz\ndb_schema_prod.tar.gz" as schema_artifacts
+collections "db_insert/db_update tar.gz" as data_artifacts
+end box
+
+box "TEST контур" #F2ECFF
+participant "TEST deploy process\nручной или внешний" as test_process
+database "TEST PostgreSQL" as test_db
+participant "TEST app/runtime" as test_app
+end box
+
+box "PROD контур" #FFECEC
+participant "PROD deploy process\nручной или внешний" as prod_process
+database "PROD PostgreSQL" as prod_db
+participant "PROD app/runtime" as prod_app
+end box
+
+== 1. Первичная фиксация baseline TEST/PROD ==
+
+operator -> runner: set-baseline --contour test --build-version R0 или --backend-commit C0
+runner -> manifest: если задан build-version, прочитать backend commit из release_manifest.json
+runner -> state: сохранить TEST last_success_release и last_success_backend_commit
+
+operator -> runner: set-baseline --contour prod --build-version R0 или --backend-commit C0
+runner -> manifest: если задан build-version, прочитать backend commit из release_manifest.json
+runner -> state: сохранить PROD last_success_release и last_success_backend_commit
+
+== 2. Передача релиза на TEST ==
+
+operator -> release_dir: выбрать собранный release R1
+operator -> schema_artifacts: взять db_schema_test tar.gz
+operator -> data_artifacts: при необходимости взять db_insert/db_update
+operator -> app_artifacts: взять backend/frontend artifacts
+operator -> test_process: передать release artifacts
+
+test_process -> test_db: распаковать db_schema_test
+test_process -> test_db: psql -f summary_sql_test_*.sql
+test_process -> test_db: после успешного SQL выполнить migrate --fake
+test_process -> test_app: разложить backend/frontend artifacts
+test_process -> test_app: выполнить service steps и проверки TEST
+
+alt TEST deploy successful
+    operator -> runner: mark-applied --contour test --build-version R1
+    runner -> manifest: прочитать backend commit релиза R1
+    runner -> state: обновить TEST baseline
+else TEST deploy failed
+    operator -> runner: mark-failed --contour test --build-version R1 --error "..."
+    runner -> state: записать failed attempt, baseline не меняется
+end
+
+== 3. Передача релиза на PROD ==
+
+operator -> release_dir: выбрать утвержденный release R1
+operator -> schema_artifacts: взять db_schema_prod tar.gz
+operator -> data_artifacts: при необходимости взять db_insert/db_update
+operator -> app_artifacts: взять backend/frontend artifacts
+operator -> prod_process: передать release artifacts
+
+prod_process -> prod_db: распаковать db_schema_prod
+prod_process -> prod_db: psql -f summary_sql_prod_*.sql
+prod_process -> prod_db: после успешного SQL выполнить migrate --fake
+prod_process -> prod_app: разложить backend/frontend artifacts
+prod_process -> prod_app: выполнить service steps и проверки PROD
+
+alt PROD deploy successful
+    operator -> runner: mark-applied --contour prod --build-version R1
+    runner -> manifest: прочитать backend commit релиза R1
+    runner -> state: обновить PROD baseline
+else PROD deploy failed
+    operator -> runner: mark-failed --contour prod --build-version R1 --error "..."
+    runner -> state: записать failed attempt, baseline не меняется
+end
+
+== 4. Следующая сборка учитывает продвижение ==
+
+operator -> runner: build
+runner -> state: прочитать last_success(dev/test/prod)
+runner -> release_dir: новый релиз содержит SQL ranges от baseline каждого контура до нового HEAD
+
+@enduml

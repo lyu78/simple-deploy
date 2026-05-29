@@ -379,3 +379,25 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 - Отрефакторить генерацию schema summary SQL: отделить расчет Django migrations от упаковки артефактов, явно валидировать backend settings/requirements/venv до генерации, убрать зависимость от временной директории `build_scripts`, вернуть контролируемое создание `db_schema` archive и post-deploy MR в source repo.
 - После рефакторинга вернуть управляемое включение/отключение schema summary через конфигурационный флаг вместо константы в коде.
 - Все новые записи в README, CONTEXT, комментариях и рабочих сообщениях по проекту вести на русском языке.
+## Актуальный контекст SQL-миграций
+
+`create_sql_migrations.py` снова является активной частью backend build, но теперь работает как offline best-effort генератор SQL по Git-диапазону Django migrations. Генератор не требует подключения к PostgreSQL: он загружает migrations из backend source repo, строит план через `MigrationLoader(None, replace_migrations=False)` и собирает SQL через PostgreSQL schema editor в режиме `collect_sql=True`.
+
+Локальное состояние релизов и контуров хранится в `local_state/simple_deploy.sqlite3`. Файл создается автоматически, считается runtime-состоянием рабочей машины и не коммитится. В базе фиксируются baseline commit для `dev`, `test`, `prod`, попытки применения, успешные применения и ошибки. Для TEST/PROD baseline должен задаваться или обновляться явно, потому что runner не может сам достоверно узнать, какой release реально лежит на внешнем контуре.
+
+Команды Windows runner:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour test --commit <backend_commit>
+.venv/Scripts/python.exe tools/windows_pipeline.py mark-applied --contour test --build-version <version>
+.venv/Scripts/python.exe tools/windows_pipeline.py mark-failed --contour test --build-version <version>
+.venv/Scripts/python.exe tools/windows_pipeline.py deploy --contour dev --latest
+```
+
+DEV обычно идет от предыдущего локально зафиксированного состояния к текущему release commit. TEST и PROD собираются как from-to диапазоны от baseline соответствующего контура до commit релиза. Manifest SQL-артефакта перечисляет Django migration-файлы, попавшие в диапазон `from..to`; это список входа в генерацию, а не гарантия идемпотентности или применения на БД.
+
+Документация процесса вынесена в `docs/`:
+
+- `release-sql-migrations-flow.puml/pdf` - полный поток от dry-run до DEV/TEST/PROD;
+- `release-sql-migrations-build-dev.puml/pdf` - сборка и размещение на DEV;
+- `release-sql-migrations-test-prod.puml/pdf` - продвижение на TEST и PROD.

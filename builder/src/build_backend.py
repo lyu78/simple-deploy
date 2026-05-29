@@ -1,6 +1,8 @@
 """Backend source sync and release artifact build."""
 
+from contextlib import closing
 from datetime import datetime
+import json
 import logging
 import os
 from pathlib import Path
@@ -25,6 +27,7 @@ from src.infra import (
     git_checkout_new_branch,
     git_pull,
 )
+from src.release_state import CONTOURS, connect_state_db, get_contour_state
 from src.utils import (
     add_file_to_tar,
     get_required_env,
@@ -37,7 +40,6 @@ logging.basicConfig(level=logging.INFO)
 INCLUDE_RE = re.compile(r"^\s*\\i\s+['\"]?([^'\"\s]+)['\"]?")
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
-SCHEMA_SUMMARY_SQL_ENABLED = False
 DEFAULT_BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH = "requirements.txt"
 PIP_TRUSTED_HOSTS = (
     "pypi.org",
@@ -63,6 +65,25 @@ def _run_git_bash(command: str, cwd: Path) -> None:
     subprocess.run([bash_path, "-lc", command], cwd=cwd, check=True)
 
 
+def _schema_baselines_json() -> str:
+    with closing(connect_state_db()) as connection:
+        baselines = {}
+        missing = []
+        for contour in CONTOURS:
+            state = get_contour_state(connection, contour)
+            if state is None:
+                missing.append(contour)
+            else:
+                baselines[contour] = state.last_success_backend_commit
+    if missing:
+        raise RuntimeError(
+            "Missing schema SQL baselines for contours: "
+            f"{', '.join(missing)}. Run "
+            "`tools/windows_pipeline.py set-baseline --contour <contour> --build-version <version>` first."
+        )
+    return json.dumps(baselines, ensure_ascii=False)
+
+
 def _prepare_build_scripts(repo_path: Path) -> Path:
     """Create a clean transient directory with build-only helper scripts."""
     builder_root = Path(__file__).resolve().parents[1]
@@ -84,9 +105,6 @@ def _prepare_build_scripts(repo_path: Path) -> Path:
 
     try:
         for script_path in source_dir.glob("*.py"):
-            if not SCHEMA_SUMMARY_SQL_ENABLED and script_path.name == "create_sql_migrations.py":
-                _log_build_step(f"skip generator copy while schema summary SQL is disabled: {script_path.name}")
-                continue
             _log_build_step(f"copy generator: {script_path.name} -> {target_dir / script_path.name}")
             shutil.copy2(script_path, target_dir / script_path.name)
     except Exception:
@@ -177,11 +195,7 @@ def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_di
     python_path = _python_path_from_activation_script(venv_activate_path)
     _install_backend_build_requirements(source_repo_path, python_path)
     bash_python = shlex.quote(_to_git_bash_path(python_path))
-    scripts = ["create_run_all_sql.py"]
-    if SCHEMA_SUMMARY_SQL_ENABLED:
-        scripts.insert(0, "create_sql_migrations.py")
-    else:
-        _log_build_step("skip schema summary SQL generator: temporarily disabled")
+    scripts = ["create_sql_migrations.py", "create_run_all_sql.py"]
     _log_build_step(f"run generators from source repo: {source_repo_path}")
     _log_build_step(f"use source venv python: {python_path}")
     for script_name in scripts:
@@ -251,18 +265,17 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
 
     commit_hash = git_output(source_repo_path, "rev-parse", "--short", "HEAD")
     build_scripts_dir = _prepare_build_scripts(source_repo)
+    previous_baselines = os.environ.get("SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON")
 
     try:
+        os.environ["SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"] = _schema_baselines_json()
         _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
-        if SCHEMA_SUMMARY_SQL_ENABLED:
-            _log_matching_files(
-                source_repo / "docs" / "database" / "summary",
-                f"summary_sql_*_{commit_hash}.sql",
-                "schema summary SQL",
-            )
-        else:
-            _log_build_step("skip schema summary SQL archive: temporarily disabled")
+        _log_matching_files(
+            build_scripts_dir,
+            "summary_sql_*_*.sql",
+            "schema summary SQL",
+        )
         _log_matching_files(
             build_scripts_dir,
             f"run_all_insert_{commit_hash}.sql",
@@ -277,15 +290,19 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
         run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
         run_all_update = one_match(build_scripts_dir, f"run_all_update_{commit_hash}.sql")
 
-        schema_archive = None
-        if SCHEMA_SUMMARY_SQL_ENABLED:
-            schema_sql = one_match(
-                source_repo / "docs" / "database" / "summary",
-                f"summary_sql_*_{commit_hash}.sql",
-            )
-            schema_archive = _create_db_sql_artifact(
+        schema_metadata_path = build_scripts_dir / "schema_migrations_metadata.json"
+        if not schema_metadata_path.is_file():
+            raise RuntimeError(f"Schema migration metadata was not generated: {schema_metadata_path}")
+        schema_metadata = json.loads(schema_metadata_path.read_text(encoding="utf-8"))
+        schema_archives: dict[str, str] = {}
+        for contour in CONTOURS:
+            contour_metadata = schema_metadata["contours"][contour]
+            schema_sql = build_scripts_dir / contour_metadata["entrypoint"]
+            if not schema_sql.is_file():
+                raise RuntimeError(f"Schema SQL was not generated for {contour}: {schema_sql}")
+            schema_archives[contour] = _create_db_sql_artifact(
                 release_dir,
-                "schema",
+                f"schema_{contour}",
                 build_version,
                 commit_hash,
                 lambda archive: add_file_to_tar(
@@ -315,15 +332,19 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
             ),
         )
     finally:
+        if previous_baselines is None:
+            os.environ.pop("SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON", None)
+        else:
+            os.environ["SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"] = previous_baselines
         _cleanup_build_scripts(build_scripts_dir)
 
     manifest = {
         "backend_commit_short_hash": commit_hash,
+        "db_schema_archives": schema_archives,
+        "db_schema_metadata": schema_metadata,
         "db_insert_archive": insert_archive,
         "db_update_archive": update_archive,
     }
-    if schema_archive:
-        manifest["db_schema_archive"] = schema_archive
     return manifest
 
 

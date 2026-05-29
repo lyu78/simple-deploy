@@ -416,3 +416,6 @@ windows_pipeline.local.json
 
 # Windows-only runner logs
 logs/
+
+# Local release and contour state
+local_state/

@@ -1,5 +1,45 @@
 # simple-deploy
 
+## Offline SQL migrations
+
+Актуальный сборщик SQL-миграций работает без подключения к PostgreSQL и без Docker/WSL. Источник истины для генерации - Git-диапазон backend source repo и локальное состояние контуров в SQLite, а не реальная база данных.
+
+Основной сценарий:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py dry-run
+.venv/Scripts/python.exe tools/windows_pipeline.py build
+.venv/Scripts/python.exe tools/windows_pipeline.py deploy --contour dev --latest
+```
+
+Для TEST и PROD runner строит from-to артефакты от зафиксированного baseline контура до commit собираемого релиза. Baseline задается явно:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour test --commit <backend_commit>
+.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour prod --commit <backend_commit>
+```
+
+После успешного размещения контура состояние фиксируется командой:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py mark-applied --contour test --build-version <version>
+.venv/Scripts/python.exe tools/windows_pipeline.py mark-applied --contour prod --build-version <version>
+```
+
+Если размещение или ручная проверка завершились ошибкой, попытка записывается отдельно:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py mark-failed --contour test --build-version <version>
+```
+
+Локальная база состояния хранится в `local_state/simple_deploy.sqlite3` и не коммитится. В release manifest попадает список Django migrations, которые вошли в диапазон `from..to`; это manifest диапазона, а не подтверждение применения на реальной БД. SQL генерируется best-effort средствами Django schema editor в режиме `collect_sql=True`, поэтому перед применением на TEST/PROD скрипт остается операционным артефактом, который нужно проверять в обычном release flow.
+
+Диаграммы полного процесса лежат в `docs/`:
+
+- `docs/release-sql-migrations-flow.puml` / `docs/release-sql-migrations-flow.pdf` - общий pipeline от dry-run до DEV/TEST/PROD.
+- `docs/release-sql-migrations-build-dev.puml` / `docs/release-sql-migrations-build-dev.pdf` - сборка и DEV-размещение.
+- `docs/release-sql-migrations-test-prod.puml` / `docs/release-sql-migrations-test-prod.pdf` - продвижение релиза на TEST и PROD.
+
 ## Backend DB-артефакты
 
 Во время backend build SQL-генераторы копируются в служебную директорию

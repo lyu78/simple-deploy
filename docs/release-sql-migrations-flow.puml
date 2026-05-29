@@ -1,0 +1,186 @@
+@startuml
+!pragma charset UTF-8
+skinparam defaultFontName Arial
+skinparam sequenceMessageAlign center
+skinparam Padding 4
+skinparam ParticipantPadding 36
+skinparam BoxPadding 21
+skinparam BoxMargin 15
+skinparam ArrowThickness 1
+skinparam BoxBorderThickness 1
+skinparam ParticipantBorderThickness 1
+skinparam SequenceLifeLineBorderThickness 1
+skinparam SequenceGroupHeaderFontSize 25
+skinparam SequenceGroupBodyBackgroundColor transparent
+skinparam SequenceMessageAlign center
+skinparam SequenceMessageTextAlignment center
+skinparam NotePadding 6
+skinparam TitleFontSize 36
+skinparam TitleFontStyle bold
+skinparam TitleBorderRoundCorner 0
+skinparam TitleBorderThickness 0
+skinparam TitleBackgroundColor white
+skinparam TitleFontColor #222222
+skinparam ParticipantFontSize 22
+skinparam ArrowFontSize 19
+skinparam BoxFontSize 25
+skinparam BoxFontStyle bold
+skinparam ResponseMessageBelowArrow true
+skinparam maxMessageSize 999
+skinparam SequenceLifeLineBorderColor #777777
+title simple-deploy: полный pipeline от dry-run до DEV/TEST/PROD
+
+actor "Оператор" as operator
+
+box "Рабочая Windows-машина" #F7F7F7
+participant "tools/windows_pipeline.py\nCLI runner" as runner
+database "local_state/simple_deploy.sqlite3\nлокальная история контуров" as state
+collections "logs/\nдиагностика и демо-вывод" as logs
+end box
+
+box "Локальные Git-репозитории" #EAF3FF
+participant "simple-deploy repo\nоркестратор" as deploy_repo
+participant "backend source repo\nBACKEND_SOURCE_REPO_PATH" as backend_src
+participant "backend target repo\nBACKEND_TARGET_REPO_PATH" as backend_target
+participant "frontend source repo\nFRONTEND_SOURCE_REPO_PATH" as frontend_src
+participant "frontend target repo\nFRONTEND_TARGET_REPO_PATH" as frontend_target
+end box
+
+box "Локальные артефакты релиза" #FFF7E6
+collections "RELEASE_ROOT_WINDOWS/<build_version>\nrelease directory" as release_dir
+participant "release_manifest.json\ncommits + artifact metadata" as manifest
+collections "backend/frontend tar.gz\napplication artifacts" as app_artifacts
+collections "db_schema_dev/test/prod tar.gz\nschema SQL artifacts" as schema_artifacts
+collections "db_insert/db_update tar.gz\ndata SQL artifacts" as data_artifacts
+end box
+
+box "DEV контур" #E8F8EA
+participant "DEV app VM\nbackend/frontend paths" as dev_app
+database "DEV DB VM\nPostgreSQL + psql" as dev_db
+end box
+
+box "TEST контур" #F2ECFF
+participant "TEST deploy process\nручной или внешний" as test_process
+database "TEST PostgreSQL" as test_db
+end box
+
+box "PROD контур" #FFECEC
+participant "PROD deploy process\nручной или внешний" as prod_process
+database "PROD PostgreSQL" as prod_db
+end box
+
+== 1. Диагностика рабочей машины и контуров ==
+
+operator -> runner: dry-run
+runner -> deploy_repo: проверить наличие repo/config
+runner -> backend_src: проверить Git repo и origin URL
+runner -> frontend_src: проверить Git repo и origin URL
+runner -> dev_app: проверить SSH/runtime/пути app VM
+runner -> dev_db: проверить SSH/psql/login PostgreSQL
+runner -> logs: записать dry-run log
+runner --> operator: DRY-RUN PASS/FAIL/SKIP
+
+== 2. Первичная фиксация baseline TEST/PROD ==
+
+operator -> runner: set-baseline --contour test\n--build-version R0 или --backend-commit C0
+runner -> manifest: если задан build-version,\nпрочитать backend commit из manifest
+runner -> state: сохранить TEST last_success_release/commit
+
+operator -> runner: set-baseline --contour prod\n--build-version R0 или --backend-commit C0
+runner -> manifest: если задан build-version,\nпрочитать backend commit из manifest
+runner -> state: сохранить PROD last_success_release/commit
+
+== 3. Сборка релиза ==
+
+operator -> runner: build
+runner -> backend_src: git checkout dev + git pull
+runner -> frontend_src: git checkout dev + git pull
+runner -> backend_target: создать sync branch\nскопировать backend source\ncommit/push
+runner -> frontend_target: создать sync branch\nскопировать frontend source\ncommit/push
+
+runner -> state: прочитать baseline dev/test/prod
+runner -> backend_src: запустить build_scripts/create_sql_migrations.py
+backend_src -> backend_src: найти migration-файлы\nчерез git diff baseline..HEAD
+backend_src -> backend_src: сгенерировать PostgreSQL DDL offline\nбез чтения django_migrations из БД
+backend_src --> runner: summary_sql_dev/test/prod + metadata
+
+runner -> backend_src: запустить create_run_all_sql.py
+backend_src --> runner: run_all_insert.sql + run_all_update.sql
+
+runner -> release_dir: создать release directory
+runner -> schema_artifacts: упаковать db_schema_dev/test/prod tar.gz
+runner -> data_artifacts: упаковать db_insert/db_update tar.gz
+runner -> app_artifacts: упаковать backend/frontend tar.gz
+runner -> manifest: записать build_version,\nrepo commits,\nSQL ranges,\nartifact names
+runner -> state: записать release metadata
+runner --> operator: build completed
+
+== 4. Размещение на DEV ==
+
+operator -> runner: deploy --latest --contour dev
+runner -> release_dir: выбрать release
+runner -> app_artifacts: найти backend/frontend archives
+runner -> schema_artifacts: найти db_schema_dev archive
+runner -> dev_db: upload + unpack db_schema_dev
+runner -> dev_db: psql -f summary_sql_dev_*.sql
+runner -> dev_app: upload backend/frontend archives
+runner -> dev_app: очистить release paths\nс сохранением .env
+runner -> dev_app: unpack backend/frontend
+runner -> dev_app: python manage.py migrate --fake
+runner -> dev_app: python manage.py sync_action_role
+runner -> dev_app: service steps + healthcheck
+
+alt DEV deploy successful
+    runner -> state: mark-applied dev\nlast_success = backend commit релиза
+    runner --> operator: DEV deploy success
+else DEV deploy failed
+    runner -> state: record failed attempt\nbaseline не меняется
+    runner --> operator: DEV deploy failed
+end
+
+== 5. Передача релиза на TEST ==
+
+operator -> release_dir: взять нужный release directory
+operator -> schema_artifacts: выбрать db_schema_test tar.gz
+operator -> app_artifacts: выбрать backend/frontend artifacts
+operator -> test_process: передать release artifacts
+test_process -> test_db: применить summary_sql_test_*.sql
+test_process -> test_db: выполнить migrate --fake\nпосле успешного SQL
+test_process -> test_process: разложить app artifacts\nи выполнить проверки TEST
+
+alt TEST deploy successful
+    operator -> runner: mark-applied --contour test\n--build-version R1
+    runner -> manifest: прочитать backend commit релиза R1
+    runner -> state: обновить TEST baseline
+else TEST deploy failed
+    operator -> runner: mark-failed --contour test\n--build-version R1 --error "..."
+    runner -> state: записать failed attempt\nbaseline не меняется
+end
+
+== 6. Передача релиза на PROD ==
+
+operator -> release_dir: взять утвержденный release directory
+operator -> schema_artifacts: выбрать db_schema_prod tar.gz
+operator -> app_artifacts: выбрать backend/frontend artifacts
+operator -> prod_process: передать release artifacts
+prod_process -> prod_db: применить summary_sql_prod_*.sql
+prod_process -> prod_db: выполнить migrate --fake\nпосле успешного SQL
+prod_process -> prod_process: разложить app artifacts\nи выполнить проверки PROD
+
+alt PROD deploy successful
+    operator -> runner: mark-applied --contour prod\n--build-version R1
+    runner -> manifest: прочитать backend commit релиза R1
+    runner -> state: обновить PROD baseline
+else PROD deploy failed
+    operator -> runner: mark-failed --contour prod\n--build-version R1 --error "..."
+    runner -> state: записать failed attempt\nbaseline не меняется
+end
+
+== 7. Следующая сборка ==
+
+operator -> runner: build
+runner -> state: прочитать обновленные baselines
+runner -> backend_src: сгенерировать новые SQL ranges:\nDEV from last_success(dev) to HEAD\nTEST from last_success(test) to HEAD\nPROD from last_success(prod) to HEAD
+runner -> release_dir: записать новый release_manifest.json\nи новые db_schema_* artifacts
+
+@enduml

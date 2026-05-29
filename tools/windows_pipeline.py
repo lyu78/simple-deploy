@@ -1,8 +1,17 @@
-"""Windows-only runner for simple-deploy.
+"""Windows-only runner для simple-deploy.
 
-This runner mirrors the operator-facing Ansible flow without requiring WSL.
-It uses Python, Node/Git already installed on Windows, and Windows OpenSSH
-(`ssh`/`scp`) for remote VM operations.
+Модуль является основной операторской точкой входа на рабочей Windows-машине.
+Он повторяет ключевые этапы Ansible-flow без обязательного WSL: читает
+локальные ``.env``/``local.secrets.env``/``windows_pipeline.local.json``,
+запускает build, доставляет артефакты на VM через Windows OpenSSH, выполняет
+SQL/management/service steps и проверяет healthcheck.
+
+Для SQL schema migrations runner также ведет локальную историю контуров через
+SQLite: команды ``set-baseline``, ``mark-applied`` и ``mark-failed`` фиксируют,
+с какого backend commit нужно строить следующий диапазон ``from -> to`` для
+DEV/TEST/PROD. Сам runner не считает сборку релиза успешным применением:
+baseline двигается только после подтвержденного deploy или явной команды
+оператора.
 """
 
 from __future__ import annotations
@@ -30,6 +39,16 @@ from dotenv import dotenv_values
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "builder"))
+
+from src.release_state import (  # noqa: E402
+    CONTOURS,
+    connect_state_db,
+    record_attempt,
+    upsert_contour_state,
+    validate_contour,
+)
+
 DEFAULT_ENV_FILE = ROOT / ".env"
 DEFAULT_SECRETS_FILE = ROOT / "local.secrets.env"
 DEFAULT_CONFIG_FILE = ROOT / "windows_pipeline.local.json"
@@ -1127,12 +1146,19 @@ def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path
     return artifacts
 
 
-def resolve_db_schema_artifact(env: dict[str, str], build_version: str, release_dir: Path) -> DbSqlArtifact:
+def resolve_db_schema_artifact(
+    env: dict[str, str],
+    build_version: str,
+    release_dir: Path,
+    contour: str = "dev",
+) -> DbSqlArtifact:
+    """Находит schema SQL archive для выбранного контура в директории релиза."""
+    contour = validate_contour(contour)
     print(f"RESOLVE DB schema artifact in: {release_dir}", flush=True)
     if not release_dir.is_dir():
         raise RuntimeError(f"Директория релиза не существует: {release_dir}")
 
-    pattern = f"db_schema_r_{build_version}-c_*.tar.gz"
+    pattern = f"db_schema_{contour}_r_{build_version}-c_*.tar.gz"
     matches = [path for path in release_dir.iterdir() if path.is_file() and fnmatch.fnmatch(path.name, pattern)]
     if not matches:
         raise RuntimeError(f"В {release_dir} не найден DB schema архив по шаблону {pattern}")
@@ -1140,12 +1166,12 @@ def resolve_db_schema_artifact(env: dict[str, str], build_version: str, release_
     newest = max(matches, key=lambda path: path.stat().st_mtime)
     remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
     artifact = DbSqlArtifact(
-        name="db_schema",
+        name=f"db_schema_{contour}",
         local_path=newest,
-        remote_archive=f"{remote_dir}/db_schema.tar.gz",
-        remote_extract_path=f"{remote_dir}/db_schema",
+        remote_archive=f"{remote_dir}/db_schema_{contour}.tar.gz",
+        remote_extract_path=f"{remote_dir}/db_schema_{contour}",
         entrypoint_dir="docs/database/summary",
-        entrypoint_pattern="summary_sql_*.sql",
+        entrypoint_pattern=f"summary_sql_{contour}_*.sql",
     )
     print(
         f"RESOLVE DB schema artifact: {artifact.local_path.name} -> {artifact.remote_extract_path}",
@@ -1359,6 +1385,45 @@ def load_release_manifest(release_dir: Path) -> dict | None:
         return None
     with manifest_path.open("r", encoding="utf-8") as file:
         return json.load(file)
+
+
+def release_backend_commit(release_dir: Path) -> str:
+    """Читает backend commit из ``release_manifest.json`` релиза."""
+    manifest = load_release_manifest(release_dir)
+    if not manifest:
+        raise RuntimeError(f"Release manifest not found: {release_dir / RELEASE_MANIFEST_NAME}")
+    commit = str(manifest.get("repositories", {}).get("backend", {}).get("commit_sha", "")).strip()
+    if not commit:
+        raise RuntimeError(f"Backend commit is missing in release manifest: {release_dir / RELEASE_MANIFEST_NAME}")
+    return commit
+
+
+def mark_contour_applied(contour: str, build_version: str, release_dir: Path) -> None:
+    """Фиксирует успешное применение релиза на контуре и двигает baseline."""
+    contour = validate_contour(contour)
+    backend_commit = release_backend_commit(release_dir)
+    with contextlib.closing(connect_state_db()) as connection:
+        upsert_contour_state(connection, contour, build_version, backend_commit)
+        record_attempt(connection, contour, build_version, backend_commit, "success")
+    print(
+        f"MARK applied: contour={contour} build_version={build_version} backend_commit={backend_commit}",
+        flush=True,
+    )
+
+
+def mark_contour_failed(contour: str, build_version: str, release_dir: Path, error_text: str) -> None:
+    """Записывает неуспешную попытку применения без изменения baseline."""
+    contour = validate_contour(contour)
+    try:
+        backend_commit = release_backend_commit(release_dir)
+    except Exception:
+        backend_commit = ""
+    with contextlib.closing(connect_state_db()) as connection:
+        record_attempt(connection, contour, build_version, backend_commit, "failed", error_text)
+    print(
+        f"MARK failed: contour={contour} build_version={build_version} backend_commit={backend_commit}",
+        flush=True,
+    )
 
 
 def find_previous_release_manifest(release_dir: Path) -> tuple[Path, dict] | None:
@@ -1589,12 +1654,16 @@ Write-Output 'sent'
 
 
 def deploy(args: argparse.Namespace) -> int:
+    """Выполняет deploy выбранного релиза на указанный контур."""
     print("DEPLOY load config", flush=True)
     env = load_env(args.env_file, args.secrets_file, require_secrets=True)
     runtime = load_runtime_config(args.config_file)
     build_version, release_dir = resolve_release_dir(env, args.build_version, args.latest)
+    contour = validate_contour(args.contour)
     artifacts = resolve_artifacts(env, build_version, release_dir)
+    db_schema_artifact = resolve_db_schema_artifact(env, build_version, release_dir, contour)
     print(f"DEPLOY build_version: {build_version}", flush=True)
+    print(f"DEPLOY contour: {contour}", flush=True)
     print(f"DEPLOY release_dir: {release_dir}", flush=True)
 
     app_user = require_value(env, "APP_VM_USER")
@@ -1633,7 +1702,7 @@ def deploy(args: argparse.Namespace) -> int:
 
     run_service_steps(env, runtime, "after_unpack")
     run_db_maintenance(env, runtime, "before_migrate")
-    print("SKIP DB schema summary SQL: temporarily disabled", flush=True)
+    run_db_schema_summary(env, runtime, db_schema_artifact)
 
     for command in management_commands(env, runtime):
         remote = (
@@ -1653,12 +1722,51 @@ def deploy(args: argparse.Namespace) -> int:
         print("SKIP healthcheck: disabled")
 
     print("SKIP backend summary MR: schema summary SQL generation is temporarily disabled", flush=True)
+    mark_contour_applied(contour, build_version, release_dir)
 
     print("DEPLOY SUMMARY")
     for line in deploy_summary_lines(build_version, release_dir, artifacts):
         print(line)
 
     send_outlook_success_email(env, runtime, build_version, release_dir, artifacts)
+    return 0
+
+
+def set_baseline(args: argparse.Namespace) -> int:
+    """Устанавливает начальный baseline контура по build version или commit."""
+    print("BASELINE load config", flush=True)
+    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
+    contour = validate_contour(args.contour)
+    if args.backend_commit:
+        build_version = args.build_version or "manual-baseline"
+        backend_commit = args.backend_commit.strip()
+    else:
+        build_version, release_dir = resolve_release_dir(env, args.build_version, latest=False)
+        backend_commit = release_backend_commit(release_dir)
+    with contextlib.closing(connect_state_db()) as connection:
+        upsert_contour_state(connection, contour, build_version, backend_commit)
+    print(
+        f"BASELINE set: contour={contour} build_version={build_version} backend_commit={backend_commit}",
+        flush=True,
+    )
+    return 0
+
+
+def mark_applied(args: argparse.Namespace) -> int:
+    """CLI-обертка для фиксации успешного применения релиза."""
+    print("MARK-APPLIED load config", flush=True)
+    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
+    build_version, release_dir = resolve_release_dir(env, args.build_version, latest=False)
+    mark_contour_applied(args.contour, build_version, release_dir)
+    return 0
+
+
+def mark_failed(args: argparse.Namespace) -> int:
+    """CLI-обертка для фиксации неуспешного применения релиза."""
+    print("MARK-FAILED load config", flush=True)
+    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
+    build_version, release_dir = resolve_release_dir(env, args.build_version, latest=False)
+    mark_contour_failed(args.contour, build_version, release_dir, args.error)
     return 0
 
 
@@ -1723,10 +1831,26 @@ def parse_args() -> argparse.Namespace:
     deploy_parser = subparsers.add_parser("deploy")
     deploy_parser.add_argument("--build-version", default="")
     deploy_parser.add_argument("--latest", action="store_true")
+    deploy_parser.add_argument("--contour", choices=CONTOURS, default="dev")
 
     pipeline_parser = subparsers.add_parser("pipeline")
     pipeline_parser.add_argument("--build-version", default="")
     pipeline_parser.add_argument("--latest", action="store_true")
+    pipeline_parser.add_argument("--contour", choices=CONTOURS, default="dev")
+
+    baseline_parser = subparsers.add_parser("set-baseline")
+    baseline_parser.add_argument("--contour", choices=CONTOURS, required=True)
+    baseline_parser.add_argument("--build-version", default="")
+    baseline_parser.add_argument("--backend-commit", default="")
+
+    mark_applied_parser = subparsers.add_parser("mark-applied")
+    mark_applied_parser.add_argument("--contour", choices=CONTOURS, required=True)
+    mark_applied_parser.add_argument("--build-version", required=True)
+
+    mark_failed_parser = subparsers.add_parser("mark-failed")
+    mark_failed_parser.add_argument("--contour", choices=CONTOURS, required=True)
+    mark_failed_parser.add_argument("--build-version", required=True)
+    mark_failed_parser.add_argument("--error", required=True)
     return parser.parse_args()
 
 
@@ -1742,6 +1866,12 @@ def main() -> int:
                 return deploy(args)
             if args.command == "pipeline":
                 return pipeline(args)
+            if args.command == "set-baseline":
+                return set_baseline(args)
+            if args.command == "mark-applied":
+                return mark_applied(args)
+            if args.command == "mark-failed":
+                return mark_failed(args)
         except Exception as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1

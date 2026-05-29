@@ -2,11 +2,13 @@ from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
+from contextlib import closing
 
 from src.infra import (
     get_new_branch_name,
     get_new_build_version,
 )
+from src.release_state import connect_state_db, record_release
 from src.utils import get_required_env
 
 from src.build_backend import build_backend
@@ -60,6 +62,16 @@ def write_release_manifest(
         encoding="utf-8",
     )
     print(f"Release manifest created: {manifest_path}", flush=True)
+    backend_repo = manifest["repositories"]["backend"]
+    frontend_repo = manifest["repositories"]["frontend"]
+    with closing(connect_state_db()) as connection:
+        record_release(
+            connection,
+            build_version=build_version,
+            backend_commit=backend_repo["commit_sha"],
+            frontend_commit=frontend_repo["commit_sha"],
+            artifacts=manifest["artifacts"],
+        )
 
 
 if __name__ == "__main__":
