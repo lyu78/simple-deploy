@@ -1594,7 +1594,6 @@ def deploy(args: argparse.Namespace) -> int:
     runtime = load_runtime_config(args.config_file)
     build_version, release_dir = resolve_release_dir(env, args.build_version, args.latest)
     artifacts = resolve_artifacts(env, build_version, release_dir)
-    db_schema_artifact = resolve_db_schema_artifact(env, build_version, release_dir)
     print(f"DEPLOY build_version: {build_version}", flush=True)
     print(f"DEPLOY release_dir: {release_dir}", flush=True)
 
@@ -1634,7 +1633,7 @@ def deploy(args: argparse.Namespace) -> int:
 
     run_service_steps(env, runtime, "after_unpack")
     run_db_maintenance(env, runtime, "before_migrate")
-    run_db_schema_summary(env, runtime, db_schema_artifact)
+    print("SKIP DB schema summary SQL: temporarily disabled", flush=True)
 
     for command in management_commands(env, runtime):
         remote = (

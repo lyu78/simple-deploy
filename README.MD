@@ -31,11 +31,10 @@ The build creates three self-contained DB archives:
 - `db_insert_r_<release>-c_<commit>.tar.gz` contains `run_all_insert_<commit>.sql` and only SQL files referenced by its `\i` includes.
 - `db_update_r_<release>-c_<commit>.tar.gz` contains `run_all_update_<commit>.sql` and only SQL files referenced by its `\i` includes.
 
-During Windows runner deploy, `db_schema_r_<release>-c_<commit>.tar.gz` is
-uploaded to the DB VM, unpacked under `REMOTE_TMP_ROOT/<release>/db_schema`, and
-its single `docs/database/summary/summary_sql_*.sql` entrypoint is executed
-through remote `psql --set=ON_ERROR_STOP=1 -f` before Django management
-commands run on the app VM.
+During Windows runner deploy, applying `db_schema_r_<release>-c_<commit>.tar.gz`
+is temporarily disabled. The build still creates the schema archive, but deploy
+does not upload, unpack or execute `docs/database/summary/summary_sql_*.sql` on
+the DB VM.
 
 After a successful Windows runner deploy and healthcheck, any changed files under
 `BACKEND_SOURCE_REPO_PATH/docs/database/summary` are committed on a new source
