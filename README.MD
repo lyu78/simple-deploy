@@ -1,5 +1,22 @@
 # simple-deploy
 
+## Backend DB artifacts
+
+During backend build, SQL artifact generators are copied into the transient
+`BACKEND_TARGET_REPO_PATH/build_scripts/` directory, executed from the backend
+target repo root, and removed after DB artifacts are packaged. The build does
+not use or leave files in the backend project's regular `scripts/` directory.
+
+The build creates three self-contained DB archives:
+
+- `db_schema_r_<release>-c_<commit>.tar.gz` contains the schema SQL from `docs/database/summary/`.
+- `db_insert_r_<release>-c_<commit>.tar.gz` contains `run_all_insert_<commit>.sql` and only SQL files referenced by its `\i` includes.
+- `db_update_r_<release>-c_<commit>.tar.gz` contains `run_all_update_<commit>.sql` and only SQL files referenced by its `\i` includes.
+
+Generated `run_all_insert` and `run_all_update` files include `\timing on`,
+temporarily set `synchronous_commit = OFF`, apply PostgreSQL parallel/work memory
+session settings, and restore `synchronous_commit = ON` at the end.
+
 `simple-deploy` автоматизирует перенос изменений из внешнего контура разработки
 во внутренний контур, сборку релизных архивов и обновление локального DEV-стенда.
 

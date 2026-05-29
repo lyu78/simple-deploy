@@ -1,27 +1,41 @@
 ---
-- name: Найти архив DB-миграций
+- name: Find DB migration archives
   ansible.builtin.find:
     paths: "{{ selected_release_dir }}"
-    patterns: "{{ db_migrations_artifact.pattern }}"
+    patterns: "{{ item.pattern }}"
     file_type: file
     recurse: false
   delegate_to: localhost
-  register: db_migrations_artifact_find
+  register: db_migration_artifact_find_results
+  loop: "{{ db_migration_artifacts }}"
+  loop_control:
+    label: "{{ item.name }}"
 
-- name: Проверить, что найден ровно один архив DB-миграций
+- name: Check that every DB migration archive exists once
   ansible.builtin.assert:
     that:
-      - db_migrations_artifact_find.files | length == 1
+      - item.files | length == 1
     fail_msg: >-
-      В {{ selected_release_dir }} ожидался ровно один архив DB-миграций
-      по шаблону {{ db_migrations_artifact.pattern }}, найдено:
-      {{ db_migrations_artifact_find.files | length }}.
+      Expected exactly one DB migration archive in {{ selected_release_dir }}
+      for pattern {{ item.item.pattern }}, found {{ item.files | length }}.
+  loop: "{{ db_migration_artifact_find_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
 
-- name: Запомнить путь к архиву DB-миграций
+- name: Reset resolved DB migration archive paths
   ansible.builtin.set_fact:
-    db_migrations_local_archive: "{{ (db_migrations_artifact_find.files | first).path }}"
+    resolved_db_migration_artifacts: []
 
-- name: Подготовить директорию DB-миграций на DB VM
+- name: Resolve DB migration archive paths
+  ansible.builtin.set_fact:
+    resolved_db_migration_artifacts: >-
+      {{ (resolved_db_migration_artifacts | default([]))
+      + [item.item | combine({'local_archive': (item.files | first).path})] }}
+  loop: "{{ db_migration_artifact_find_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Prepare DB migration directories on DB VM
   ansible.builtin.shell: |
     set -euo pipefail
     ssh \
@@ -32,14 +46,17 @@
     -o UserKnownHostsFile=/dev/null \
     {{ db_vm_user }}@{{ db_vm_host }} \
       'set -euo pipefail
-      mkdir -p "$(dirname "{{ db_migrations_artifact.remote_archive }}")"
-      rm -rf "{{ db_migrations_artifact.remote_extract_path }}"
-      mkdir -p "{{ db_migrations_artifact.remote_extract_path }}"'
+      mkdir -p "$(dirname "{{ item.remote_archive }}")"
+      rm -rf "{{ item.remote_extract_path }}"
+      mkdir -p "{{ item.remote_extract_path }}"'
   args:
     executable: /bin/bash
   delegate_to: localhost
+  loop: "{{ resolved_db_migration_artifacts }}"
+  loop_control:
+    label: "{{ item.name }}"
 
-- name: Скопировать архив DB-миграций на DB VM
+- name: Upload DB migration archives to DB VM
   ansible.builtin.shell: |
     set -euo pipefail
     scp \
@@ -48,13 +65,16 @@
     -o ConnectTimeout=10 \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
-    "{{ db_migrations_local_archive }}" \
-    {{ db_vm_user }}@{{ db_vm_host }}:"{{ db_migrations_artifact.remote_archive }}"
+    "{{ item.local_archive }}" \
+    {{ db_vm_user }}@{{ db_vm_host }}:"{{ item.remote_archive }}"
   args:
     executable: /bin/bash
   delegate_to: localhost
+  loop: "{{ resolved_db_migration_artifacts }}"
+  loop_control:
+    label: "{{ item.name }}"
 
-- name: Распаковать архив DB-миграций на DB VM
+- name: Unpack and validate DB migration archives on DB VM
   ansible.builtin.shell: |
     set -euo pipefail
     ssh \
@@ -65,16 +85,18 @@
     -o UserKnownHostsFile=/dev/null \
     {{ db_vm_user }}@{{ db_vm_host }} \
       'set -euo pipefail
-      tar -xzf "{{ db_migrations_artifact.remote_archive }}" -C "{{ db_migrations_artifact.remote_extract_path }}"
-      test -d "{{ db_migrations_artifact.remote_extract_path }}/docs/database/scripts"
-      test "$(find "{{ db_migrations_artifact.remote_extract_path }}/docs/database/summary" -maxdepth 1 -type f -name "summary_sql_*.sql" | wc -l)" -eq 1
-      test "$(find "{{ db_migrations_artifact.remote_extract_path }}" -maxdepth 1 -type f -name "run_all_insert_*.sql" | wc -l)" -eq 1
-      test "$(find "{{ db_migrations_artifact.remote_extract_path }}" -maxdepth 1 -type f -name "run_all_update_*.sql" | wc -l)" -eq 1'
+      tar -xzf "{{ item.remote_archive }}" -C "{{ item.remote_extract_path }}"
+      entrypoint_dir="{{ item.remote_extract_path }}/{{ item.entrypoint_dir }}"
+      test -d "$entrypoint_dir"
+      test "$(find "$entrypoint_dir" -maxdepth 1 -type f -name "{{ item.entrypoint_pattern }}" | wc -l)" -eq 1'
   args:
     executable: /bin/bash
   delegate_to: localhost
+  loop: "{{ resolved_db_migration_artifacts }}"
+  loop_control:
+    label: "{{ item.name }}"
 
-- name: Выполнить SQL-миграцию схемы на DB VM
+- name: Execute DB migration SQL archives on DB VM
   ansible.builtin.shell: |
     set -euo pipefail
     ssh \
@@ -85,48 +107,13 @@
     -o UserKnownHostsFile=/dev/null \
     {{ db_vm_user }}@{{ db_vm_host }} \
       'set -euo pipefail
-      cd "{{ db_migrations_artifact.remote_extract_path }}"
-      schema_sql="$(find docs/database/summary -maxdepth 1 -type f -name "summary_sql_*.sql" | sort | tail -n 1)"
-      PGPASSWORD="{{ db_login_password }}" {{ db_psql_bin }} --set=ON_ERROR_STOP=1 --host="{{ db_psql_host }}" --port="{{ db_port }}" --username="{{ db_login_user }}" --dbname="{{ db_name }}" -f "$schema_sql"'
+      cd "{{ item.remote_extract_path }}"
+      sql_file="$(find "{{ item.entrypoint_dir }}" -maxdepth 1 -type f -name "{{ item.entrypoint_pattern }}" | sort | tail -n 1)"
+      PGPASSWORD="{{ db_login_password }}" {{ db_psql_bin }} {% if item.sql_kind == "schema" %}--set=ON_ERROR_STOP=1{% endif %} --host="{{ db_psql_host }}" --port="{{ db_port }}" --username="{{ db_login_user }}" --dbname="{{ db_name }}" -f "$sql_file"'
   args:
     executable: /bin/bash
   delegate_to: localhost
   no_log: "{{ db_login_password | length > 0 }}"
-
-- name: Выполнить insert SQL-миграцию данных на DB VM
-  ansible.builtin.shell: |
-    set -euo pipefail
-    ssh \
-    -o BatchMode=yes \
-    -o NumberOfPasswordPrompts=1 \
-    -o ConnectTimeout=10 \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    {{ db_vm_user }}@{{ db_vm_host }} \
-      'set -euo pipefail
-      cd "{{ db_migrations_artifact.remote_extract_path }}"
-      insert_sql="$(find . -maxdepth 1 -type f -name "run_all_insert_*.sql" | sort | tail -n 1)"
-      PGPASSWORD="{{ db_login_password }}" {{ db_psql_bin }} --host="{{ db_psql_host }}" --port="{{ db_port }}" --username="{{ db_login_user }}" --dbname="{{ db_name }}" -f "$insert_sql"'
-  args:
-    executable: /bin/bash
-  delegate_to: localhost
-  no_log: "{{ db_login_password | length > 0 }}"
-
-- name: Выполнить update SQL-миграцию данных на DB VM
-  ansible.builtin.shell: |
-    set -euo pipefail
-    ssh \
-    -o BatchMode=yes \
-    -o NumberOfPasswordPrompts=1 \
-    -o ConnectTimeout=10 \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    {{ db_vm_user }}@{{ db_vm_host }} \
-      'set -euo pipefail
-      cd "{{ db_migrations_artifact.remote_extract_path }}"
-      update_sql="$(find . -maxdepth 1 -type f -name "run_all_update_*.sql" | sort | tail -n 1)"
-      PGPASSWORD="{{ db_login_password }}" {{ db_psql_bin }} --host="{{ db_psql_host }}" --port="{{ db_port }}" --username="{{ db_login_user }}" --dbname="{{ db_name }}" -f "$update_sql"'
-  args:
-    executable: /bin/bash
-  delegate_to: localhost
-  no_log: "{{ db_login_password | length > 0 }}"
+  loop: "{{ resolved_db_migration_artifacts }}"
+  loop_control:
+    label: "{{ item.name }}"

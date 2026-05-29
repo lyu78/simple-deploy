@@ -126,11 +126,28 @@ artifact_items:
     extra_opts:
       - "--strip-components=1"
 
-db_migrations_artifact:
-  name: db_migrations
-  pattern: "db_migrations_r_{{ effective_build_version }}-c_*.tar.gz"
-  remote_archive: "{{ remote_release_dir }}/db_migrations.tar.gz"
-  remote_extract_path: "{{ remote_release_dir }}/db_migrations"
+db_migration_artifacts:
+  - name: db_schema
+    sql_kind: schema
+    pattern: "db_schema_r_{{ effective_build_version }}-c_*.tar.gz"
+    remote_archive: "{{ remote_release_dir }}/db_schema.tar.gz"
+    remote_extract_path: "{{ remote_release_dir }}/db_schema"
+    entrypoint_pattern: "summary_sql_*.sql"
+    entrypoint_dir: "docs/database/summary"
+  - name: db_insert
+    sql_kind: insert
+    pattern: "db_insert_r_{{ effective_build_version }}-c_*.tar.gz"
+    remote_archive: "{{ remote_release_dir }}/db_insert.tar.gz"
+    remote_extract_path: "{{ remote_release_dir }}/db_insert"
+    entrypoint_pattern: "run_all_insert_*.sql"
+    entrypoint_dir: "."
+  - name: db_update
+    sql_kind: update
+    pattern: "db_update_r_{{ effective_build_version }}-c_*.tar.gz"
+    remote_archive: "{{ remote_release_dir }}/db_update.tar.gz"
+    remote_extract_path: "{{ remote_release_dir }}/db_update"
+    entrypoint_pattern: "run_all_update_*.sql"
+    entrypoint_dir: "."
 
 # Опциональная резервная копия текущей раскладки перед распаковкой. Пока целевая раскладка не подтверждена,
 # оставляем выключенным.

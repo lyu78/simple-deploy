@@ -5,10 +5,10 @@
 ================================================================================
 ЗАПУСК:
     cd /path/to/project/root
-    python scripts/create_run_all_sql.py
+    python build_scripts/create_run_all_sql.py
 
-    Где scripts/create_run_all_sql.py - путь к этому скрипту.
-    Скрипт должен лежать в поддиректории scripts/ относительно корня проекта.
+    Где build_scripts/create_run_all_sql.py - путь к этому скрипту.
+    Скрипт должен лежать во временной поддиректории build_scripts/ относительно корня проекта.
 
 ================================================================================
 НАЗНАЧЕНИЕ:
@@ -19,7 +19,7 @@
 ================================================================================
 СТРУКТУРА ДИРЕКТОРИЙ:
     project_root/ (корень проекта, откуда запускается скрипт)
-    ├── scripts/
+    ├── build_scripts/
     │   └── create_run_all_sql.py          # этот скрипт
     ├── docs/database/scripts/
     │   ├── app_ip_subcompany_catalogs/     # только INSERT (каталоги)
@@ -29,8 +29,8 @@
     │   ├── app_ip_subcompany_prw/          # insert_* -> INSERT, остальное -> UPDATE
     │   ├── app_ip_subcompany_lti/          # всё -> UPDATE
     │   └── app_ip_subcompany_pnca/         # всё -> UPDATE
-    ├── run_all_insert_<hash>.sql           # генерируется
-    └── run_all_update_<hash>.sql           # генерируется
+    │   ├── run_all_insert_<hash>.sql       # генерируется
+    │   └── run_all_update_<hash>.sql       # генерируется
 
 ================================================================================
 ПРАВИЛА РАСПРЕДЕЛЕНИЯ СКРИПТОВ:
@@ -103,8 +103,9 @@ import subprocess
 # КОНФИГУРАЦИЯ
 # ============================================================================
 
-# Скрипт лежит в scripts/, поднимаемся на уровень выше до корня проекта
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Скрипт лежит во временной build_scripts/, поднимаемся на уровень выше до корня проекта.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(SCRIPT_DIR)
 SCRIPTS_DIR = os.path.join(BASE_DIR, "docs", "database", "scripts")
 
 # Получаем хэш коммита
@@ -123,8 +124,25 @@ def get_commit_hash():
 
 COMMIT_HASH = get_commit_hash()
 
-OUTPUT_INSERT = os.path.join(BASE_DIR, f"run_all_insert_{COMMIT_HASH}.sql")
-OUTPUT_UPDATE = os.path.join(BASE_DIR, f"run_all_update_{COMMIT_HASH}.sql")
+OUTPUT_INSERT = os.path.join(SCRIPT_DIR, f"run_all_insert_{COMMIT_HASH}.sql")
+OUTPUT_UPDATE = os.path.join(SCRIPT_DIR, f"run_all_update_{COMMIT_HASH}.sql")
+
+PSQL_SESSION_SETTINGS = [
+    "SET synchronous_commit = OFF;",
+    "SET max_parallel_workers_per_gather = 16;",
+    "SET work_mem = '256MB';",
+    "SET maintenance_work_mem = '3GB';",
+    "SET parallel_setup_cost = 0;",
+    "SET parallel_tuple_cost = 0;",
+    "SET min_parallel_table_scan_size = 0;",
+    "SET min_parallel_index_scan_size = 0;",
+    "SET parallel_leader_participation = off;",
+    "SET enable_parallel_hash = on;",
+    "SET enable_partitionwise_aggregate = on;",
+    "SET enable_partitionwise_join = on;",
+    "SET temp_buffers = '512MB';",
+    "SET max_parallel_workers = 16;",
+]
 
 # Директории, где ВСЕ скрипты идут в INSERT
 INSERT_DIRS = ["app_ip_subcompany_catalogs"]
@@ -211,6 +229,18 @@ def find_sql_files(path, include_insert_only=False, check_inserts=False, errors_
     files.sort()
     return files
 
+def write_run_all_preamble(out, on_error_stop):
+    out.write(f"-- Commit: {COMMIT_HASH}\n")
+    out.write(f"\\set ON_ERROR_STOP {on_error_stop}\n")
+    out.write("\\set ECHO all\n")
+    out.write("\\timing on\n")
+    for setting in PSQL_SESSION_SETTINGS:
+        out.write(f"{setting}\n")
+    out.write("\n")
+
+def write_run_all_epilogue(out):
+    out.write("SET synchronous_commit = ON;\n")
+
 # ============================================================================
 # ОСНОВНАЯ ЛОГИКА
 # ============================================================================
@@ -223,10 +253,7 @@ def main():
 
     # Генерация INSERT скрипта
     with open(OUTPUT_INSERT, "w") as out:
-        out.write(f"-- Commit: {COMMIT_HASH}\n")
-        out.write("\\set ON_ERROR_STOP 1\n")
-        out.write("\\set ECHO all\n")
-        out.write("\\timing on\n\n")
+        write_run_all_preamble(out, 1)
         out.write("-- ============================================\n")
         out.write("-- IDEMPOTENT INSERTS (can be run multiple times)\n")
         out.write("-- ============================================\n\n")
@@ -249,14 +276,13 @@ def main():
                 out.write(f"\\i '{sql}'\n")
             out.write("\n")
 
+        write_run_all_epilogue(out)
+
     print(f"\n✅ Generated: {os.path.basename(OUTPUT_INSERT)} (ON_ERROR_STOP=1)")
 
     # Генерация UPDATE скрипта
     with open(OUTPUT_UPDATE, "w") as out:
-        out.write(f"-- Commit: {COMMIT_HASH}\n")
-        out.write("\\set ON_ERROR_STOP 0\n")
-        out.write("\\set ECHO all\n")
-        out.write("\\timing on\n\n")
+        write_run_all_preamble(out, 0)
         out.write("-- ============================================\n")
         out.write("-- NON-CRITICAL UPDATES (errors logged, continue)\n")
         out.write("-- ============================================\n\n")
@@ -286,6 +312,8 @@ def main():
             for sql in find_sql_files(path, errors_list=errors):
                 out.write(f"\\i '{sql}'\n")
             out.write("\n")
+
+        write_run_all_epilogue(out)
 
     print(f"✅ Generated: {os.path.basename(OUTPUT_UPDATE)} (ON_ERROR_STOP=0)")
 

@@ -556,7 +556,7 @@
           register: artifact_find_results
           changed_when: false
           failed_when: false
-          loop: "{{ artifact_items + [db_migrations_artifact] }}"
+          loop: "{{ artifact_items + db_migration_artifacts }}"
           loop_control:
             label: "{{ item.name }}"
 

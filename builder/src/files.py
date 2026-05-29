@@ -3,7 +3,7 @@ import shutil
 import logging
 
 INCLUDE_ITEM = [".git", ".venv"]
-EXCLUDE_ITEM = [".git", ".venv", "archives", "build", "node_modules"]
+EXCLUDE_ITEM = [".git", ".venv", "archives", "build", "build_scripts", "node_modules"]
 
 
 def clear_directory_contents(directory_path):
