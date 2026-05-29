@@ -79,7 +79,8 @@ healthcheck-команд, SQL-скриптов и включения backup. Е�
 Команды рестарта EXAMPLE задавайте в `service_steps` в нужном порядке. Поддерживаемые
 фазы: `before_unpack`, `after_unpack`, `after_migrate`; шаги без `phase`
 выполняются как `after_migrate`. Команды запускаются на app VM по SSH под
-`APP_VM_USER`, без `sudo`.
+`APP_VM_USER`; для сервисных операций используйте `sudo` с ограниченным набором
+разрешенных команд в sudoers.
 
 ```json
 {
@@ -88,42 +89,36 @@ healthcheck-команд, SQL-скриптов и включения backup. Е�
     {
       "name": "restart example backend",
       "phase": "after_migrate",
-      "command": "systemctl restart example-backend.service"
+      "command": "sudo /bin/systemctl restart example-backend.service"
     },
     {
       "name": "restart example worker",
       "phase": "after_migrate",
-      "command": "systemctl restart example-worker.service"
+      "command": "sudo /bin/systemctl restart example-worker.service"
     }
   ]
 }
 ```
 
-Во время `dry-run` runner проверяет такие `systemctl`-шаги через
-`systemctl --dry-run ...` под `APP_VM_USER`. Для нестандартной команды добавьте
-`permission_check_command`, который безопасно проверяет право/готовность без
-реального рестарта.
+Во время `dry-run` runner сначала получает список доступных sudo-команд через
+`sudo -n -l`, затем для каждого sudo service step проверяет точную команду через
+`sudo -n -l <команда без sudo>`. Реальная сервисная команда на dry-run не
+выполняется.
 
-`systemctl --dry-run` проверяет транзакцию systemd, но не всегда доказывает, что
-реальный `start` пройдет через polkit. Если нужно проверить именно право запуска
-конкретного сервиса, задайте явный `permission_check_command`, например:
+Если для шага нужна отдельная команда проверки, задайте `permission_check_command`
+тоже через `sudo`:
 
 ```json
 {
   "name": "start nginx",
   "phase": "after_migrate",
-  "command": "systemctl start nginx",
-  "permission_check_command": "systemctl start nginx"
+  "command": "sudo /bin/systemctl start nginx",
+  "permission_check_command": "sudo /bin/systemctl start nginx"
 }
 ```
 
-Такой check уже выполняет реальный `start`, поэтому используйте его для
-идемпотентных сервисов, где повторный start допустим.
-
-Если service step использует `sudo`, dry-run дополнительно выполняет
-`sudo -n -l <команда>` под `APP_VM_USER`, чтобы проверить sudoers без запроса
-пароля. Для этого в `/etc/sudoers.d/simple-deploy` должны быть разрешены точные
-пути команд, например `/bin/systemctl start nginx`.
+Для этого в `/etc/sudoers.d/simple-deploy` должны быть разрешены точные пути
+команд, например `/bin/systemctl start nginx`.
 
 Также `dry-run` проверяет на app VM наличие и права `rwx` для директорий
 `REMOTE_TMP_ROOT`, `BACKEND_RELEASE_PATH`, `FRONTEND_RELEASE_PATH` и

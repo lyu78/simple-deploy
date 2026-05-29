@@ -665,7 +665,7 @@ def derive_service_permission_check(command: str) -> str:
     if not tokens:
         return ""
     if tokens[0] == "sudo":
-        return "sudo"
+        return command
     if tokens[0] != "systemctl":
         return ""
 
@@ -706,6 +706,14 @@ def sudo_list_command(command: str) -> str:
     return "sudo -n -l " + " ".join(sh_quote(token) for token in sudo_tokens)
 
 
+def is_sudo_command(command: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return bool(tokens and tokens[0] == "sudo")
+
+
 def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: dict) -> None:
     if not runtime.get("service_permission_checks_enabled", True):
         reporter.skip("service permission checks", "disabled")
@@ -718,6 +726,14 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
 
     app_user = require_value(env, "APP_VM_USER")
     app_host = require_value(env, "APP_VM_HOST")
+    if any(is_sudo_command(str(step.get("permission_check_command") or step.get("command", "")).strip()) for step in steps):
+        sudo_list_result = ssh_command(env, app_user, app_host, "sudo -n -l", "APP", timeout=30)
+        sudo_list_output = (sudo_list_result.stdout or sudo_list_result.stderr).strip()
+        if sudo_list_result.rc == 0:
+            reporter.pass_("sudo allowed commands", sudo_list_output.splitlines()[0] if sudo_list_output else "sudo -n -l")
+        else:
+            reporter.fail("sudo allowed commands", sudo_list_output or f"rc={sudo_list_result.rc}")
+
     for index, step in enumerate(steps, start=1):
         label = step.get("name") or f"service step #{index}"
         command = str(step.get("command", "")).strip()
@@ -727,12 +743,6 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
         if not check_command_text:
             check_command_text = derive_service_permission_check(command)
             derived_check = bool(check_command_text)
-        if check_command_text == "sudo":
-            reporter.fail(
-                f"service permission {label}",
-                "service step must run as APP_VM_USER without sudo",
-            )
-            continue
         if not check_command_text:
             reporter.skip(
                 f"service permission {label}",
@@ -746,6 +756,7 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
             sudo_output = (sudo_result.stdout or sudo_result.stderr).strip()
             if sudo_result.rc == 0:
                 reporter.pass_(f"sudo permission {label}", sudo_output.splitlines()[0] if sudo_output else sudo_check)
+                continue
             else:
                 reporter.fail(f"sudo permission {label}", sudo_output or f"rc={sudo_result.rc}")
                 continue

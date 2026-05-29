@@ -116,20 +116,17 @@ python "$APP_MANAGE_PY_PATH" sync_action_role
 }
 ```
 
-Первоначальная цель была запускать systemctl без sudo через polkit, но на практике
-`systemctl --dry-run start ...` может проходить, а реальный `start` падать на
-authorization. Поэтому для надежной проверки права запуска нужно задавать
-`permission_check_command` с реальной командой. Если используется sudo, лучше не
-добавлять пользователя в полный sudo/wheel, а создать точечное правило
+Сервисные команды запускаются только через `sudo`, но пользователь не должен быть
+в полном sudo/wheel. Для него создается точечное правило
 `/etc/sudoers.d/simple-deploy` через `visudo` с `NOPASSWD` только для нужных
-`/bin/systemctl start/status ...` команд. Если `systemctl` лежит не в `/bin`,
-путь нужно проверить через `command -v systemctl` и использовать фактический путь.
+`/bin/systemctl start/status/restart ...` команд. Если `systemctl` лежит не в
+`/bin`, путь нужно проверить через `command -v systemctl` и использовать
+фактический путь.
 
-Dry-run для sudo service steps выполняет дополнительную проверку
-`sudo -n -l <команда>` под `APP_VM_USER`. Это проверяет, что sudoers разрешает
-именно эту команду без password prompt. Если `permission_check_command` задан как
-реальный `sudo /bin/systemctl start ...`, dry-run также выполнит саму команду;
-это допустимо только для идемпотентных start/status шагов.
+Dry-run для sudo service steps сначала смотрит общий список доступных команд через
+`sudo -n -l`, затем проверяет каждый шаг через `sudo -n -l <команда без sudo>`.
+Реальная сервисная команда на dry-run не выполняется, даже если
+`permission_check_command` задан как `sudo /bin/systemctl start ...`.
 
 ## Финальный healthcheck портала
 
