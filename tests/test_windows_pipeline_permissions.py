@@ -7,6 +7,7 @@ from unittest.mock import patch
 from tools.windows_pipeline import (
     Artifact,
     CommandResult,
+    create_backend_summary_mr,
     derive_service_permission_check,
     is_sudo_command,
     resolve_db_schema_artifact,
@@ -72,6 +73,32 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             command = run_mock.call_args.args[0]
             self.assertIn("DB_KEY", command)
             self.assertIn(f"db-user@db.example.local:/tmp/db_schema.tar.gz", command)
+
+    def test_create_backend_summary_mr_commits_only_summary_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_path = Path(tmp)
+            responses = [
+                CommandResult(0, "?? docs/database/summary/summary_sql_2026.sql\n", ""),
+                CommandResult(0, "", ""),
+                CommandResult(0, "", ""),
+                CommandResult(0, "[feature/db-summary] commit\n", ""),
+                CommandResult(0, "remote: See merge request backend!1\n", ""),
+                CommandResult(0, "", ""),
+            ]
+
+            with patch("tools.windows_pipeline.run_command", side_effect=responses) as run_mock:
+                create_backend_summary_mr(
+                    {"BACKEND_SOURCE_REPO_PATH": str(repo_path)},
+                    "1.2.3",
+                )
+
+            commands = [call.args[0] for call in run_mock.call_args_list]
+            self.assertEqual(commands[0], ["git", "status", "--porcelain", "--", "docs/database/summary"])
+            self.assertEqual(commands[2], ["git", "add", "docs/database/summary"])
+            self.assertEqual(commands[3], ["git", "commit", "-m", "Add DB summary SQL for 1.2.3"])
+            self.assertIn("merge_request.create", commands[4])
+            self.assertIn("merge_request.target=dev", commands[4])
+            self.assertEqual(commands[5], ["git", "switch", "dev"])
 
     def test_outlook_success_email_attaches_release_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

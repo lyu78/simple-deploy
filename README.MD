@@ -34,6 +34,12 @@ its single `docs/database/summary/summary_sql_*.sql` entrypoint is executed
 through remote `psql --set=ON_ERROR_STOP=1 -f` before Django management
 commands run on the app VM.
 
+After a successful Windows runner deploy and healthcheck, any changed files under
+`BACKEND_SOURCE_REPO_PATH/docs/database/summary` are committed on a new source
+repo branch `feature/db-summary-<release>-<timestamp>` and pushed with GitLab
+merge request push options targeting `dev`. Only the summary directory is added;
+debug `build_scripts` files are left out.
+
 Generated `run_all_insert` and `run_all_update` files include `\timing on`,
 temporarily set `synchronous_commit = OFF`, apply PostgreSQL parallel/work memory
 session settings, and restore `synchronous_commit = ON` at the end.

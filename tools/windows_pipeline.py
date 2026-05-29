@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from html.parser import HTMLParser
 from typing import Iterable
 from urllib import error, parse, request
@@ -1176,6 +1177,12 @@ def run_or_raise(label: str, result: CommandResult, mask: Iterable[str] = ()) ->
     raise RuntimeError(f"{label}: {detail}")
 
 
+def git_or_raise(repo_path: Path, label: str, *args: str) -> CommandResult:
+    result = run_command(["git", *args], cwd=repo_path)
+    run_or_raise(label, result)
+    return result
+
+
 def remote_clean_unpack_command(artifact: Artifact) -> str:
     target = artifact.extract_path.rstrip("/")
     if target in {"", "/"}:
@@ -1241,6 +1248,59 @@ def run_db_schema_summary(env: dict[str, str], runtime: dict, artifact: DbSqlArt
     print(f"RUN DB schema summary SQL: {artifact.remote_extract_path}/{artifact.entrypoint_dir}", flush=True)
     result = ssh_command(env, db_user, db_host, command, "DB", timeout=300, mask=mask)
     run_or_raise("DB schema summary SQL", result, mask=mask)
+
+
+def create_backend_summary_mr(env: dict[str, str], build_version: str) -> None:
+    repo_path = Path(require_value(env, "BACKEND_SOURCE_REPO_PATH"))
+    summary_path = "docs/database/summary"
+    print(f"RUN backend summary MR check: {repo_path}", flush=True)
+
+    status = run_command(["git", "status", "--porcelain", "--", summary_path], cwd=repo_path)
+    run_or_raise("backend summary git status", status)
+    changed_lines = [line for line in status.stdout.splitlines() if line.strip()]
+    if not changed_lines:
+        print("SKIP backend summary MR: no docs/database/summary changes", flush=True)
+        return
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    branch_name = f"feature/db-summary-{build_version}-{timestamp}"
+    commit_message = f"Add DB summary SQL for {build_version}"
+    mr_title = f"Add DB summary SQL for {build_version}"
+
+    print(f"RUN backend summary MR branch: {branch_name}", flush=True)
+    git_or_raise(repo_path, "backend summary create branch", "switch", "-c", branch_name)
+    git_or_raise(repo_path, "backend summary add", "add", summary_path)
+    git_or_raise(repo_path, "backend summary commit", "commit", "-m", commit_message)
+
+    push_with_mr = run_command(
+        [
+            "git",
+            "push",
+            "-u",
+            "-o",
+            "merge_request.create",
+            "-o",
+            "merge_request.target=dev",
+            "-o",
+            f"merge_request.title={mr_title}",
+            "origin",
+            branch_name,
+        ],
+        cwd=repo_path,
+    )
+    if push_with_mr.rc == 0:
+        run_or_raise("backend summary push MR", push_with_mr)
+    else:
+        detail = (push_with_mr.stderr or push_with_mr.stdout).strip() or f"rc={push_with_mr.rc}"
+        print(f"WARN backend summary MR push options failed, pushing branch only: {detail}", flush=True)
+        git_or_raise(repo_path, "backend summary push branch", "push", "-u", "origin", branch_name)
+
+    switch_back = run_command(["git", "switch", "dev"], cwd=repo_path)
+    if switch_back.rc == 0:
+        print("PASS backend summary switch back to dev", flush=True)
+    else:
+        detail = (switch_back.stderr or switch_back.stdout).strip() or f"rc={switch_back.rc}"
+        print(f"WARN backend summary switch back to dev failed: {detail}", flush=True)
 
 
 def run_service_steps(env: dict[str, str], runtime: dict, phase: str) -> None:
@@ -1591,6 +1651,8 @@ def deploy(args: argparse.Namespace) -> int:
         healthcheck(env, runtime, build_version)
     else:
         print("SKIP healthcheck: disabled")
+
+    create_backend_summary_mr(env, build_version)
 
     print("DEPLOY SUMMARY")
     for line in deploy_summary_lines(build_version, release_dir, artifacts):
