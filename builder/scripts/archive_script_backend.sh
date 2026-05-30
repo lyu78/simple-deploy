@@ -28,6 +28,11 @@ if [ -d "$BUILD_DIR_FULL" ]; then
     --exclude="**/tests" \
     --exclude="tests" --exclude="**/.env" \
     --exclude="**/.env.example" \
+    --exclude="__pycache__" \
+    --exclude="*/__pycache__" \
+    --exclude="*/__pycache__/*" \
+    --exclude="*.pyc" \
+    --exclude="*.pyo" \
     --exclude="unit_test_runner.py" \
     -C "$BACKEND_REPO_ROOT" "$BACKEND_APP_ROOT_DIR"
     echo "Archive created: $ARCHIVE_NAME"

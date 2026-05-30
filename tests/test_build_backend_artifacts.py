@@ -303,6 +303,14 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(archive_env["BACKEND_REPO_ROOT_BASH"], "/c/example/repos/backend-source")
         self.assertEqual(archive_env["BACKEND_APP_ROOT_DIR"], "backend_app")
 
+    def test_backend_archive_script_excludes_python_cache(self):
+        script_path = ROOT / "builder" / "scripts" / "archive_script_backend.sh"
+        content = script_path.read_text(encoding="utf-8")
+
+        self.assertIn('--exclude="*/__pycache__/*"', content)
+        self.assertIn('--exclude="*.pyc"', content)
+        self.assertIn('--exclude="*.pyo"', content)
+
 
 if __name__ == "__main__":
     unittest.main()
