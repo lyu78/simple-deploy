@@ -109,7 +109,7 @@
       'set -euo pipefail
       cd "{{ item.remote_extract_path }}"
       sql_file="$(find "{{ item.entrypoint_dir }}" -maxdepth 1 -type f -name "{{ item.entrypoint_pattern }}" | sort | tail -n 1)"
-      PGPASSWORD="{{ db_login_password }}" {{ db_psql_bin }} {% if item.sql_kind == "schema" %}--set=ON_ERROR_STOP=1{% endif %} --host="{{ db_psql_host }}" --port="{{ db_port }}" --username="{{ db_login_user }}" --dbname="{{ db_name }}" -f "$sql_file"'
+      PGPASSWORD="{{ db_login_password }}" {{ db_psql_bin }} {% if item.sql_kind == "schema" %}--set=ON_ERROR_STOP=1 --single-transaction{% endif %} --host="{{ db_psql_host }}" --port="{{ db_port }}" --username="{{ db_login_user }}" --dbname="{{ db_name }}" -f "$sql_file"'
   args:
     executable: /bin/bash
   delegate_to: localhost

@@ -131,11 +131,11 @@ artifact_items:
 db_migration_artifacts:
   - name: db_schema
     sql_kind: schema
-    pattern: "db_schema_r_{{ effective_build_version }}-c_*.tar.gz"
+    pattern: "db_schema_dev_r_{{ effective_build_version }}-c_*.tar.gz"
     remote_archive: "{{ remote_release_dir }}/db_schema.tar.gz"
     remote_extract_path: "{{ remote_release_dir }}/db_schema"
-    entrypoint_pattern: "summary_sql_*.sql"
-    entrypoint_dir: "docs/database/summary"
+    entrypoint_pattern: "summary_sql_dev_*.sql"
+    entrypoint_dir: "."
   - name: db_insert
     sql_kind: insert
     pattern: "db_insert_r_{{ effective_build_version }}-c_*.tar.gz"

@@ -308,7 +308,7 @@ def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_
                 lambda archive: add_file_to_tar(
                     archive,
                     schema_sql,
-                    f"docs/database/summary/{schema_sql.name}",
+                    schema_sql.name,
                 ),
             )
         insert_archive = _create_db_sql_artifact(

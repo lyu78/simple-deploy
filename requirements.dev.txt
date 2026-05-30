@@ -13,3 +13,4 @@ ruff==0.6.9
 whitenoise==6.7.0
 python-dotenv>=1.0,<2
 pydantic>=2,<3
+pytest>=8,<9

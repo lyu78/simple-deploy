@@ -68,7 +68,7 @@ operator -> app_artifacts: взять backend/frontend artifacts
 operator -> test_process: передать release artifacts
 
 test_process -> test_db: распаковать db_schema_test
-test_process -> test_db: psql -f summary_sql_test_*.sql
+test_process -> test_db: psql --single-transaction -f summary_sql_test_*.sql
 test_process -> test_db: после успешного SQL выполнить migrate --fake
 test_process -> test_app: разложить backend/frontend artifacts
 test_process -> test_app: выполнить service steps и проверки TEST
@@ -91,7 +91,7 @@ operator -> app_artifacts: взять backend/frontend artifacts
 operator -> prod_process: передать release artifacts
 
 prod_process -> prod_db: распаковать db_schema_prod
-prod_process -> prod_db: psql -f summary_sql_prod_*.sql
+prod_process -> prod_db: psql --single-transaction -f summary_sql_prod_*.sql
 prod_process -> prod_db: после успешного SQL выполнить migrate --fake
 prod_process -> prod_app: разложить backend/frontend artifacts
 prod_process -> prod_app: выполнить service steps и проверки PROD

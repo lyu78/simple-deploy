@@ -4,35 +4,61 @@
 
 Актуальный сборщик SQL-миграций работает без подключения к PostgreSQL и без Docker/WSL. Источник истины для генерации - Git-диапазон backend source repo и локальное состояние контуров в SQLite, а не реальная база данных.
 
-Основной сценарий:
+Baseline хранится отдельно для каждого контура: `dev`, `test`, `prod`. Build читает все три baseline и генерирует отдельный schema SQL-архив для каждого контура. Если baseline хотя бы одного контура не задан, build должен упасть до упаковки релиза.
+
+### Первичная инициализация baseline
+
+Перед первой сборкой нужно один раз зафиксировать фактический backend commit, который уже успешно лежит на каждом контуре. Это commit `from`, а не commit нового релиза.
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour dev --backend-commit <dev_backend_commit>
+.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour test --backend-commit <test_backend_commit>
+.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour prod --backend-commit <prod_backend_commit>
+```
+
+Если для уже примененного релиза есть локальный `release_manifest.json`, baseline можно поставить по версии релиза; runner сам прочитает backend commit из manifest:
+
+```bash
+.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour test --build-version <previous_successful_release_version>
+```
+
+Пример: если TEST и PROD сейчас на commit `C1`, DEV на commit `C2`, а новый backend source repo уже на commit `C3`, перед `build` нужно поставить `test=C1`, `prod=C1`, `dev=C2`. Тогда build создаст диапазоны `test C1..C3`, `prod C1..C3`, `dev C2..C3`.
+
+### Сборка релиза
+
+Обычный порядок после инициализации baseline:
 
 ```bash
 .venv/Scripts/python.exe tools/windows_pipeline.py dry-run
 .venv/Scripts/python.exe tools/windows_pipeline.py build
+```
+
+`build` берет `to` из текущего `HEAD` backend source repo и пишет в релиз отдельные архивы `db_schema_dev_*`, `db_schema_test_*`, `db_schema_prod_*`. В `release_manifest.json` попадает `db_schema_metadata` со списком Django migration-файлов, вошедших в каждый диапазон `from..to`.
+
+### После успешного применения релиза
+
+DEV deploy двигает baseline автоматически только после успешного завершения:
+
+```bash
 .venv/Scripts/python.exe tools/windows_pipeline.py deploy --contour dev --latest
 ```
 
-Для TEST и PROD runner строит from-to артефакты от зафиксированного baseline контура до commit собираемого релиза. Baseline задается явно:
+Для TEST и PROD runner сам не знает, что реально применено на внешнем контуре. После успешного размещения и проверки нужно явно сдвинуть baseline на backend commit этого релиза:
 
 ```bash
-.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour test --commit <backend_commit>
-.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour prod --commit <backend_commit>
+.venv/Scripts/python.exe tools/windows_pipeline.py mark-applied --contour test --build-version <successful_release_version>
+.venv/Scripts/python.exe tools/windows_pipeline.py mark-applied --contour prod --build-version <successful_release_version>
 ```
 
-После успешного размещения контура состояние фиксируется командой:
+Если размещение или ручная проверка завершились ошибкой, попытка записывается отдельно, а baseline не меняется:
 
 ```bash
-.venv/Scripts/python.exe tools/windows_pipeline.py mark-applied --contour test --build-version <version>
-.venv/Scripts/python.exe tools/windows_pipeline.py mark-applied --contour prod --build-version <version>
+.venv/Scripts/python.exe tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
 ```
 
-Если размещение или ручная проверка завершились ошибкой, попытка записывается отдельно:
+Не сдвигайте baseline командой `set-baseline` на новый commit до успешного применения релиза: следующий build посчитает этот commit уже примененным и соберет неполный или пустой диапазон.
 
-```bash
-.venv/Scripts/python.exe tools/windows_pipeline.py mark-failed --contour test --build-version <version>
-```
-
-Локальная база состояния хранится в `local_state/simple_deploy.sqlite3` и не коммитится. В release manifest попадает список Django migrations, которые вошли в диапазон `from..to`; это manifest диапазона, а не подтверждение применения на реальной БД. SQL генерируется best-effort средствами Django schema editor в режиме `collect_sql=True`, поэтому перед применением на TEST/PROD скрипт остается операционным артефактом, который нужно проверять в обычном release flow.
+Локальная база состояния хранится в `local_state/simple_deploy.sqlite3` и не коммитится. Если этот файл потерян или рабочая машина меняется, baseline нужно инициализировать заново по фактическим commit, которые уже лежат на `dev`, `test`, `prod`. Manifest SQL-артефакта описывает входной диапазон `from..to`, но не является подтверждением применения на реальной БД. SQL генерируется best-effort средствами Django schema editor в режиме `collect_sql=True`, поэтому перед применением на TEST/PROD скрипт остается операционным артефактом, который нужно проверять в обычном release flow.
 
 Диаграммы полного процесса лежат в `docs/`:
 
@@ -57,25 +83,41 @@ Bash командой `python -m venv`. Перед каждым запуском
 запускаются через Git Bash с `python.exe -Xutf8` из source venv; `cmd.exe` и
 `activate.bat` на этом шаге не используются.
 
-Генератор schema summary `create_sql_migrations.py` временно отключен. Сейчас из
-состояния source repo генерируются только run_all-артефакты; target repo нужен
-только для архива синхронизированного backend-кода.
+Генератор schema summary `create_sql_migrations.py` активен. Build формирует
+`SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON` из локальной SQLite-базы и передает в
+генератор baseline для `dev`, `test`, `prod`. Для каждого контура создается
+отдельный `summary_sql_<contour>_*.sql` и общий
+`schema_migrations_metadata.json`.
 
 Build логирует создание, копирование и запуск `build_scripts`, точные команды
 генераторов, директории/паттерны поиска сгенерированных SQL-файлов и временный
 пропуск очистки `build_scripts`.
 
-Сейчас build создает два самодостаточных DB-архива:
+Сейчас build создает schema-архивы по контурам и два data SQL-архива:
 
+- `db_schema_dev_r_<release>-c_<commit>.tar.gz`, `db_schema_test_r_<release>-c_<commit>.tar.gz`, `db_schema_prod_r_<release>-c_<commit>.tar.gz` содержат соответствующий `summary_sql_<contour>_*.sql` в корне архива.
 - `db_insert_r_<release>-c_<commit>.tar.gz` содержит `run_all_insert_<commit>.sql` и только SQL-файлы, на которые он ссылается через `\i`.
 - `db_update_r_<release>-c_<commit>.tar.gz` содержит `run_all_update_<commit>.sql` и только SQL-файлы, на которые он ссылается через `\i`.
 
-Применение schema summary SQL в Windows runner deploy временно отключено. Сборка
-не создает `db_schema_r_<release>-c_<commit>.tar.gz`, а deploy не загружает, не
-распаковывает и не выполняет `docs/database/summary/summary_sql_*.sql` на DB VM.
+Windows runner deploy выбирает schema-архив по `--contour`, загружает его на DB
+VM, распаковывает и выполняет единственный entrypoint
+`summary_sql_<contour>_*.sql` из корня распакованного архива до Django
+management-команд. Schema SQL выполняется через
+`psql --set=ON_ERROR_STOP=1 --single-transaction`, поэтому при ошибке весь файл
+откатывается PostgreSQL.
+Data SQL-архивы `run_all_insert` и `run_all_update` остаются артефактами для
+отдельного DB migration flow и Windows runner deploy их не выполняет.
+Правила будущей разметки data SQL для параллельного runner описаны в
+`instructions/data-sql-script-markup.md`; сами backend SQL-файлы размечаются в
+backend repo вручную.
 
-Post-deploy MR в source repo для `docs/database/summary` тоже временно отключен,
-пока отключена генерация schema summary.
+Generated schema SQL не коммитится обратно в backend source repo и не хранится в
+`docs/database/summary`: источником для деплоя являются только релизные архивы и
+manifest.
+
+Для TEST/PROD, где деплой выполняют администраторы контура вручную, инструкция
+по применению schema-архива лежит в
+`instructions/manual-schema-sql-deploy.md`.
 
 Сгенерированные `run_all_insert` и `run_all_update` включают `\timing on`,
 временно выставляют `synchronous_commit = OFF`, применяют session settings для

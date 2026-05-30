@@ -39,7 +39,6 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.release_dir = self.root / "release"
         (self.repo / "docs/database/scripts/app/insert").mkdir(parents=True)
         (self.repo / "docs/database/scripts/app/update").mkdir(parents=True)
-        (self.repo / "docs/database/summary").mkdir(parents=True)
         self.release_dir.mkdir()
 
     def tearDown(self):
@@ -102,7 +101,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         )
 
     def test_schema_archive_contains_only_summary_sql(self):
-        summary = self._write("docs/database/summary/summary_sql_2026_abc123.sql")
+        summary = self._write("build_scripts/summary_sql_dev_2026_abc123.sql")
 
         archive_name = _create_db_sql_artifact(
             self.release_dir,
@@ -112,13 +111,13 @@ class BuildBackendArtifactTests(unittest.TestCase):
             lambda archive: add_file_to_tar(
                 archive,
                 summary,
-                f"docs/database/summary/{summary.name}",
+                summary.name,
             ),
         )
 
         self.assertEqual(
             self._tar_names(archive_name),
-            ["docs/database/summary/summary_sql_2026_abc123.sql"],
+            ["summary_sql_dev_2026_abc123.sql"],
         )
 
     def test_missing_include_fails(self):

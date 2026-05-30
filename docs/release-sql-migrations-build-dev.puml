@@ -94,7 +94,7 @@ runner -> release_dir: выбрать release
 runner -> app_artifacts: найти backend/frontend archives
 runner -> schema_artifacts: найти db_schema_dev archive
 runner -> dev_db: upload + unpack db_schema_dev
-runner -> dev_db: psql -f summary_sql_dev_*.sql
+runner -> dev_db: psql --single-transaction -f summary_sql_dev_*.sql
 runner -> dev_app: upload backend/frontend archives
 runner -> dev_app: очистить release paths с сохранением .env
 runner -> dev_app: unpack backend/frontend

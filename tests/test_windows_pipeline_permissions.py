@@ -7,10 +7,11 @@ from unittest.mock import patch
 from tools.windows_pipeline import (
     Artifact,
     CommandResult,
-    create_backend_summary_mr,
+    DbSqlArtifact,
     derive_service_permission_check,
     is_sudo_command,
     resolve_db_schema_artifact,
+    run_db_schema_summary,
     scp_file,
     send_outlook_success_email,
     sudo_list_command,
@@ -54,7 +55,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             self.assertEqual(artifact.local_path, artifact_path)
             self.assertEqual(artifact.remote_archive, "/tmp/simple-deploy/1.2.3/db_schema_dev.tar.gz")
             self.assertEqual(artifact.remote_extract_path, "/tmp/simple-deploy/1.2.3/db_schema_dev")
-            self.assertEqual(artifact.entrypoint_dir, "docs/database/summary")
+            self.assertEqual(artifact.entrypoint_dir, ".")
             self.assertEqual(artifact.entrypoint_pattern, "summary_sql_dev_*.sql")
 
     def test_scp_file_uses_requested_scope(self):
@@ -74,31 +75,38 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             self.assertIn("DB_KEY", command)
             self.assertIn(f"db-user@db.example.local:/tmp/db_schema.tar.gz", command)
 
-    def test_create_backend_summary_mr_commits_only_summary_dir(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            repo_path = Path(tmp)
-            responses = [
-                CommandResult(0, "?? docs/database/summary/summary_sql_2026.sql\n", ""),
-                CommandResult(0, "", ""),
-                CommandResult(0, "", ""),
-                CommandResult(0, "[feature/db-summary] commit\n", ""),
-                CommandResult(0, "remote: See merge request backend!1\n", ""),
-                CommandResult(0, "", ""),
-            ]
+    def test_run_db_schema_summary_uses_single_transaction(self):
+        artifact = DbSqlArtifact(
+            name="db_schema_dev",
+            local_path=Path("db_schema_dev.tar.gz"),
+            remote_archive="/tmp/simple-deploy/1.2.3/db_schema_dev.tar.gz",
+            remote_extract_path="/tmp/simple-deploy/1.2.3/db_schema_dev",
+            entrypoint_dir=".",
+            entrypoint_pattern="summary_sql_dev_*.sql",
+        )
+        env = {
+            "DB_VM_USER": "db-user",
+            "DB_VM_HOST": "db.example.local",
+            "DB_PORT": "5432",
+            "DB_NAME": "appdb",
+            "DB_LOGIN_USER": "postgres",
+            "DB_LOGIN_PASSWORD": "secret",
+        }
 
-            with patch("tools.windows_pipeline.run_command", side_effect=responses) as run_mock:
-                create_backend_summary_mr(
-                    {"BACKEND_SOURCE_REPO_PATH": str(repo_path)},
-                    "1.2.3",
-                )
+        with patch("tools.windows_pipeline.scp_file", return_value=CommandResult(0, "", "")):
+            with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
+                run_db_schema_summary(env, {}, artifact)
 
-            commands = [call.args[0] for call in run_mock.call_args_list]
-            self.assertEqual(commands[0], ["git", "status", "--porcelain", "--", "docs/database/summary"])
-            self.assertEqual(commands[2], ["git", "add", "docs/database/summary"])
-            self.assertEqual(commands[3], ["git", "commit", "-m", "Add DB summary SQL for 1.2.3"])
-            self.assertIn("merge_request.create", commands[4])
-            self.assertIn("merge_request.target=dev", commands[4])
-            self.assertEqual(commands[5], ["git", "switch", "dev"])
+        final_command = ssh_mock.call_args_list[-1].args[3]
+        self.assertIn("--set=ON_ERROR_STOP=1", final_command)
+        self.assertIn("--single-transaction", final_command)
+        self.assertIn('-f "$sql_file"', final_command)
+
+    def test_ansible_schema_migration_uses_single_transaction(self):
+        role_path = Path(__file__).resolve().parents[1] / "roles" / "db_migrations" / "tasks" / "main.yml"
+        content = role_path.read_text(encoding="utf-8")
+
+        self.assertIn("--set=ON_ERROR_STOP=1 --single-transaction", content)
 
     def test_outlook_success_email_attaches_release_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

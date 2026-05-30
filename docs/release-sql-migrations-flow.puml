@@ -122,7 +122,7 @@ runner -> release_dir: выбрать release
 runner -> app_artifacts: найти backend/frontend archives
 runner -> schema_artifacts: найти db_schema_dev archive
 runner -> dev_db: upload + unpack db_schema_dev
-runner -> dev_db: psql -f summary_sql_dev_*.sql
+runner -> dev_db: psql --single-transaction -f summary_sql_dev_*.sql
 runner -> dev_app: upload backend/frontend archives
 runner -> dev_app: очистить release paths\nс сохранением .env
 runner -> dev_app: unpack backend/frontend
@@ -144,7 +144,7 @@ operator -> release_dir: взять нужный release directory
 operator -> schema_artifacts: выбрать db_schema_test tar.gz
 operator -> app_artifacts: выбрать backend/frontend artifacts
 operator -> test_process: передать release artifacts
-test_process -> test_db: применить summary_sql_test_*.sql
+test_process -> test_db: применить summary_sql_test_*.sql\nчерез psql --single-transaction
 test_process -> test_db: выполнить migrate --fake\nпосле успешного SQL
 test_process -> test_process: разложить app artifacts\nи выполнить проверки TEST
 
@@ -163,7 +163,7 @@ operator -> release_dir: взять утвержденный release directory
 operator -> schema_artifacts: выбрать db_schema_prod tar.gz
 operator -> app_artifacts: выбрать backend/frontend artifacts
 operator -> prod_process: передать release artifacts
-prod_process -> prod_db: применить summary_sql_prod_*.sql
+prod_process -> prod_db: применить summary_sql_prod_*.sql\nчерез psql --single-transaction
 prod_process -> prod_db: выполнить migrate --fake\nпосле успешного SQL
 prod_process -> prod_process: разложить app artifacts\nи выполнить проверки PROD
 
