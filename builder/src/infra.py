@@ -6,7 +6,7 @@ from src.utils import get_required_env, run_command
 def get_new_build_version() -> str:
     """Возвращает версию для нового билда."""
     build_version_base = get_required_env("BUILD_VERSION_BASE")
-    return f"{build_version_base}.{datetime.now().strftime('%d%m%Y_%H')}00"
+    return f"{build_version_base}.{datetime.now().strftime('%d%m%Y_%H%M')}"
 
 def get_new_branch_name(build_version: str) -> str:
     """Возвращает название для новой ветки."""
