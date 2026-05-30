@@ -108,8 +108,9 @@ management-команд. Schema SQL выполняется через
 Data SQL-архивы `run_all_insert` и `run_all_update` остаются артефактами для
 отдельного DB migration flow и Windows runner deploy их не выполняет.
 Правила будущей разметки data SQL для параллельного runner описаны в
-`instructions/data-sql-script-markup.md`; сами backend SQL-файлы размечаются в
-backend repo вручную.
+`instructions/data-sql-script-markup.md`. Целевые типы скриптов: `insert`,
+`update`, `set_default`, `delete`; сами backend SQL-файлы размечаются в backend
+repo вручную.
 
 Generated schema SQL не коммитится обратно в backend source repo и не хранится в
 `docs/database/summary`: источником для деплоя являются только релизные архивы и
