@@ -79,6 +79,59 @@ def copy_directory_contents(src_path, dst_path):
         return False
 
 
+def _remove_path(path):
+    """Удаляет файл, ссылку или директорию."""
+    if os.path.isfile(path) or os.path.islink(path):
+        os.remove(path)
+        return
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+
+
+def sync_source_top_level_items(src_path, dst_path):
+    """Синхронизирует target только по top-level элементам, которые есть в source."""
+    logging.info(f"\n--- Синхронизирую top-level элементы из {src_path} в {dst_path} ---")
+
+    if not os.path.exists(src_path):
+        logging.error(f"Исходная директория не существует: {src_path}")
+        return False
+
+    if not os.path.exists(dst_path):
+        logging.error(f"Целевая директория не существует: {dst_path}")
+        return False
+
+    try:
+        for item in os.listdir(src_path):
+            if item in EXCLUDE_ITEM:
+                logging.warning(f"Пропускаю {item} директорию")
+                continue
+
+            src_item = os.path.join(src_path, item)
+            dst_item = os.path.join(dst_path, item)
+
+            try:
+                if os.path.exists(dst_item) or os.path.islink(dst_item):
+                    _remove_path(dst_item)
+                    logging.info(f"Заменяю существующий target item: {item}")
+
+                if os.path.isfile(src_item):
+                    shutil.copy2(src_item, dst_item)
+                    logging.info(f"Скопирован файл: {item}")
+                elif os.path.isdir(src_item):
+                    shutil.copytree(src_item, dst_item)
+                    logging.info(f"Скопирована директория: {item}")
+                else:
+                    logging.warning(f"Пропускаю неподдерживаемый item: {item}")
+
+            except Exception as e:
+                logging.error(f"Ошибка при синхронизации {item}: {e}")
+                return False
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка при синхронизации директорий: {e}")
+        return False
+
+
 def copy_file_to_repo2(repo2_path: str, file_relative_path: str):
     """Копирует файл из текущей директории в репозиторий №2"""
     logging.info(f"\n--- Копирую .env в {repo2_path} ---")

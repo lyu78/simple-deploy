@@ -5,6 +5,16 @@ import subprocess
 import tarfile
 
 
+def to_git_bash_path(path: str | Path) -> str:
+    """Преобразует Windows-путь в формат, понятный Git Bash."""
+    normalized = str(path).replace("\\", "/")
+    if len(normalized) >= 2 and normalized[1] == ":":
+        drive = normalized[0].lower()
+        rest = normalized[2:].lstrip("/")
+        return f"/{drive}/{rest}"
+    return normalized
+
+
 def get_required_env(name: str) -> str:
     """Возвращает обязательную переменную окружения для Ansible-managed запуска."""
     value = os.getenv(name)

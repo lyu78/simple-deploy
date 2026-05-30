@@ -10,6 +10,7 @@ from tools.windows_pipeline import (
     DbSqlArtifact,
     derive_service_permission_check,
     is_sudo_command,
+    prepare_build_env,
     resolve_db_schema_artifact,
     run_db_schema_summary,
     scp_file,
@@ -107,6 +108,32 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         content = role_path.read_text(encoding="utf-8")
 
         self.assertIn("--set=ON_ERROR_STOP=1 --single-transaction", content)
+
+    def test_prepare_build_env_uses_backend_source_repo_for_archive_root(self):
+        build_env = prepare_build_env(
+            {
+                "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
+                "BACKEND_TARGET_REPO_PATH_BASH": "/c/example/repos/backend-target",
+                "BACKEND_REPO_ROOT_BASH": "/c/wrong",
+                "DEV_DOMAIN": "dev.example.local",
+            }
+        )
+
+        self.assertEqual(build_env["BACKEND_REPO_ROOT_BASH"], "/c/example/repos/backend-source")
+        self.assertEqual(build_env["BACKEND_APP_ROOT_DIR"], "example_backend_app")
+        self.assertEqual(build_env["BACKEND_DJANGO_SETTINGS_MODULE"], "example_backend_app.settings.base")
+
+    def test_prepare_build_env_keeps_configured_backend_app_root(self):
+        build_env = prepare_build_env(
+            {
+                "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
+                "BACKEND_APP_ROOT_DIR": "backend_app",
+                "DEV_DOMAIN": "dev.example.local",
+            }
+        )
+
+        self.assertEqual(build_env["BACKEND_APP_ROOT_DIR"], "backend_app")
+        self.assertEqual(build_env["BACKEND_DJANGO_SETTINGS_MODULE"], "backend_app.settings.base")
 
     def test_outlook_success_email_attaches_release_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

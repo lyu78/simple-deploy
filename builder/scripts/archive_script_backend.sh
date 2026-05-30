@@ -2,8 +2,9 @@
 
 : "${BACKEND_REPO_ROOT_BASH:?BACKEND_REPO_ROOT_BASH is required}"
 : "${RELEASE_ROOT_BASH:?RELEASE_ROOT_BASH is required}"
+: "${BACKEND_APP_ROOT_DIR:=example_backend_app}"
 BACKEND_REPO_ROOT="$BACKEND_REPO_ROOT_BASH"
-BUILD_DIR_FULL="$BACKEND_REPO_ROOT/example_backend_app"
+BUILD_DIR_FULL="$BACKEND_REPO_ROOT/$BACKEND_APP_ROOT_DIR"
 ARCHIVE_ROOT="$RELEASE_ROOT_BASH"
 ARCHIVE_DIR="$ARCHIVE_ROOT/$2"
 
@@ -22,13 +23,13 @@ fi
 if [ -d "$BUILD_DIR_FULL" ]; then
     echo "Directory '$BUILD_DIR_FULL' exists. Proceeding with archiving..."
     
-    # Только содержимое директории example_backend_app.
+    # Только содержимое директории backend application root.
     tar -czvf "$ARCHIVE_NAME" \
     --exclude="**/tests" \
     --exclude="tests" --exclude="**/.env" \
     --exclude="**/.env.example" \
     --exclude="unit_test_runner.py" \
-    -C "$BACKEND_REPO_ROOT" "example_backend_app"
+    -C "$BACKEND_REPO_ROOT" "$BACKEND_APP_ROOT_DIR"
     echo "Archive created: $ARCHIVE_NAME"
 else
     echo "Directory '$BUILD_DIR_FULL' does not exist. No archive created."

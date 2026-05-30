@@ -93,6 +93,14 @@ Build логирует создание, копирование и запуск 
 генераторов, директории/паттерны поиска сгенерированных SQL-файлов и временный
 пропуск очистки `build_scripts`.
 
+Backend application archive `backend_r_*.tar.gz` собирается из
+`BACKEND_SOURCE_REPO_PATH/BACKEND_APP_ROOT_DIR`; дефолтное имя директории -
+`example_backend_app`. Schema generator использует `BACKEND_DJANGO_SETTINGS_MODULE`;
+если переменная пустая, применяется `<BACKEND_APP_ROOT_DIR>.settings.base`.
+`BACKEND_TARGET_REPO_PATH` остается только альтернативной sync-репой: при
+синхронизации заменяются top-level элементы, которые есть в source repo, а
+top-level элементы, отсутствующие в source, остаются в target repo.
+
 Сейчас build создает schema-архивы по контурам и два data SQL-архива:
 
 - `db_schema_dev_r_<release>-c_<commit>.tar.gz`, `db_schema_test_r_<release>-c_<commit>.tar.gz`, `db_schema_prod_r_<release>-c_<commit>.tar.gz` содержат соответствующий `summary_sql_<contour>_*.sql` в корне архива.
@@ -236,8 +244,8 @@ healthcheck-команд, SQL-скриптов и включения backup. Е�
 При deploy целевая директория каждого артефакта очищается на первом уровне с
 сохранением корневого `.env`, затем архив распаковывается с
 `--strip-components=1`. То есть содержимое архивной директории `build/` или
-`example_backend_app/` попадает прямо в `FRONTEND_RELEASE_PATH` или
-`BACKEND_RELEASE_PATH`, без вложенного `build/build`.
+backend application root (`BACKEND_APP_ROOT_DIR`) попадает прямо в
+`FRONTEND_RELEASE_PATH` или `BACKEND_RELEASE_PATH`, без вложенного `build/build`.
 
 Django management-команды запускаются после распаковки из `APP_WORKDIR`. Если
 `management_commands` в `windows_pipeline.local.json` пустой, runner строит
@@ -249,7 +257,7 @@ APP_MANAGE_PY_PATH=manage.py
 ```
 
 Если `manage.py` лежит глубже, укажите относительный путь от `APP_WORKDIR`,
-например `example_backend_app/manage.py`, или абсолютный путь. Полностью
+например `<BACKEND_APP_ROOT_DIR>/manage.py`, или абсолютный путь. Полностью
 переопределить команды можно в `windows_pipeline.local.json`.
 
 Диагностика:
@@ -368,7 +376,7 @@ cp .env.example .env
 - `GIT_BASH_PATH`;
 - `BACKEND_SOURCE_REPO_PATH`;
 - `BACKEND_TARGET_REPO_PATH`;
-- `BACKEND_TARGET_REPO_PATH_BASH`;
+- `BACKEND_APP_ROOT_DIR` обычно можно оставить дефолтным;
 - `FRONTEND_SOURCE_REPO_PATH`;
 - `FRONTEND_TARGET_REPO_PATH`;
 - `APP_VM_HOST` и `APP_VM_USER`;

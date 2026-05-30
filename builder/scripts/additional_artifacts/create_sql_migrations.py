@@ -40,6 +40,7 @@ BASE_DIR = SCRIPT_DIR.parent
 BASELINES_ENV = "SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"
 METADATA_FILE = "schema_migrations_metadata.json"
 MIGRATION_PATH_RE = re.compile(r"(^|/)(?P<app>[^/]+)/migrations/(?P<name>[0-9][^/]+)\.py$")
+DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
 DJANGO_READY = False
 
 
@@ -123,8 +124,13 @@ def ensure_django_ready() -> None:
     global DJANGO_READY
     if DJANGO_READY:
         return
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "example_backend_app.settings.base")
-    sys.path.insert(0, str(BASE_DIR / "example_backend_app"))
+    app_root_dir = os.environ.get("BACKEND_APP_ROOT_DIR", "").strip() or DEFAULT_BACKEND_APP_ROOT_DIR
+    settings_module = (
+        os.environ.get("BACKEND_DJANGO_SETTINGS_MODULE", "").strip()
+        or f"{app_root_dir}.settings.base"
+    )
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", settings_module)
+    sys.path.insert(0, str(BASE_DIR / app_root_dir))
     import django
 
     django.setup()

@@ -224,8 +224,10 @@ cp .env.example .env
 
 `PROJECT_ROOT_WSL`, `RELEASE_ROOT_WSL` и `RELEASE_ROOT_BASH` являются опциональными.
 Их стоит задавать только если проект или директория релизов находятся не в стандартной
-раскладке. `BACKEND_TARGET_REPO_PATH_BASH` нужен backend-архиватору, потому что
-backend shell-скрипт работает с bash-представлением пути к репозиторию. Для frontend
+раскладке. Backend shell-архиватор получает bash-путь к source repo автоматически
+из `BACKEND_SOURCE_REPO_PATH`; target repo используется только как sync-репа.
+Архивируемая backend-директория задается `BACKEND_APP_ROOT_DIR`, а Django settings
+для schema generator - опциональным `BACKEND_DJANGO_SETTINGS_MODULE`. Для frontend
 отдельного `FRONTEND_TARGET_REPO_PATH_BASH` сейчас нет осознанно: frontend-архиватор
 запускается из рабочей директории frontend-репозитория и использует только
 `RELEASE_ROOT_BASH`.

@@ -71,8 +71,9 @@ backup, `BACKUP_ROOT_BASE`. Проверка выводит effective `id`, `sta
 Это важно для React/frontend архива: если внутри архива лежит директория `build`,
 а `FRONTEND_RELEASE_PATH` уже указывает на финальный `build`, содержимое архива
 попадает прямо в target, без вложенного `build/build`. Аналогично backend архив с
-верхней директорией `example_backend_app` распаковывается содержимым в
-`BACKEND_RELEASE_PATH`.
+верхней директорией `BACKEND_APP_ROOT_DIR` распаковывается содержимым в
+`BACKEND_RELEASE_PATH`; дефолтное значение `BACKEND_APP_ROOT_DIR` -
+`example_backend_app`.
 
 Django management-команды выполняются после распаковки так:
 
@@ -213,10 +214,15 @@ Ansible должен падать на проверке конфигурации
 - директория релизов по умолчанию равна `<корень проекта>/releases`;
 - Git Bash-путь к релизам строится автоматически из WSL-пути.
 
-`BACKEND_TARGET_REPO_PATH_BASH` существует осознанно: backend shell-архиватору нужен
-bash-путь к backend-репозиторию. Для frontend аналога сейчас нет, потому что
-frontend-архиватор запускается из рабочей директории frontend-репозитория и
-использует только `RELEASE_ROOT_BASH`.
+Backend shell-архиватор получает `BACKEND_REPO_ROOT_BASH` из
+`BACKEND_SOURCE_REPO_PATH`: релизный backend-архив собирается из source repo, а
+target repo участвует только как альтернативная sync-репа. Верхняя директория
+backend application archive задается `BACKEND_APP_ROOT_DIR` с дефолтом
+`example_backend_app`; Django settings для schema generator можно переопределить
+через `BACKEND_DJANGO_SETTINGS_MODULE`, иначе используется
+`<BACKEND_APP_ROOT_DIR>.settings.base`. Для frontend отдельного bash-пути сейчас
+нет, потому что frontend-архиватор запускается из рабочей директории
+frontend-репозитория и использует только `RELEASE_ROOT_BASH`.
 
 ## Граница ответственности
 
@@ -361,7 +367,9 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 
 - Работа ведется в локальной ветке `dev`.
 - Дополнительные генераторы backend-артефактов лежат в `builder/scripts/additional_artifacts/`.
-- Во время backend build DB-генераторы копируются в служебную директорию `BACKEND_SOURCE_REPO_PATH/build_scripts/` и запускаются из корня backend source repo. Сейчас для отладки эта директория остается после упаковки; следующий build пересоздает ее из `builder/scripts/additional_artifacts/`. Промежуточные DB-файлы генерируются из состояния source repo; target repo используется только для архива синхронизированного backend-кода.
+- Backend target repo остается только альтернативной sync-репой. Sync заменяет в target только top-level элементы, которые есть в source repo, и не трогает top-level элементы target, отсутствующие в source.
+- Backend application archive собирается из `BACKEND_SOURCE_REPO_PATH/BACKEND_APP_ROOT_DIR`; default `BACKEND_APP_ROOT_DIR` равен `example_backend_app`.
+- Во время backend build DB-генераторы копируются в служебную директорию `BACKEND_SOURCE_REPO_PATH/build_scripts/` и запускаются из корня backend source repo. Сейчас для отладки эта директория остается после упаковки; следующий build пересоздает ее из `builder/scripts/additional_artifacts/`. Промежуточные DB-файлы и backend application archive генерируются из состояния source repo; target repo используется только как альтернативная sync-репа.
 - Backend build находит venv по `BACKEND_BUILD_VENV_RELATIVE_PATH` относительно `BACKEND_SOURCE_REPO_PATH`; значение по умолчанию - `.venv/Scripts/activate.bat`. Если venv отсутствует, build создает его через Git Bash командой `python -m venv`. Перед каждым запуском генераторов build ставит production-зависимости backend в этот venv через `pip install --trusted-host ... -r <requirements>` из `BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH` (по умолчанию `requirements.txt`). Dev requirements не ставятся. SQL-генераторы запускаются через Git Bash с `python.exe -Xutf8` из source venv, без `cmd.exe` и без `activate.bat`.
 - Сгенерированные SQL-файлы выбираются только если их имена содержат текущий короткий `HEAD` hash backend source repo.
 - Генерация schema summary активна: `create_sql_migrations.py` копируется в `build_scripts`, получает baseline для `dev`, `test`, `prod` через `SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON` и пишет `summary_sql_<contour>_*.sql` плюс `schema_migrations_metadata.json`.

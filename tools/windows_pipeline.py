@@ -54,6 +54,7 @@ DEFAULT_CONFIG_FILE = ROOT / "windows_pipeline.local.json"
 DEFAULT_LOG_DIR = ROOT / "logs"
 DEFAULT_TIMEOUT = 20
 RELEASE_MANIFEST_NAME = "release_manifest.json"
+DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
 
 
 DEFAULT_RUNTIME_CONFIG = {
@@ -386,13 +387,13 @@ def prepare_build_env(env: dict[str, str]) -> dict[str, str]:
     build_env.setdefault("RELEASE_ROOT_WINDOWS", str(release_root))
     build_env.setdefault("BACKEND_BUILD_VENV_RELATIVE_PATH", ".venv/Scripts/activate.bat")
     build_env.setdefault("BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH", "requirements.txt")
+    if not build_env.get("BACKEND_APP_ROOT_DIR"):
+        build_env["BACKEND_APP_ROOT_DIR"] = DEFAULT_BACKEND_APP_ROOT_DIR
+    if not build_env.get("BACKEND_DJANGO_SETTINGS_MODULE"):
+        build_env["BACKEND_DJANGO_SETTINGS_MODULE"] = f"{build_env['BACKEND_APP_ROOT_DIR']}.settings.base"
     if not build_env.get("RELEASE_ROOT_BASH"):
         build_env["RELEASE_ROOT_BASH"] = to_git_bash_path(release_root)
-    if not build_env.get("BACKEND_REPO_ROOT_BASH"):
-        backend_bash = build_env.get("BACKEND_TARGET_REPO_PATH_BASH", "")
-        if not backend_bash:
-            backend_bash = to_git_bash_path(require_value(env, "BACKEND_TARGET_REPO_PATH"))
-        build_env["BACKEND_REPO_ROOT_BASH"] = backend_bash
+    build_env["BACKEND_REPO_ROOT_BASH"] = to_git_bash_path(require_value(env, "BACKEND_SOURCE_REPO_PATH"))
     if not build_env.get("FRONTEND_DEV_SERVER_NAME"):
         build_env["FRONTEND_DEV_SERVER_NAME"] = require_value(env, "DEV_DOMAIN")
     return build_env
@@ -1060,7 +1061,6 @@ def required_env_keys() -> list[str]:
         "GIT_BASH_PATH",
         "BACKEND_SOURCE_REPO_PATH",
         "BACKEND_TARGET_REPO_PATH",
-        "BACKEND_TARGET_REPO_PATH_BASH",
         "FRONTEND_SOURCE_REPO_PATH",
         "FRONTEND_TARGET_REPO_PATH",
         "APP_VM_HOST",

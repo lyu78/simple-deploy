@@ -19,7 +19,9 @@ from src.build_backend import (  # noqa: E402
     _prepare_build_scripts,
     _run_additional_artifact_generators,
     _run_all_include_paths,
+    build_backend,
 )
+from src.files import sync_source_top_level_items  # noqa: E402
 from src.utils import add_file_to_tar  # noqa: E402
 
 
@@ -245,6 +247,61 @@ class BuildBackendArtifactTests(unittest.TestCase):
 
         self.assertEqual(run_mock.call_count, 2)
         self.assertIn("requirements/prod.txt", run_mock.call_args_list[1].args[0])
+
+    def test_source_top_level_sync_preserves_target_only_items(self):
+        source_repo = self.root / "source"
+        target_repo = self.root / "target"
+        app_root = "backend_app"
+        source_repo.mkdir()
+        target_repo.mkdir()
+
+        (source_repo / app_root).mkdir()
+        (source_repo / app_root / "app.py").write_text("new\n", encoding="utf-8")
+        (target_repo / app_root).mkdir()
+        (target_repo / app_root / "old.py").write_text("old\n", encoding="utf-8")
+
+        (source_repo / "common.txt").write_text("new\n", encoding="utf-8")
+        (target_repo / "common.txt").write_text("old\n", encoding="utf-8")
+
+        (target_repo / "legacy_only").mkdir()
+        (target_repo / "legacy_only" / "keep.sql").write_text("keep\n", encoding="utf-8")
+
+        (source_repo / "archives").mkdir()
+        (source_repo / "archives" / "source.tmp").write_text("skip\n", encoding="utf-8")
+        (target_repo / "archives").mkdir()
+        (target_repo / "archives" / "target.tmp").write_text("keep\n", encoding="utf-8")
+
+        self.assertTrue(sync_source_top_level_items(source_repo, target_repo))
+
+        self.assertTrue((target_repo / "legacy_only" / "keep.sql").is_file())
+        self.assertTrue((target_repo / app_root / "app.py").is_file())
+        self.assertFalse((target_repo / app_root / "old.py").exists())
+        self.assertEqual((target_repo / "common.txt").read_text(encoding="utf-8"), "new\n")
+        self.assertTrue((target_repo / "archives" / "target.tmp").is_file())
+        self.assertFalse((target_repo / "archives" / "source.tmp").exists())
+
+    def test_backend_build_overrides_archive_root_to_source_repo(self):
+        env = {
+            "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
+            "BACKEND_TARGET_REPO_PATH": r"C:\example\repos\backend-target",
+            "BACKEND_REPO_ROOT_BASH": "/c/example/repos/backend-target",
+            "BACKEND_APP_ROOT_DIR": "backend_app",
+            "GIT_BASH_PATH": "bash",
+        }
+        with patch.dict("os.environ", env):
+            with patch("src.build_backend.check_repo", return_value=True):
+                with patch("src.build_backend.git_checkout_dev", return_value=True):
+                    with patch("src.build_backend.git_pull", return_value=True):
+                        with patch("src.build_backend.git_checkout_new_branch", return_value=True):
+                            with patch("src.build_backend.sync_source_top_level_items", return_value=True):
+                                with patch("src.build_backend.git_add_commit_push", return_value=True):
+                                    with patch("src.build_backend._create_db_migrations_archives", return_value={}):
+                                        with patch("src.build_backend.subprocess.run") as run_mock:
+                                            build_backend("1.2.3", "release/1.2.3")
+
+        archive_env = run_mock.call_args.kwargs["env"]
+        self.assertEqual(archive_env["BACKEND_REPO_ROOT_BASH"], "/c/example/repos/backend-source")
+        self.assertEqual(archive_env["BACKEND_APP_ROOT_DIR"], "backend_app")
 
 
 if __name__ == "__main__":

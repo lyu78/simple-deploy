@@ -16,8 +16,7 @@ from typing import Callable
 
 from src.files import (
     check_repo,
-    clear_directory_contents,
-    copy_directory_contents,
+    sync_source_top_level_items,
 )
 from src.infra import (
     get_new_branch_name,
@@ -33,6 +32,7 @@ from src.utils import (
     get_required_env,
     git_output,
     one_match,
+    to_git_bash_path,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +41,7 @@ INCLUDE_RE = re.compile(r"^\s*\\i\s+['\"]?([^'\"\s]+)['\"]?")
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
 DEFAULT_BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH = "requirements.txt"
+DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
 PIP_TRUSTED_HOSTS = (
     "pypi.org",
     "files.pythonhosted.org",
@@ -168,6 +169,11 @@ def _backend_build_requirements_path(source_repo_path: Path) -> Path:
     return requirements_path
 
 
+def _backend_app_root_dir() -> str:
+    """Возвращает директорию backend application root внутри source repo."""
+    return os.environ.get("BACKEND_APP_ROOT_DIR", "").strip() or DEFAULT_BACKEND_APP_ROOT_DIR
+
+
 def _pip_trusted_host_args() -> str:
     return " ".join(f"--trusted-host {shlex.quote(host)}" for host in PIP_TRUSTED_HOSTS)
 
@@ -256,9 +262,8 @@ def _create_db_sql_artifact(
     return archive_name
 
 
-def _create_db_migrations_archives(repo_path: str, source_repo_path: str, build_version: str) -> dict[str, str]:
+def _create_db_migrations_archives(source_repo_path: str, build_version: str) -> dict[str, str]:
     """Create separate schema/insert/update DB archives for the current backend commit."""
-    repo = Path(repo_path)
     source_repo = Path(source_repo_path)
     release_dir = Path(get_required_env("RELEASE_ROOT_WINDOWS")) / build_version
     release_dir.mkdir(parents=True, exist_ok=True)
@@ -386,12 +391,8 @@ def build_backend(
 
     logging.info("Created branch: %s", branch_name)
 
-    if not clear_directory_contents(repo2_path):
-        logging.error("Clearing backend target repo failed")
-        sys.exit(1)
-
-    if not copy_directory_contents(repo1_path, repo2_path):
-        logging.error("Copying backend source repo contents to target repo failed")
+    if not sync_source_top_level_items(repo1_path, repo2_path):
+        logging.error("Syncing backend source repo top-level items to target repo failed")
         sys.exit(1)
 
     commit_msg = f"Sync from repo1 to repo2 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"  # noqa
@@ -400,14 +401,20 @@ def build_backend(
         sys.exit(1)
 
     db_artifact_manifest = _create_db_migrations_archives(
-        repo_path=repo2_path,
         source_repo_path=repo1_path,
         build_version=build_version,
     )
 
     bash_path = get_required_env("GIT_BASH_PATH")
     build_script_path = r"scripts\archive_script_backend.sh"
-    subprocess.run([bash_path, build_script_path, "all_env", build_version, "all_env"], check=True)
+    archive_env = os.environ.copy()
+    archive_env["BACKEND_REPO_ROOT_BASH"] = to_git_bash_path(repo1_path)
+    archive_env["BACKEND_APP_ROOT_DIR"] = _backend_app_root_dir()
+    subprocess.run(
+        [bash_path, build_script_path, "all_env", build_version, "all_env"],
+        check=True,
+        env=archive_env,
+    )
 
     return db_artifact_manifest
 
