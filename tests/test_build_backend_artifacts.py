@@ -185,7 +185,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertIn("/.venv", args[0])
         self.assertEqual(kwargs["cwd"], source_repo)
 
-    def test_artifact_generators_run_through_git_bash_with_source_venv_python(self):
+    def test_artifact_generators_run_through_source_venv_python(self):
         source_repo = self.root / "source"
         source_repo.mkdir()
         activate_path = source_repo / ".venv/Scripts/activate.bat"
@@ -202,27 +202,27 @@ class BuildBackendArtifactTests(unittest.TestCase):
             "GIT_BASH_PATH": "bash",
         }
         with patch.dict("os.environ", env):
-            with patch("src.build_backend._run_git_bash") as run_mock:
+            with patch("src.build_backend._run_logged_command") as run_mock:
                 _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
         self.assertEqual(run_mock.call_count, 3)
         pip_install_args, pip_install_kwargs = run_mock.call_args_list[0]
         schema_args, schema_kwargs = run_mock.call_args_list[1]
         run_all_args, run_all_kwargs = run_mock.call_args_list[2]
-        self.assertIn("/.venv/Scripts/python.exe", pip_install_args[0])
-        self.assertIn("-m pip install", pip_install_args[0])
+        self.assertEqual(pip_install_args[0][0], str(python_path))
+        self.assertEqual(pip_install_args[0][1:4], ["-m", "pip", "install"])
         self.assertIn("--disable-pip-version-check", pip_install_args[0])
         self.assertIn("-r", pip_install_args[0])
-        self.assertIn("requirements.txt", pip_install_args[0])
-        self.assertIn("--trusted-host pypi.org", pip_install_args[0])
-        self.assertIn("--trusted-host files.pythonhosted.org", pip_install_args[0])
-        self.assertIn("--trusted-host pypi.python.org", pip_install_args[0])
-        self.assertIn("/.venv/Scripts/python.exe", schema_args[0])
+        self.assertIn(str(source_repo / "requirements.txt"), pip_install_args[0])
+        self.assertIn("pypi.org", pip_install_args[0])
+        self.assertIn("files.pythonhosted.org", pip_install_args[0])
+        self.assertIn("pypi.python.org", pip_install_args[0])
+        self.assertEqual(schema_args[0][0], str(python_path))
         self.assertIn("-Xutf8", schema_args[0])
-        self.assertIn("build_scripts/create_sql_migrations.py", schema_args[0])
-        self.assertIn("/.venv/Scripts/python.exe", run_all_args[0])
+        self.assertIn(str(build_scripts_dir / "create_sql_migrations.py"), schema_args[0])
+        self.assertEqual(run_all_args[0][0], str(python_path))
         self.assertIn("-Xutf8", run_all_args[0])
-        self.assertIn("build_scripts/create_run_all_sql.py", run_all_args[0])
+        self.assertIn(str(build_scripts_dir / "create_run_all_sql.py"), run_all_args[0])
         self.assertEqual(pip_install_kwargs["cwd"], source_repo)
         self.assertEqual(schema_kwargs["cwd"], source_repo)
         self.assertEqual(run_all_kwargs["cwd"], source_repo)
@@ -242,7 +242,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
                             with patch("src.build_backend._run_artifact_generator") as run_mock:
                                 with self.assertRaisesRegex(
                                     RuntimeError,
-                                    "Schema migration generator finished without metadata",
+                                    "Schema migration generator exited successfully but did not create metadata",
                                 ):
                                     _create_db_migrations_archives(str(source_repo), "1.2.3")
 
@@ -264,11 +264,11 @@ class BuildBackendArtifactTests(unittest.TestCase):
             "GIT_BASH_PATH": "bash",
         }
         with patch.dict("os.environ", env):
-            with patch("src.build_backend._run_git_bash") as run_mock:
+            with patch("src.build_backend._run_logged_command") as run_mock:
                 _install_backend_build_requirements(source_repo, python_path)
 
         self.assertEqual(run_mock.call_count, 1)
-        self.assertIn("requirements/prod.txt", run_mock.call_args_list[0].args[0])
+        self.assertIn(str(requirements_path), run_mock.call_args_list[0].args[0])
 
     def test_source_top_level_sync_preserves_target_only_items(self):
         source_repo = self.root / "source"

@@ -67,6 +67,38 @@ def _run_git_bash(command: str, cwd: Path) -> None:
     subprocess.run([bash_path, "-lc", command], cwd=cwd, check=True)
 
 
+def _run_logged_command(args: list[str], cwd: Path) -> None:
+    """Запускает команду с потоковым выводом и понятной ошибкой при non-zero exit."""
+    command_text = subprocess.list2cmdline([str(arg) for arg in args])
+    _log_build_step(f"command: {command_text}")
+    try:
+        process = subprocess.Popen(
+            [str(arg) for arg in args],
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Command executable not found: {command_text}") from exc
+
+    output_lines: list[str] = []
+    assert process.stdout is not None
+    with process.stdout:
+        for line in process.stdout:
+            output_lines.append(line)
+            print(line, end="", flush=True)
+    return_code = process.wait()
+    if return_code != 0:
+        tail = "".join(output_lines[-80:])
+        raise RuntimeError(
+            f"Command failed with exit code {return_code}: {command_text}\n"
+            f"Last output lines:\n{tail}"
+        )
+
+
 def _schema_baselines_json() -> str:
     with closing(connect_state_db()) as connection:
         baselines = {}
@@ -176,19 +208,29 @@ def _backend_app_root_dir() -> str:
     return os.environ.get("BACKEND_APP_ROOT_DIR", "").strip() or DEFAULT_BACKEND_APP_ROOT_DIR
 
 
-def _pip_trusted_host_args() -> str:
-    return " ".join(f"--trusted-host {shlex.quote(host)}" for host in PIP_TRUSTED_HOSTS)
+def _pip_trusted_host_args() -> list[str]:
+    args: list[str] = []
+    for host in PIP_TRUSTED_HOSTS:
+        args.extend(["--trusted-host", host])
+    return args
 
 
 def _install_backend_build_requirements(source_repo_path: Path, python_path: Path) -> None:
     requirements_path = _backend_build_requirements_path(source_repo_path)
-    bash_python = shlex.quote(_to_git_bash_path(python_path))
-    bash_requirements = shlex.quote(_to_git_bash_path(requirements_path))
     trusted_hosts = _pip_trusted_host_args()
 
     _log_build_step(f"install backend build requirements: {requirements_path}")
-    _run_git_bash(
-        f"{bash_python} -m pip install {PIP_DISABLE_VERSION_CHECK_ARG} {trusted_hosts} -r {bash_requirements}",
+    _run_logged_command(
+        [
+            str(python_path),
+            "-m",
+            "pip",
+            "install",
+            PIP_DISABLE_VERSION_CHECK_ARG,
+            *trusted_hosts,
+            "-r",
+            str(requirements_path),
+        ],
         cwd=source_repo_path,
     )
 
@@ -205,13 +247,13 @@ def _prepare_backend_build_python(source_repo_path: Path) -> Path:
 
 def _run_artifact_generator(source_repo_path: Path, python_path: Path, script_name: str) -> None:
     """Запускает один build-only генератор через Python backend source venv."""
-    bash_python = shlex.quote(_to_git_bash_path(python_path))
-    script_path = f"{BUILD_SCRIPTS_DIR_NAME}/{script_name}"
-    command = f"{bash_python} -Xutf8 {shlex.quote(script_path)}"
+    script_path = source_repo_path / BUILD_SCRIPTS_DIR_NAME / script_name
     _log_build_step("")
-    _log_build_step(f"run generator: {script_path}")
-    _log_build_step(f"command: {command}")
-    _run_git_bash(command, cwd=source_repo_path)
+    _log_build_step(f"run generator: {BUILD_SCRIPTS_DIR_NAME}/{script_name}")
+    _run_logged_command(
+        [str(python_path), "-Xutf8", str(script_path)],
+        cwd=source_repo_path,
+    )
 
 
 def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_dir: Path) -> None:
@@ -225,7 +267,7 @@ def _require_schema_metadata_after_generator(build_scripts_dir: Path) -> Path:
     schema_metadata_path = build_scripts_dir / "schema_migrations_metadata.json"
     if not schema_metadata_path.is_file():
         raise RuntimeError(
-            "Schema migration generator finished without metadata: "
+            "Schema migration generator exited successfully but did not create metadata: "
             f"{schema_metadata_path}. Check create_sql_migrations.py output above; "
             "common causes are missing backend dependencies, Django settings errors, "
             "or failed pip installation."
