@@ -188,10 +188,6 @@ def _install_backend_build_requirements(source_repo_path: Path, python_path: Pat
 
     _log_build_step(f"install backend build requirements: {requirements_path}")
     _run_git_bash(
-        f"{bash_python} -m pip install {PIP_DISABLE_VERSION_CHECK_ARG} {trusted_hosts} --upgrade pip",
-        cwd=source_repo_path,
-    )
-    _run_git_bash(
         f"{bash_python} -m pip install {PIP_DISABLE_VERSION_CHECK_ARG} {trusted_hosts} -r {bash_requirements}",
         cwd=source_repo_path,
     )

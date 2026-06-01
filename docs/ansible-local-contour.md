@@ -25,7 +25,6 @@ cp .env.example .env
 Установите минимальные инструменты в WSL:
 
 ```bash
-.venv-ansible/bin/python -m pip install --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org --upgrade pip
 .venv-ansible/bin/python -m pip install --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org -r tools-ci/requirements.dev.txt
 .venv-ansible/bin/python -m pip install --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org -r ansible-ci/requirements.ansible.txt
 sudo apt-get update

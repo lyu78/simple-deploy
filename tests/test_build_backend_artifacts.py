@@ -205,19 +205,12 @@ class BuildBackendArtifactTests(unittest.TestCase):
             with patch("src.build_backend._run_git_bash") as run_mock:
                 _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
-        self.assertEqual(run_mock.call_count, 4)
-        pip_upgrade_args, pip_upgrade_kwargs = run_mock.call_args_list[0]
-        pip_install_args, pip_install_kwargs = run_mock.call_args_list[1]
-        schema_args, schema_kwargs = run_mock.call_args_list[2]
-        run_all_args, run_all_kwargs = run_mock.call_args_list[3]
-        self.assertIn("/.venv/Scripts/python.exe", pip_upgrade_args[0])
-        self.assertIn("-m pip install", pip_upgrade_args[0])
-        self.assertIn("--disable-pip-version-check", pip_upgrade_args[0])
-        self.assertIn("--trusted-host pypi.org", pip_upgrade_args[0])
-        self.assertIn("--trusted-host files.pythonhosted.org", pip_upgrade_args[0])
-        self.assertIn("--trusted-host pypi.python.org", pip_upgrade_args[0])
-        self.assertIn("--upgrade pip", pip_upgrade_args[0])
+        self.assertEqual(run_mock.call_count, 3)
+        pip_install_args, pip_install_kwargs = run_mock.call_args_list[0]
+        schema_args, schema_kwargs = run_mock.call_args_list[1]
+        run_all_args, run_all_kwargs = run_mock.call_args_list[2]
         self.assertIn("/.venv/Scripts/python.exe", pip_install_args[0])
+        self.assertIn("-m pip install", pip_install_args[0])
         self.assertIn("--disable-pip-version-check", pip_install_args[0])
         self.assertIn("-r", pip_install_args[0])
         self.assertIn("requirements.txt", pip_install_args[0])
@@ -230,7 +223,6 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertIn("/.venv/Scripts/python.exe", run_all_args[0])
         self.assertIn("-Xutf8", run_all_args[0])
         self.assertIn("build_scripts/create_run_all_sql.py", run_all_args[0])
-        self.assertEqual(pip_upgrade_kwargs["cwd"], source_repo)
         self.assertEqual(pip_install_kwargs["cwd"], source_repo)
         self.assertEqual(schema_kwargs["cwd"], source_repo)
         self.assertEqual(run_all_kwargs["cwd"], source_repo)
@@ -275,8 +267,8 @@ class BuildBackendArtifactTests(unittest.TestCase):
             with patch("src.build_backend._run_git_bash") as run_mock:
                 _install_backend_build_requirements(source_repo, python_path)
 
-        self.assertEqual(run_mock.call_count, 2)
-        self.assertIn("requirements/prod.txt", run_mock.call_args_list[1].args[0])
+        self.assertEqual(run_mock.call_count, 1)
+        self.assertIn("requirements/prod.txt", run_mock.call_args_list[0].args[0])
 
     def test_source_top_level_sync_preserves_target_only_items(self):
         source_repo = self.root / "source"

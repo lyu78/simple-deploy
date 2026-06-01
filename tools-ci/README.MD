@@ -28,7 +28,6 @@ git clone https://github.com/lyu78/simple-deploy simple-deploy
 cd simple-deploy
 
 python -m venv .venv
-.venv/Scripts/python.exe -m pip install --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org --upgrade pip
 .venv/Scripts/python.exe -m pip install --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org -r tools-ci/requirements.dev.txt
 
 cp .env.example .env
