@@ -47,6 +47,7 @@ PIP_TRUSTED_HOSTS = (
     "files.pythonhosted.org",
     "pypi.python.org",
 )
+PIP_DISABLE_VERSION_CHECK_ARG = "--disable-pip-version-check"
 
 
 def _log_build_step(message: str) -> None:
@@ -187,31 +188,53 @@ def _install_backend_build_requirements(source_repo_path: Path, python_path: Pat
 
     _log_build_step(f"install backend build requirements: {requirements_path}")
     _run_git_bash(
-        f"{bash_python} -m pip install {trusted_hosts} --upgrade pip",
+        f"{bash_python} -m pip install {PIP_DISABLE_VERSION_CHECK_ARG} {trusted_hosts} --upgrade pip",
         cwd=source_repo_path,
     )
     _run_git_bash(
-        f"{bash_python} -m pip install {trusted_hosts} -r {bash_requirements}",
+        f"{bash_python} -m pip install {PIP_DISABLE_VERSION_CHECK_ARG} {trusted_hosts} -r {bash_requirements}",
         cwd=source_repo_path,
     )
+
+
+def _prepare_backend_build_python(source_repo_path: Path) -> Path:
+    """Готовит Python backend source repo для запуска build-only генераторов."""
+    venv_activate_path = _ensure_backend_build_venv(source_repo_path)
+    python_path = _python_path_from_activation_script(venv_activate_path)
+    _install_backend_build_requirements(source_repo_path, python_path)
+    _log_build_step(f"run generators from source repo: {source_repo_path}")
+    _log_build_step(f"use source venv python: {python_path}")
+    return python_path
+
+
+def _run_artifact_generator(source_repo_path: Path, python_path: Path, script_name: str) -> None:
+    """Запускает один build-only генератор через Python backend source venv."""
+    bash_python = shlex.quote(_to_git_bash_path(python_path))
+    script_path = f"{BUILD_SCRIPTS_DIR_NAME}/{script_name}"
+    command = f"{bash_python} -Xutf8 {shlex.quote(script_path)}"
+    _log_build_step("")
+    _log_build_step(f"run generator: {script_path}")
+    _log_build_step(f"command: {command}")
+    _run_git_bash(command, cwd=source_repo_path)
 
 
 def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_dir: Path) -> None:
     """Run SQL artifact generators through the backend source virtualenv."""
-    venv_activate_path = _ensure_backend_build_venv(source_repo_path)
-    python_path = _python_path_from_activation_script(venv_activate_path)
-    _install_backend_build_requirements(source_repo_path, python_path)
-    bash_python = shlex.quote(_to_git_bash_path(python_path))
-    scripts = ["create_sql_migrations.py", "create_run_all_sql.py"]
-    _log_build_step(f"run generators from source repo: {source_repo_path}")
-    _log_build_step(f"use source venv python: {python_path}")
-    for script_name in scripts:
-        script_path = f"{BUILD_SCRIPTS_DIR_NAME}/{script_name}"
-        command = f"{bash_python} -Xutf8 {shlex.quote(script_path)}"
-        _log_build_step("")
-        _log_build_step(f"run generator: {script_path}")
-        _log_build_step(f"command: {command}")
-        _run_git_bash(command, cwd=source_repo_path)
+    python_path = _prepare_backend_build_python(source_repo_path)
+    _run_artifact_generator(source_repo_path, python_path, "create_sql_migrations.py")
+    _run_artifact_generator(source_repo_path, python_path, "create_run_all_sql.py")
+
+
+def _require_schema_metadata_after_generator(build_scripts_dir: Path) -> Path:
+    schema_metadata_path = build_scripts_dir / "schema_migrations_metadata.json"
+    if not schema_metadata_path.is_file():
+        raise RuntimeError(
+            "Schema migration generator finished without metadata: "
+            f"{schema_metadata_path}. Check create_sql_migrations.py output above; "
+            "common causes are missing backend dependencies, Django settings errors, "
+            "or failed pip installation."
+        )
+    return schema_metadata_path
 
 
 def _run_all_include_paths(repo: Path, run_all_sql: Path) -> list[Path]:
@@ -275,7 +298,10 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
 
     try:
         os.environ["SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"] = _schema_baselines_json()
-        _run_additional_artifact_generators(source_repo, build_scripts_dir)
+        python_path = _prepare_backend_build_python(source_repo)
+        _run_artifact_generator(source_repo, python_path, "create_sql_migrations.py")
+        schema_metadata_path = _require_schema_metadata_after_generator(build_scripts_dir)
+        _run_artifact_generator(source_repo, python_path, "create_run_all_sql.py")
 
         _log_matching_files(
             build_scripts_dir,
@@ -296,9 +322,6 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
         run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
         run_all_update = one_match(build_scripts_dir, f"run_all_update_{commit_hash}.sql")
 
-        schema_metadata_path = build_scripts_dir / "schema_migrations_metadata.json"
-        if not schema_metadata_path.is_file():
-            raise RuntimeError(f"Schema migration metadata was not generated: {schema_metadata_path}")
         schema_metadata = json.loads(schema_metadata_path.read_text(encoding="utf-8"))
         schema_archives: dict[str, str] = {}
         for contour in CONTOURS:

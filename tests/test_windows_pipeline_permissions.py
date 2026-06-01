@@ -139,6 +139,21 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertEqual(build_env["BACKEND_APP_ROOT_DIR"], "example_backend_app")
         self.assertEqual(build_env["BACKEND_DJANGO_SETTINGS_MODULE"], "example_backend_app.settings.base")
 
+    def test_prepare_build_env_sets_pip_defaults(self):
+        with patch.dict("os.environ", {}, clear=True):
+            build_env = prepare_build_env(
+                {
+                    "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
+                    "DEV_DOMAIN": "dev.example.local",
+                }
+            )
+
+        self.assertEqual(build_env["PIP_DISABLE_PIP_VERSION_CHECK"], "1")
+        self.assertEqual(
+            build_env["PIP_TRUSTED_HOST"],
+            "pypi.org files.pythonhosted.org pypi.python.org",
+        )
+
     def test_prepare_build_env_keeps_configured_backend_app_root(self):
         build_env = prepare_build_env(
             {

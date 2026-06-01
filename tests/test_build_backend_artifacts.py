@@ -14,6 +14,7 @@ sys.path.insert(0, str(BUILDER_ROOT))
 from src.build_backend import (  # noqa: E402
     _add_run_all_includes_to_tar,
     _cleanup_build_scripts,
+    _create_db_migrations_archives,
     _create_db_sql_artifact,
     _ensure_backend_build_venv,
     _install_backend_build_requirements,
@@ -211,12 +212,18 @@ class BuildBackendArtifactTests(unittest.TestCase):
         run_all_args, run_all_kwargs = run_mock.call_args_list[3]
         self.assertIn("/.venv/Scripts/python.exe", pip_upgrade_args[0])
         self.assertIn("-m pip install", pip_upgrade_args[0])
+        self.assertIn("--disable-pip-version-check", pip_upgrade_args[0])
         self.assertIn("--trusted-host pypi.org", pip_upgrade_args[0])
+        self.assertIn("--trusted-host files.pythonhosted.org", pip_upgrade_args[0])
+        self.assertIn("--trusted-host pypi.python.org", pip_upgrade_args[0])
         self.assertIn("--upgrade pip", pip_upgrade_args[0])
         self.assertIn("/.venv/Scripts/python.exe", pip_install_args[0])
+        self.assertIn("--disable-pip-version-check", pip_install_args[0])
         self.assertIn("-r", pip_install_args[0])
         self.assertIn("requirements.txt", pip_install_args[0])
+        self.assertIn("--trusted-host pypi.org", pip_install_args[0])
         self.assertIn("--trusted-host files.pythonhosted.org", pip_install_args[0])
+        self.assertIn("--trusted-host pypi.python.org", pip_install_args[0])
         self.assertIn("/.venv/Scripts/python.exe", schema_args[0])
         self.assertIn("-Xutf8", schema_args[0])
         self.assertIn("build_scripts/create_sql_migrations.py", schema_args[0])
@@ -227,6 +234,28 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(pip_install_kwargs["cwd"], source_repo)
         self.assertEqual(schema_kwargs["cwd"], source_repo)
         self.assertEqual(run_all_kwargs["cwd"], source_repo)
+
+    def test_missing_schema_metadata_reports_schema_generator_failure(self):
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+        build_scripts_dir = source_repo / "build_scripts"
+        build_scripts_dir.mkdir()
+        python_path = source_repo / ".venv/Scripts/python.exe"
+
+        with patch.dict("os.environ", {"RELEASE_ROOT_WINDOWS": str(self.release_dir)}, clear=True):
+            with patch("src.build_backend.git_output", return_value="abc123"):
+                with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
+                    with patch("src.build_backend._schema_baselines_json", return_value="{}"):
+                        with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
+                            with patch("src.build_backend._run_artifact_generator") as run_mock:
+                                with self.assertRaisesRegex(
+                                    RuntimeError,
+                                    "Schema migration generator finished without metadata",
+                                ):
+                                    _create_db_migrations_archives(str(source_repo), "1.2.3")
+
+        run_mock.assert_called_once()
+        self.assertEqual(run_mock.call_args.args[2], "create_sql_migrations.py")
 
     def test_backend_build_requirements_path_can_be_configured(self):
         source_repo = self.root / "source"

@@ -57,6 +57,7 @@ DEFAULT_LOG_DIR = ROOT / "logs"
 DEFAULT_TIMEOUT = 20
 RELEASE_MANIFEST_NAME = "release_manifest.json"
 DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
+PIP_TRUSTED_HOSTS = "pypi.org files.pythonhosted.org pypi.python.org"
 
 
 DEFAULT_RUNTIME_CONFIG = {
@@ -389,6 +390,8 @@ def prepare_build_env(env: dict[str, str]) -> dict[str, str]:
     build_env.setdefault("RELEASE_ROOT_WINDOWS", str(release_root))
     build_env.setdefault("BACKEND_BUILD_VENV_RELATIVE_PATH", ".venv/Scripts/activate.bat")
     build_env.setdefault("BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH", "requirements.txt")
+    build_env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+    build_env.setdefault("PIP_TRUSTED_HOST", PIP_TRUSTED_HOSTS)
     if not build_env.get("BACKEND_APP_ROOT_DIR"):
         build_env["BACKEND_APP_ROOT_DIR"] = DEFAULT_BACKEND_APP_ROOT_DIR
     if not build_env.get("BACKEND_DJANGO_SETTINGS_MODULE"):
