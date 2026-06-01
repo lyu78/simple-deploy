@@ -13,6 +13,7 @@ from tools.windows_pipeline import (
     CommandResult,
     DbSqlArtifact,
     Reporter,
+    check_backend_data_insert_idempotency,
     check_backend_build_inputs,
     derive_service_permission_check,
     is_sudo_command,
@@ -218,6 +219,42 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertEqual(command[0], str(python_path))
         self.assertEqual(command[1:3], ["-Xutf8", "-c"])
         self.assertIn("backend_app.settings.base", command[3])
+
+    def test_dry_run_fails_on_non_idempotent_data_insert_sql(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            insert_dir = source_repo / "docs/database/scripts/app_ip_subcompany/insert_04_26"
+            insert_dir.mkdir(parents=True)
+            bad_sql = insert_dir / "insert_bad.sql"
+            bad_sql.write_text("INSERT INTO table_name (id) VALUES (1);\n", encoding="utf-8")
+            reporter = Reporter()
+
+            check_backend_data_insert_idempotency(
+                reporter,
+                {"BACKEND_SOURCE_REPO_PATH": str(source_repo)},
+            )
+
+        self.assertTrue(any("insert_bad.sql" in issue for issue in reporter.issues))
+
+    def test_dry_run_passes_on_idempotent_data_insert_sql(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            insert_dir = source_repo / "docs/database/scripts/app_ip_subcompany/insert_04_26"
+            insert_dir.mkdir(parents=True)
+            good_sql = insert_dir / "insert_good.sql"
+            good_sql.write_text(
+                "INSERT INTO table_name (id) VALUES (1) "
+                "ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id;\n",
+                encoding="utf-8",
+            )
+            reporter = Reporter()
+
+            check_backend_data_insert_idempotency(
+                reporter,
+                {"BACKEND_SOURCE_REPO_PATH": str(source_repo)},
+            )
+
+        self.assertEqual(reporter.issues, [])
 
     def test_outlook_success_email_attaches_release_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

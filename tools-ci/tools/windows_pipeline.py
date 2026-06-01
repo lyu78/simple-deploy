@@ -58,6 +58,14 @@ DEFAULT_TIMEOUT = 20
 RELEASE_MANIFEST_NAME = "release_manifest.json"
 DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
 PIP_TRUSTED_HOSTS = "pypi.org files.pythonhosted.org pypi.python.org"
+DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
+DATA_SQL_INSERT_DIRS = ("app_ip_subcompany_catalogs",)
+DATA_SQL_MIXED_DIRS = (
+    "app_ip_subcompany",
+    "app_ip_subcompany_cc",
+    "app_ip_subcompany_onna",
+    "app_ip_subcompany_prw",
+)
 
 
 DEFAULT_RUNTIME_CONFIG = {
@@ -559,6 +567,70 @@ def check_backend_build_inputs(reporter: Reporter, env: dict[str, str]) -> None:
             "backend Django settings import",
             output or f"rc={result.rc}; проверьте BACKEND_APP_ROOT_DIR и BACKEND_DJANGO_SETTINGS_MODULE",
         )
+
+
+def is_data_insert_idempotent(path: Path) -> bool:
+    """Проверяет INSERT SQL тем же эвристическим правилом, что create_run_all_sql.py."""
+    content = path.read_text(encoding="utf-8", errors="ignore").upper()
+    if "INSERT INTO" not in content:
+        return True
+    return "ON CONFLICT" in content or "TRUNCATE" in content or "MERGE" in content
+
+
+def iter_sql_files(root: Path, include_insert_only: bool) -> Iterable[Path]:
+    """Возвращает SQL-файлы для data generator без записи run_all-файлов."""
+    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*.sql")):
+        normalized_parent = path.parent.as_posix().lower()
+        if "set_default" in normalized_parent:
+            continue
+        if include_insert_only and "insert" not in normalized_parent:
+            continue
+        yield path
+
+
+def non_idempotent_data_insert_scripts(source_repo: Path) -> list[Path]:
+    """Находит data INSERT SQL, которые остановят create_run_all_sql.py."""
+    scripts_root = source_repo / DATABASE_SCRIPTS_PREFIX
+    problems: list[Path] = []
+
+    for directory in DATA_SQL_INSERT_DIRS:
+        root = scripts_root / directory
+        for path in iter_sql_files(root, include_insert_only=False):
+            if not is_data_insert_idempotent(path):
+                problems.append(path.relative_to(source_repo))
+
+    for directory in DATA_SQL_MIXED_DIRS:
+        root = scripts_root / directory
+        for path in iter_sql_files(root, include_insert_only=True):
+            if not is_data_insert_idempotent(path):
+                problems.append(path.relative_to(source_repo))
+
+    return sorted(problems)
+
+
+def check_backend_data_insert_idempotency(reporter: Reporter, env: dict[str, str]) -> None:
+    """Проверяет idempotency data INSERT SQL до build, без создания build_scripts."""
+    source_repo = Path(require_value(env, "BACKEND_SOURCE_REPO_PATH"))
+    scripts_root = source_repo / DATABASE_SCRIPTS_PREFIX
+    if not scripts_root.is_dir():
+        reporter.skip("backend data INSERT idempotency", f"директория не найдена: {scripts_root}")
+        return
+
+    problems = non_idempotent_data_insert_scripts(source_repo)
+    if not problems:
+        reporter.pass_("backend data INSERT idempotency", "все INSERT-скрипты идемпотентны")
+        return
+
+    shown = [path.as_posix() for path in problems[:20]]
+    suffix = "" if len(problems) <= len(shown) else f"\n... и еще {len(problems) - len(shown)}"
+    reporter.fail(
+        "backend data INSERT idempotency",
+        f"найдено {len(problems)} non-idempotent INSERT script(s):\n"
+        + "\n".join(shown)
+        + suffix,
+    )
 
 
 def check_origin_network(reporter: Reporter, name: str, origin_url: str) -> None:
@@ -1094,6 +1166,7 @@ def dry_run(args: argparse.Namespace) -> bool:
         check_origin_network(reporter, f"{name} origin network", origin_url)
 
     check_backend_build_inputs(reporter, env)
+    check_backend_data_insert_idempotency(reporter, env)
     check_outlook_email_config(reporter, runtime)
 
     try:
