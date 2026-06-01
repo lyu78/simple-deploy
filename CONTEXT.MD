@@ -389,7 +389,8 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 
 - Отрефакторить генерацию schema summary SQL: отделить расчет Django migrations от упаковки артефактов, явно валидировать backend settings/requirements/venv до генерации и убрать зависимость от временной директории `build_scripts`.
 - Вернуть управляемое включение/отключение schema summary через конфигурационный флаг вместо неявной логики в коде.
-- Все новые записи в README, CONTEXT, комментариях и рабочих сообщениях по проекту вести на русском языке.
+- Общие правила разработки, документации, безопасности истории Git и взаимодействия с AI-агентом зафиксированы в `DEVELOPMENT_RULES.MD`.
+
 ## Актуальный контекст SQL-миграций
 
 `create_sql_migrations.py` снова является активной частью backend build, но теперь работает как offline best-effort генератор SQL по Git-диапазону Django migrations. Генератор не требует подключения к PostgreSQL: он загружает migrations из backend source repo, строит план через `MigrationLoader(None, replace_migrations=False)` и собирает SQL через PostgreSQL schema editor в режиме `collect_sql=True`.
