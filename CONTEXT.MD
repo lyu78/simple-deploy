@@ -395,7 +395,7 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 
 `create_sql_migrations.py` снова является активной частью backend build, но теперь работает как offline best-effort генератор SQL по Git-диапазону Django migrations. Генератор не требует подключения к PostgreSQL: он загружает migrations из backend source repo, строит план через `MigrationLoader(None, replace_migrations=False)` и собирает SQL через PostgreSQL schema editor в режиме `collect_sql=True`.
 
-Локальное состояние релизов и контуров хранится в `local_state/simple_deploy.sqlite3`. Файл создается автоматически, считается runtime-состоянием рабочей машины и не коммитится. В базе фиксируются baseline commit для `dev`, `test`, `prod`, попытки применения, успешные применения и ошибки. Build требует baseline для всех трех контуров, потому что за один релиз генерирует отдельные SQL-диапазоны для `dev`, `test`, `prod`.
+Локальное состояние релизов и контуров хранится в `local_state/simple_deploy.sqlite3`. Файл создается автоматически, считается runtime-состоянием рабочей машины и не коммитится. В базе фиксируются baseline commit для `dev`, `test`, `prod`, попытки build, попытки применения, успешные применения и ошибки. Таблица `releases` остается журналом только успешно собранных релизов с manifest; упавшие build фиксируются отдельно в `build_attempts`. Build требует baseline для всех трех контуров, потому что за один релиз генерирует отдельные SQL-диапазоны для `dev`, `test`, `prod`.
 
 Первичная инициализация baseline выполняется по фактическому backend commit, который уже успешно лежит на каждом контуре. Это commit `from`, а не commit нового релиза:
 
@@ -411,7 +411,7 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
 ```
 
-DEV обычно идет от предыдущего локально зафиксированного состояния к текущему release commit. После успешного `deploy --contour dev` baseline `dev` двигается автоматически. TEST и PROD собираются как from-to диапазоны от baseline соответствующего контура до commit релиза; после успешного применения на внешнем контуре оператор должен явно выполнить `mark-applied`, иначе следующий релиз снова будет строиться от старого baseline. При ошибке используется `mark-failed`, baseline при этом не меняется.
+DEV обычно идет от предыдущего локально зафиксированного состояния к текущему release commit. После успешного `deploy --contour dev` baseline `dev` двигается автоматически. Если `deploy` или `pipeline` падает после выбора релиза, runner автоматически пишет failed attempt в `deployment_attempts` без сдвига baseline. TEST и PROD собираются как from-to диапазоны от baseline соответствующего контура до commit релиза; после успешного применения на внешнем контуре оператор должен явно выполнить `mark-applied`, иначе следующий релиз снова будет строиться от старого baseline. При ошибке внешнего применения используется `mark-failed`, baseline при этом не меняется.
 
 Пример диапазонов: если DEV сейчас на `C2`, TEST/PROD на `C1`, а новый backend source repo на `C3`, перед build нужно поставить `dev=C2`, `test=C1`, `prod=C1`. Build создаст `db_schema_dev` для `C2..C3` и `db_schema_test`/`db_schema_prod` для `C1..C3`. Нельзя заранее ставить baseline на `C3` до успешного применения, иначе следующий build посчитает `C3` уже примененным.
 

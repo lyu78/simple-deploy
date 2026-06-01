@@ -1514,6 +1514,18 @@ def mark_contour_failed(contour: str, build_version: str, release_dir: Path, err
     )
 
 
+def mark_contour_failed_best_effort(contour: str, build_version: str, release_dir: Path, error: Exception) -> None:
+    """Пишет failed deploy attempt, не маскируя исходную ошибку deploy."""
+    try:
+        mark_contour_failed(contour, build_version, release_dir, str(error))
+    except Exception as record_error:
+        print(
+            f"WARN failed to record failed deploy attempt: "
+            f"contour={contour} build_version={build_version} error={record_error}",
+            flush=True,
+        )
+
+
 def find_previous_release_manifest(release_dir: Path) -> tuple[Path, dict] | None:
     release_root = release_dir.parent
     if not release_root.exists():
@@ -1748,74 +1760,105 @@ def deploy(args: argparse.Namespace) -> int:
     runtime = load_runtime_config(args.config_file)
     build_version, release_dir = resolve_release_dir(env, args.build_version, args.latest)
     contour = validate_contour(args.contour)
-    artifacts = resolve_artifacts(env, build_version, release_dir)
-    db_schema_artifact = resolve_db_schema_artifact(env, build_version, release_dir, contour)
     print(f"DEPLOY build_version: {build_version}", flush=True)
     print(f"DEPLOY contour: {contour}", flush=True)
     print(f"DEPLOY release_dir: {release_dir}", flush=True)
 
-    app_user = require_value(env, "APP_VM_USER")
-    app_host = require_value(env, "APP_VM_HOST")
-    remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    success_recorded = False
+    try:
+        artifacts = resolve_artifacts(env, build_version, release_dir)
+        db_schema_artifact = resolve_db_schema_artifact(env, build_version, release_dir, contour)
+        app_user = require_value(env, "APP_VM_USER")
+        app_host = require_value(env, "APP_VM_HOST")
+        remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
 
-    run_db_maintenance(env, runtime, "before_unpack")
-    run_service_steps(env, runtime, "before_unpack")
+        run_db_maintenance(env, runtime, "before_unpack")
+        run_service_steps(env, runtime, "before_unpack")
 
-    print(f"RUN create remote release dir: {remote_dir}", flush=True)
-    run_or_raise("create remote release dir", ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(remote_dir)}", "APP"))
-    for artifact in artifacts:
-        print(f"RUN upload {artifact.name}: {artifact.local_path} -> {artifact.remote_archive}", flush=True)
-        run_or_raise(f"upload {artifact.name}", scp_file(env, artifact.local_path, app_user, app_host, artifact.remote_archive))
-
-    if runtime.get("backup_enabled", False):
-        backup_root = f"{env.get('BACKUP_ROOT_BASE', '/tmp/simple-deploy-backups').rstrip('/')}/{build_version}"
-        print(f"RUN create backup root: {backup_root}", flush=True)
-        run_or_raise("create backup root", ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(backup_root)}", "APP"))
-        for artifact in artifacts:
-            extract_path = artifact.extract_path.rstrip("/")
-            backup_parent = str(PurePosixPath(extract_path).parent)
-            backup_name = PurePosixPath(extract_path).name
-            command = (
-                f"test -d {sh_quote(artifact.extract_path)} && "
-                f"tar -czf {sh_quote(backup_root + '/' + artifact.name + '.tar.gz')} "
-                f"-C {sh_quote(backup_parent)} {sh_quote(backup_name)}"
-            )
-            print(f"RUN backup {artifact.name}: {artifact.extract_path}", flush=True)
-            run_or_raise(f"backup {artifact.name}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
-
-    for artifact in artifacts:
-        command = remote_clean_unpack_command(artifact)
-        print(f"RUN unpack {artifact.name}: {artifact.remote_archive} -> {artifact.extract_path}", flush=True)
-        run_or_raise(f"unpack {artifact.name}", ssh_command(env, app_user, app_host, command, "APP", timeout=120))
-
-    run_service_steps(env, runtime, "after_unpack")
-    run_db_maintenance(env, runtime, "before_migrate")
-    run_db_schema_summary(env, runtime, db_schema_artifact)
-
-    for command in management_commands(env, runtime):
-        remote = (
-            f"cd {sh_quote(require_value(env, 'APP_WORKDIR'))} && "
-            f". {sh_quote(require_value(env, 'APP_VENV_ACTIVATE_PATH'))} && "
-            f"{command}"
+        print(f"RUN create remote release dir: {remote_dir}", flush=True)
+        run_or_raise(
+            "create remote release dir",
+            ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(remote_dir)}", "APP"),
         )
-        print(f"RUN management command: {command}", flush=True)
-        run_or_raise(f"management command: {command}", ssh_command(env, app_user, app_host, remote, "APP", timeout=300))
+        for artifact in artifacts:
+            print(f"RUN upload {artifact.name}: {artifact.local_path} -> {artifact.remote_archive}", flush=True)
+            run_or_raise(
+                f"upload {artifact.name}",
+                scp_file(env, artifact.local_path, app_user, app_host, artifact.remote_archive),
+            )
 
-    run_db_maintenance(env, runtime, "after_migrate")
-    run_service_steps(env, runtime, "after_migrate")
+        if runtime.get("backup_enabled", False):
+            backup_root = f"{env.get('BACKUP_ROOT_BASE', '/tmp/simple-deploy-backups').rstrip('/')}/{build_version}"
+            print(f"RUN create backup root: {backup_root}", flush=True)
+            run_or_raise(
+                "create backup root",
+                ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(backup_root)}", "APP"),
+            )
+            for artifact in artifacts:
+                extract_path = artifact.extract_path.rstrip("/")
+                backup_parent = str(PurePosixPath(extract_path).parent)
+                backup_name = PurePosixPath(extract_path).name
+                command = (
+                    f"test -d {sh_quote(artifact.extract_path)} && "
+                    f"tar -czf {sh_quote(backup_root + '/' + artifact.name + '.tar.gz')} "
+                    f"-C {sh_quote(backup_parent)} {sh_quote(backup_name)}"
+                )
+                print(f"RUN backup {artifact.name}: {artifact.extract_path}", flush=True)
+                run_or_raise(
+                    f"backup {artifact.name}",
+                    ssh_command(env, app_user, app_host, command, "APP", timeout=120),
+                )
 
-    if runtime.get("healthcheck_enabled", True):
-        healthcheck(env, runtime, build_version)
-    else:
-        print("SKIP healthcheck: disabled")
+        for artifact in artifacts:
+            command = remote_clean_unpack_command(artifact)
+            print(f"RUN unpack {artifact.name}: {artifact.remote_archive} -> {artifact.extract_path}", flush=True)
+            run_or_raise(
+                f"unpack {artifact.name}",
+                ssh_command(env, app_user, app_host, command, "APP", timeout=120),
+            )
 
-    mark_contour_applied(contour, build_version, release_dir)
+        run_service_steps(env, runtime, "after_unpack")
+        run_db_maintenance(env, runtime, "before_migrate")
+        run_db_schema_summary(env, runtime, db_schema_artifact)
 
-    print("DEPLOY SUMMARY")
-    for line in deploy_summary_lines(build_version, release_dir, artifacts):
-        print(line)
+        for command in management_commands(env, runtime):
+            remote = (
+                f"cd {sh_quote(require_value(env, 'APP_WORKDIR'))} && "
+                f". {sh_quote(require_value(env, 'APP_VENV_ACTIVATE_PATH'))} && "
+                f"{command}"
+            )
+            print(f"RUN management command: {command}", flush=True)
+            run_or_raise(
+                f"management command: {command}",
+                ssh_command(env, app_user, app_host, remote, "APP", timeout=300),
+            )
 
-    send_outlook_success_email(env, runtime, build_version, release_dir, artifacts)
+        run_db_maintenance(env, runtime, "after_migrate")
+        run_service_steps(env, runtime, "after_migrate")
+
+        if runtime.get("healthcheck_enabled", True):
+            healthcheck(env, runtime, build_version)
+        else:
+            print("SKIP healthcheck: disabled")
+
+        mark_contour_applied(contour, build_version, release_dir)
+        success_recorded = True
+
+        print("DEPLOY SUMMARY")
+        for line in deploy_summary_lines(build_version, release_dir, artifacts):
+            print(line)
+
+        send_outlook_success_email(env, runtime, build_version, release_dir, artifacts)
+    except Exception as exc:
+        if not success_recorded:
+            mark_contour_failed_best_effort(contour, build_version, release_dir, exc)
+        else:
+            print(
+                f"WARN deploy failed after successful state update: "
+                f"contour={contour} build_version={build_version} error={exc}",
+                flush=True,
+            )
+        raise
     return 0
 
 

@@ -73,6 +73,11 @@ Schema SQL генерируется offline по Git-диапазону backend 
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
 ```
 
+Локальный реестр `local_state/simple_deploy.sqlite3` ведет историю попыток:
+упавшие build фиксируются автоматически в `build_attempts`, а упавшие
+`deploy`/`pipeline` - в `deployment_attempts`. Таблица `releases` хранит только
+успешно собранные релизы с manifest.
+
 Не сдвигайте baseline вручную на новый commit до успешного применения релиза:
 следующий build посчитает этот commit уже примененным и может собрать неполный
 SQL-диапазон.

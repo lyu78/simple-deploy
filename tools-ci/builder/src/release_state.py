@@ -3,7 +3,8 @@
 Модуль хранит операционную историю simple-deploy: какие релизы были собраны,
 какой backend commit считается последним успешно примененным на каждом контуре
 (``dev``, ``test``, ``prod``), и какие попытки применения завершились успехом
-или ошибкой.
+или ошибкой. Упавшие сборки хранятся отдельно от ``releases``, чтобы таблица
+релизов оставалась журналом только успешно собранных manifest.
 
 SQLite используется как локальный журнал рабочей машины. Он не заменяет
 ``release_manifest.json``: manifest остается переносимым описанием конкретного
@@ -85,6 +86,17 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             created_at text not null
         );
 
+        create table if not exists build_attempts (
+            id integer primary key autoincrement,
+            build_version text not null,
+            status text not null,
+            backend_commit text,
+            frontend_commit text,
+            error text,
+            started_at text not null,
+            finished_at text not null
+        );
+
         create table if not exists deployment_attempts (
             id integer primary key autoincrement,
             contour text not null,
@@ -98,6 +110,14 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         """
     )
     connection.commit()
+
+
+def validate_status(status: str, allowed: Iterable[str]) -> str:
+    """Нормализует и валидирует статус записи локального журнала."""
+    normalized = status.strip().lower()
+    if normalized not in allowed:
+        raise ValueError(f"Unknown status: {status}. Expected one of: {', '.join(sorted(allowed))}")
+    return normalized
 
 
 def get_contour_state(connection: sqlite3.Connection, contour: str) -> ContourState | None:
@@ -184,6 +204,59 @@ def record_release(
             json.dumps(artifacts, ensure_ascii=False, sort_keys=True),
             utc_now(),
         ),
+    )
+    connection.commit()
+
+
+def record_build_attempt_started(
+    connection: sqlite3.Connection,
+    build_version: str,
+    backend_commit: str = "",
+    frontend_commit: str = "",
+) -> int:
+    """Добавляет запись о начале попытки сборки релиза."""
+    now = utc_now()
+    cursor = connection.execute(
+        """
+        insert into build_attempts (
+            build_version,
+            status,
+            backend_commit,
+            frontend_commit,
+            error,
+            started_at,
+            finished_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (build_version, "started", backend_commit, frontend_commit, "", now, now),
+    )
+    connection.commit()
+    return int(cursor.lastrowid)
+
+
+def record_build_attempt_finished(
+    connection: sqlite3.Connection,
+    attempt_id: int,
+    status: str,
+    backend_commit: str = "",
+    frontend_commit: str = "",
+    error: str = "",
+) -> None:
+    """Обновляет итог попытки сборки релиза."""
+    status = validate_status(status, {"success", "failed"})
+    connection.execute(
+        """
+        update build_attempts
+        set
+            status = ?,
+            backend_commit = ?,
+            frontend_commit = ?,
+            error = ?,
+            finished_at = ?
+        where id = ?
+        """,
+        (status, backend_commit, frontend_commit, error, utc_now(), attempt_id),
     )
     connection.commit()
 

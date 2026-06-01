@@ -183,6 +183,11 @@ DB_LOGIN_PASSWORD=<password>
 `build` запускает `tools-ci/builder/create_release.py`, подготавливает frontend
 `.env` файлы и создает директорию релиза.
 
+Каждая попытка build автоматически записывается в
+`local_state/simple_deploy.sqlite3`: сначала как `started`, затем как `success`
+или `failed`. Таблица `releases` обновляется только после успешной сборки и
+создания `release_manifest.json`.
+
 Backend DB-генераторы копируются во временную директорию
 `BACKEND_SOURCE_REPO_PATH/build_scripts/` из
 `tools-ci/builder/scripts/additional_artifacts/` и запускаются из корня backend
@@ -221,8 +226,10 @@ psql --set=ON_ERROR_STOP=1 --single-transaction
 
 После schema SQL runner распаковывает backend/frontend, выполняет service steps,
 Django management-команды, healthcheck и при успешном завершении двигает baseline
-выбранного контура. Для TEST/PROD, если применение выполнялось внешним или
-ручным процессом, используйте `mark-applied` или `mark-failed`.
+выбранного контура. Если `deploy` или `pipeline` падает после выбора релиза,
+runner автоматически пишет failed attempt в `deployment_attempts` без сдвига
+baseline. Для TEST/PROD, если применение выполнялось внешним или ручным
+процессом, используйте `mark-applied` или `mark-failed`.
 
 Ручное применение schema SQL на TEST/PROD описано в
 `../instructions/manual-schema-sql-deploy.md`.

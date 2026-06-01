@@ -8,7 +8,12 @@ from src.infra import (
     get_new_branch_name,
     get_new_build_version,
 )
-from src.release_state import connect_state_db, record_release
+from src.release_state import (
+    connect_state_db,
+    record_build_attempt_finished,
+    record_build_attempt_started,
+    record_release,
+)
 from src.utils import get_required_env
 
 from src.build_backend import build_backend
@@ -41,7 +46,7 @@ def repo_manifest(repo_path: str) -> dict[str, str]:
 def write_release_manifest(
     build_version: str,
     backend_artifacts: dict[str, object] | None = None,
-) -> None:
+) -> dict:
     release_root = Path(get_required_env("RELEASE_ROOT_WINDOWS"))
     release_dir = release_root / build_version
     release_dir.mkdir(parents=True, exist_ok=True)
@@ -72,9 +77,37 @@ def write_release_manifest(
             frontend_commit=frontend_repo["commit_sha"],
             artifacts=manifest["artifacts"],
         )
+    return manifest
 
 
-if __name__ == "__main__":
+def safe_repo_commit(env_name: str) -> str:
+    """Best-effort commit lookup for build attempt metadata."""
+    try:
+        return git_output(get_required_env(env_name), "rev-parse", "HEAD")
+    except Exception:
+        return ""
+
+
+def record_build_failure(attempt_id: int, build_version: str, error: BaseException) -> None:
+    """Best-effort failed build attempt marker that preserves the original build error."""
+    try:
+        with closing(connect_state_db()) as connection:
+            record_build_attempt_finished(
+                connection,
+                attempt_id=attempt_id,
+                status="failed",
+                backend_commit=safe_repo_commit("BACKEND_SOURCE_REPO_PATH"),
+                frontend_commit=safe_repo_commit("FRONTEND_SOURCE_REPO_PATH"),
+                error=str(error),
+            )
+    except Exception as record_error:
+        print(
+            f"WARN failed to record failed build attempt: build_version={build_version} error={record_error}",
+            flush=True,
+        )
+
+
+def main() -> int:
     # TODO добавить параметризацию веток репозиториев, на основе которых происходит сборка.
     # TODO добавить last commits для репозиториев, на основе которых была проведена сборка.
     # TODO добавить сохранение логов сборщика в файл.
@@ -83,19 +116,46 @@ if __name__ == "__main__":
     build_version = get_new_build_version()
     branch_name = get_new_branch_name(build_version=build_version)
 
-    backend_artifacts = build_backend(
-        build_version=build_version,
-        branch_name=branch_name,
-    )
+    with closing(connect_state_db()) as connection:
+        build_attempt_id = record_build_attempt_started(
+            connection,
+            build_version=build_version,
+            backend_commit=safe_repo_commit("BACKEND_SOURCE_REPO_PATH"),
+            frontend_commit=safe_repo_commit("FRONTEND_SOURCE_REPO_PATH"),
+        )
 
-    build_frontend(
-        build_version=build_version,
-        branch_name=branch_name,
-    )
+    try:
+        backend_artifacts = build_backend(
+            build_version=build_version,
+            branch_name=branch_name,
+        )
 
-    write_release_manifest(build_version, backend_artifacts=backend_artifacts)
+        build_frontend(
+            build_version=build_version,
+            branch_name=branch_name,
+        )
+
+        manifest = write_release_manifest(build_version, backend_artifacts=backend_artifacts)
+        backend_repo = manifest["repositories"]["backend"]
+        frontend_repo = manifest["repositories"]["frontend"]
+        with closing(connect_state_db()) as connection:
+            record_build_attempt_finished(
+                connection,
+                attempt_id=build_attempt_id,
+                status="success",
+                backend_commit=backend_repo["commit_sha"],
+                frontend_commit=frontend_repo["commit_sha"],
+            )
+    except (Exception, SystemExit) as exc:
+        record_build_failure(build_attempt_id, build_version, exc)
+        raise
 
     # TODO собирать summary и roles нужно на этапе пре-пушей.
 
 
     # ERROR удаляется архивес из финального пуша, что логично.
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

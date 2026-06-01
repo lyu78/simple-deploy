@@ -17,6 +17,7 @@ from tools.windows_pipeline import (
     build,
     check_backend_data_insert_idempotency,
     check_backend_build_inputs,
+    deploy,
     derive_service_permission_check,
     is_sudo_command,
     management_commands,
@@ -196,6 +197,56 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
         build_env = stream_mock.call_args.kwargs["env"]
         self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "1")
+
+    def test_deploy_failure_records_failed_attempt(self):
+        args = Namespace(
+            env_file=Path(".env"),
+            secrets_file=Path("local.secrets.env"),
+            config_file=Path("windows_pipeline.local.json"),
+            build_version="1.2.3",
+            latest=False,
+            contour="dev",
+        )
+        env = {"DEV_DOMAIN": "dev.example.local"}
+        release_dir = Path("releases") / "1.2.3"
+
+        with patch("tools.windows_pipeline.load_env", return_value=env):
+            with patch("tools.windows_pipeline.load_runtime_config", return_value={}):
+                with patch("tools.windows_pipeline.resolve_release_dir", return_value=("1.2.3", release_dir)):
+                    with patch(
+                        "tools.windows_pipeline.resolve_artifacts",
+                        side_effect=RuntimeError("artifact missing"),
+                    ):
+                        with patch("tools.windows_pipeline.mark_contour_failed") as mark_failed_mock:
+                            with self.assertRaisesRegex(RuntimeError, "artifact missing"):
+                                deploy(args)
+
+        mark_failed_mock.assert_called_once_with("dev", "1.2.3", release_dir, "artifact missing")
+
+    def test_deploy_failure_record_error_preserves_original_error(self):
+        args = Namespace(
+            env_file=Path(".env"),
+            secrets_file=Path("local.secrets.env"),
+            config_file=Path("windows_pipeline.local.json"),
+            build_version="1.2.3",
+            latest=False,
+            contour="dev",
+        )
+        release_dir = Path("releases") / "1.2.3"
+
+        with patch("tools.windows_pipeline.load_env", return_value={}):
+            with patch("tools.windows_pipeline.load_runtime_config", return_value={}):
+                with patch("tools.windows_pipeline.resolve_release_dir", return_value=("1.2.3", release_dir)):
+                    with patch(
+                        "tools.windows_pipeline.resolve_artifacts",
+                        side_effect=RuntimeError("artifact missing"),
+                    ):
+                        with patch(
+                            "tools.windows_pipeline.mark_contour_failed",
+                            side_effect=RuntimeError("sqlite error"),
+                        ):
+                            with self.assertRaisesRegex(RuntimeError, "artifact missing"):
+                                deploy(args)
 
     def test_prepare_build_env_keeps_configured_backend_app_root(self):
         build_env = prepare_build_env(

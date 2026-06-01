@@ -21,7 +21,10 @@ Ansible/WSL описан в `../ansible-ci/PIPELINE.MD`.
 Локальное состояние SQL baseline хранится в
 `local_state/simple_deploy.sqlite3` и не коммитится. Для каждого контура
 `dev`, `test`, `prod` хранится backend commit, от которого следующий build
-строит schema SQL-диапазон.
+строит schema SQL-диапазон. В этой же SQLite-базе runner хранит историю build
+attempts и deploy attempts: успешные build попадают в `releases`, упавшие build
+фиксируются в `build_attempts`, упавшие deploy - в `deployment_attempts` без
+сдвига baseline.
 
 ## Команды оператора
 
