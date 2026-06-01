@@ -3,6 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 import sys
+from argparse import Namespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +14,7 @@ from tools.windows_pipeline import (
     CommandResult,
     DbSqlArtifact,
     Reporter,
+    build,
     check_backend_data_insert_idempotency,
     check_backend_build_inputs,
     derive_service_permission_check,
@@ -156,6 +158,44 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             build_env["PIP_TRUSTED_HOST"],
             "pypi.org files.pythonhosted.org pypi.python.org",
         )
+
+    def test_build_disables_data_sql_by_default(self):
+        args = Namespace(
+            env_file=Path(".env"),
+            secrets_file=Path("local.secrets.env"),
+            timeout=3600,
+            include_data_sql=False,
+        )
+        env = {
+            "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
+            "DEV_DOMAIN": "dev.example.local",
+        }
+        with patch("tools.windows_pipeline.load_env", return_value=env):
+            with patch("tools.windows_pipeline.prepare_frontend_env_files"):
+                with patch("tools.windows_pipeline.stream_command", return_value=0) as stream_mock:
+                    self.assertEqual(build(args), 0)
+
+        build_env = stream_mock.call_args.kwargs["env"]
+        self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "0")
+
+    def test_build_enables_data_sql_with_flag(self):
+        args = Namespace(
+            env_file=Path(".env"),
+            secrets_file=Path("local.secrets.env"),
+            timeout=3600,
+            include_data_sql=True,
+        )
+        env = {
+            "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
+            "DEV_DOMAIN": "dev.example.local",
+        }
+        with patch("tools.windows_pipeline.load_env", return_value=env):
+            with patch("tools.windows_pipeline.prepare_frontend_env_files"):
+                with patch("tools.windows_pipeline.stream_command", return_value=0) as stream_mock:
+                    self.assertEqual(build(args), 0)
+
+        build_env = stream_mock.call_args.kwargs["env"]
+        self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "1")
 
     def test_prepare_build_env_keeps_configured_backend_app_root(self):
         build_env = prepare_build_env(

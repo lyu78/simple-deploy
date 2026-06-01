@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import json
 import sys
 import tarfile
 import tempfile
@@ -200,6 +201,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         env = {
             "BACKEND_BUILD_VENV_RELATIVE_PATH": ".venv/Scripts/activate.bat",
             "GIT_BASH_PATH": "bash",
+            "SIMPLE_DEPLOY_INCLUDE_DATA_SQL": "1",
         }
         with patch.dict("os.environ", env):
             with patch("src.build_backend._run_logged_command") as run_mock:
@@ -227,6 +229,32 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(schema_kwargs["cwd"], source_repo)
         self.assertEqual(run_all_kwargs["cwd"], source_repo)
 
+    def test_artifact_generators_skip_data_sql_by_default(self):
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+        activate_path = source_repo / ".venv/Scripts/activate.bat"
+        python_path = source_repo / ".venv/Scripts/python.exe"
+        activate_path.parent.mkdir(parents=True)
+        activate_path.write_text("", encoding="utf-8")
+        python_path.write_text("", encoding="utf-8")
+        (source_repo / "requirements.txt").write_text("Django==4.2\n", encoding="utf-8")
+        build_scripts_dir = source_repo / "build_scripts"
+        build_scripts_dir.mkdir()
+
+        env = {
+            "BACKEND_BUILD_VENV_RELATIVE_PATH": ".venv/Scripts/activate.bat",
+            "GIT_BASH_PATH": "bash",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            with patch("src.build_backend._run_logged_command") as run_mock:
+                _run_additional_artifact_generators(source_repo, build_scripts_dir)
+
+        self.assertEqual(run_mock.call_count, 2)
+        self.assertIn(str(source_repo / "requirements.txt"), run_mock.call_args_list[0].args[0])
+        self.assertIn(str(build_scripts_dir / "create_sql_migrations.py"), run_mock.call_args_list[1].args[0])
+        called_commands = [" ".join(call.args[0]) for call in run_mock.call_args_list]
+        self.assertFalse(any("create_run_all_sql.py" in command for command in called_commands))
+
     def test_missing_schema_metadata_reports_schema_generator_failure(self):
         source_repo = self.root / "source"
         source_repo.mkdir()
@@ -248,6 +276,109 @@ class BuildBackendArtifactTests(unittest.TestCase):
 
         run_mock.assert_called_once()
         self.assertEqual(run_mock.call_args.args[2], "create_sql_migrations.py")
+
+    def test_db_migrations_archives_skip_data_sql_by_default(self):
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+        build_scripts_dir = source_repo / "build_scripts"
+        build_scripts_dir.mkdir()
+        python_path = source_repo / ".venv/Scripts/python.exe"
+
+        def fake_run_artifact_generator(*args):
+            script_name = args[2]
+            self.assertEqual(script_name, "create_sql_migrations.py")
+            metadata = {
+                "contours": {
+                    "dev": {"entrypoint": "summary_sql_dev_abc.sql"},
+                    "test": {"entrypoint": "summary_sql_test_abc.sql"},
+                    "prod": {"entrypoint": "summary_sql_prod_abc.sql"},
+                }
+            }
+            (build_scripts_dir / "schema_migrations_metadata.json").write_text(
+                json.dumps(metadata),
+                encoding="utf-8",
+            )
+            for contour in ("dev", "test", "prod"):
+                (build_scripts_dir / f"summary_sql_{contour}_abc.sql").write_text(
+                    "select 1;\n",
+                    encoding="utf-8",
+                )
+
+        with patch.dict("os.environ", {"RELEASE_ROOT_WINDOWS": str(self.release_dir)}, clear=True):
+            with patch("src.build_backend.git_output", return_value="abc123"):
+                with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
+                    with patch("src.build_backend._schema_baselines_json", return_value="{}"):
+                        with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
+                            with patch(
+                                "src.build_backend._run_artifact_generator",
+                                side_effect=fake_run_artifact_generator,
+                            ) as run_mock:
+                                manifest = _create_db_migrations_archives(str(source_repo), "1.2.3")
+
+        run_mock.assert_called_once()
+        self.assertFalse(manifest["db_data_sql_enabled"])
+        self.assertNotIn("db_insert_archive", manifest)
+        self.assertNotIn("db_update_archive", manifest)
+        self.assertEqual(set(manifest["db_schema_archives"]), {"dev", "test", "prod"})
+
+    def test_db_migrations_archives_include_data_sql_when_enabled(self):
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+        build_scripts_dir = source_repo / "build_scripts"
+        build_scripts_dir.mkdir()
+        python_path = source_repo / ".venv/Scripts/python.exe"
+
+        def fake_run_artifact_generator(*args):
+            script_name = args[2]
+            if script_name == "create_sql_migrations.py":
+                metadata = {
+                    "contours": {
+                        "dev": {"entrypoint": "summary_sql_dev_abc.sql"},
+                        "test": {"entrypoint": "summary_sql_test_abc.sql"},
+                        "prod": {"entrypoint": "summary_sql_prod_abc.sql"},
+                    }
+                }
+                (build_scripts_dir / "schema_migrations_metadata.json").write_text(
+                    json.dumps(metadata),
+                    encoding="utf-8",
+                )
+                for contour in ("dev", "test", "prod"):
+                    (build_scripts_dir / f"summary_sql_{contour}_abc.sql").write_text(
+                        "select 1;\n",
+                        encoding="utf-8",
+                    )
+            elif script_name == "create_run_all_sql.py":
+                (build_scripts_dir / "run_all_insert_abc123.sql").write_text(
+                    "\\set ON_ERROR_STOP 1\n",
+                    encoding="utf-8",
+                )
+                (build_scripts_dir / "run_all_update_abc123.sql").write_text(
+                    "\\set ON_ERROR_STOP 0\n",
+                    encoding="utf-8",
+                )
+
+        env = {
+            "RELEASE_ROOT_WINDOWS": str(self.release_dir),
+            "SIMPLE_DEPLOY_INCLUDE_DATA_SQL": "1",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            with patch("src.build_backend.git_output", return_value="abc123"):
+                with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
+                    with patch("src.build_backend._schema_baselines_json", return_value="{}"):
+                        with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
+                            with patch(
+                                "src.build_backend._run_artifact_generator",
+                                side_effect=fake_run_artifact_generator,
+                            ) as run_mock:
+                                manifest = _create_db_migrations_archives(str(source_repo), "1.2.3")
+
+        self.assertEqual(
+            [call.args[2] for call in run_mock.call_args_list],
+            ["create_sql_migrations.py", "create_run_all_sql.py"],
+        )
+        self.assertTrue(manifest["db_data_sql_enabled"])
+        self.assertIn("db_insert_archive", manifest)
+        self.assertIn("db_update_archive", manifest)
 
     def test_backend_build_requirements_path_can_be_configured(self):
         source_repo = self.root / "source"

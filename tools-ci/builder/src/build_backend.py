@@ -42,6 +42,7 @@ DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
 DEFAULT_BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH = "requirements.txt"
 DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
+INCLUDE_DATA_SQL_ENV = "SIMPLE_DEPLOY_INCLUDE_DATA_SQL"
 PIP_TRUSTED_HOSTS = (
     "pypi.org",
     "files.pythonhosted.org",
@@ -208,6 +209,10 @@ def _backend_app_root_dir() -> str:
     return os.environ.get("BACKEND_APP_ROOT_DIR", "").strip() or DEFAULT_BACKEND_APP_ROOT_DIR
 
 
+def _include_data_sql_artifacts() -> bool:
+    return os.environ.get(INCLUDE_DATA_SQL_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _pip_trusted_host_args() -> list[str]:
     args: list[str] = []
     for host in PIP_TRUSTED_HOSTS:
@@ -260,7 +265,10 @@ def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_di
     """Run SQL artifact generators through the backend source virtualenv."""
     python_path = _prepare_backend_build_python(source_repo_path)
     _run_artifact_generator(source_repo_path, python_path, "create_sql_migrations.py")
-    _run_artifact_generator(source_repo_path, python_path, "create_run_all_sql.py")
+    if _include_data_sql_artifacts():
+        _run_artifact_generator(source_repo_path, python_path, "create_run_all_sql.py")
+    else:
+        _log_build_step("skip data SQL artifacts: use --include-data-sql to build run_all insert/update archives")
 
 
 def _require_schema_metadata_after_generator(build_scripts_dir: Path) -> Path:
@@ -324,7 +332,7 @@ def _create_db_sql_artifact(
     return archive_name
 
 
-def _create_db_migrations_archives(source_repo_path: str, build_version: str) -> dict[str, str]:
+def _create_db_migrations_archives(source_repo_path: str, build_version: str) -> dict[str, object]:
     """Create separate schema/insert/update DB archives for the current backend commit."""
     source_repo = Path(source_repo_path)
     release_dir = Path(get_required_env("RELEASE_ROOT_WINDOWS")) / build_version
@@ -333,32 +341,23 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
     commit_hash = git_output(source_repo_path, "rev-parse", "--short", "HEAD")
     build_scripts_dir = _prepare_build_scripts(source_repo)
     previous_baselines = os.environ.get("SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON")
+    include_data_sql = _include_data_sql_artifacts()
 
     try:
         os.environ["SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"] = _schema_baselines_json()
         python_path = _prepare_backend_build_python(source_repo)
         _run_artifact_generator(source_repo, python_path, "create_sql_migrations.py")
         schema_metadata_path = _require_schema_metadata_after_generator(build_scripts_dir)
-        _run_artifact_generator(source_repo, python_path, "create_run_all_sql.py")
+        if include_data_sql:
+            _run_artifact_generator(source_repo, python_path, "create_run_all_sql.py")
+        else:
+            _log_build_step("skip data SQL artifacts: use --include-data-sql to build run_all insert/update archives")
 
         _log_matching_files(
             build_scripts_dir,
             "summary_sql_*_*.sql",
             "schema summary SQL",
         )
-        _log_matching_files(
-            build_scripts_dir,
-            f"run_all_insert_{commit_hash}.sql",
-            "run_all insert SQL",
-        )
-        _log_matching_files(
-            build_scripts_dir,
-            f"run_all_update_{commit_hash}.sql",
-            "run_all update SQL",
-        )
-
-        run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
-        run_all_update = one_match(build_scripts_dir, f"run_all_update_{commit_hash}.sql")
 
         schema_metadata = json.loads(schema_metadata_path.read_text(encoding="utf-8"))
         schema_archives: dict[str, str] = {}
@@ -378,26 +377,40 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                     schema_sql.name,
                 ),
             )
-        insert_archive = _create_db_sql_artifact(
-            release_dir,
-            "insert",
-            build_version,
-            commit_hash,
-            lambda archive: (
-                add_file_to_tar(archive, run_all_insert, run_all_insert.name),
-                _add_run_all_includes_to_tar(archive, source_repo, run_all_insert),
-            ),
-        )
-        update_archive = _create_db_sql_artifact(
-            release_dir,
-            "update",
-            build_version,
-            commit_hash,
-            lambda archive: (
-                add_file_to_tar(archive, run_all_update, run_all_update.name),
-                _add_run_all_includes_to_tar(archive, source_repo, run_all_update),
-            ),
-        )
+        data_archives: dict[str, str] = {}
+        if include_data_sql:
+            _log_matching_files(
+                build_scripts_dir,
+                f"run_all_insert_{commit_hash}.sql",
+                "run_all insert SQL",
+            )
+            _log_matching_files(
+                build_scripts_dir,
+                f"run_all_update_{commit_hash}.sql",
+                "run_all update SQL",
+            )
+            run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
+            run_all_update = one_match(build_scripts_dir, f"run_all_update_{commit_hash}.sql")
+            data_archives["db_insert_archive"] = _create_db_sql_artifact(
+                release_dir,
+                "insert",
+                build_version,
+                commit_hash,
+                lambda archive: (
+                    add_file_to_tar(archive, run_all_insert, run_all_insert.name),
+                    _add_run_all_includes_to_tar(archive, source_repo, run_all_insert),
+                ),
+            )
+            data_archives["db_update_archive"] = _create_db_sql_artifact(
+                release_dir,
+                "update",
+                build_version,
+                commit_hash,
+                lambda archive: (
+                    add_file_to_tar(archive, run_all_update, run_all_update.name),
+                    _add_run_all_includes_to_tar(archive, source_repo, run_all_update),
+                ),
+            )
     finally:
         if previous_baselines is None:
             os.environ.pop("SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON", None)
@@ -409,8 +422,8 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
         "backend_commit_short_hash": commit_hash,
         "db_schema_archives": schema_archives,
         "db_schema_metadata": schema_metadata,
-        "db_insert_archive": insert_archive,
-        "db_update_archive": update_archive,
+        "db_data_sql_enabled": include_data_sql,
+        **data_archives,
     }
     return manifest
 
@@ -418,7 +431,7 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
 def build_backend(
     build_version: str,
     branch_name: str,
-) -> dict[str, str]:
+) -> dict[str, object]:
     """Main backend build function."""
     logging.info("Starting backend deployment automation")
 

@@ -124,12 +124,14 @@ DB_LOGIN_PASSWORD=<password>
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --include-data-sql
 ```
 
 Сборка релиза:
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build --include-data-sql
 ```
 
 Деплой уже собранного релиза:
@@ -143,6 +145,7 @@ DB_LOGIN_PASSWORD=<password>
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --include-data-sql
 ```
 
 Фиксация внешнего TEST/PROD результата:
@@ -160,7 +163,8 @@ DB_LOGIN_PASSWORD=<password>
 - локальные backend/frontend source и target репозитории;
 - `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
-- идемпотентность data INSERT SQL, которые попадут в `run_all_insert`;
+- идемпотентность data INSERT SQL, которые попадут в `run_all_insert`, если
+  передан `--include-data-sql`;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
 - SSH-доступ к app VM и DB VM;
@@ -196,7 +200,8 @@ Schema SQL генерируется offline через Django schema editor в �
 - `db_schema_prod_r_<release>-c_<commit>.tar.gz`.
 
 Внутри schema-архива лежит единственный entrypoint
-`summary_sql_<contour>_*.sql`. Build также может создать data SQL-архивы:
+`summary_sql_<contour>_*.sql`. Build создает data SQL-архивы только при
+`--include-data-sql`:
 
 - `db_insert_r_<release>-c_<commit>.tar.gz` с `run_all_insert_<commit>.sql`;
 - `db_update_r_<release>-c_<commit>.tar.gz` с `run_all_update_<commit>.sql`.

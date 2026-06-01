@@ -40,7 +40,7 @@ def repo_manifest(repo_path: str) -> dict[str, str]:
 
 def write_release_manifest(
     build_version: str,
-    backend_artifacts: dict[str, str] | None = None,
+    backend_artifacts: dict[str, object] | None = None,
 ) -> None:
     release_root = Path(get_required_env("RELEASE_ROOT_WINDOWS"))
     release_dir = release_root / build_version

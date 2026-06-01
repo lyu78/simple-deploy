@@ -43,7 +43,9 @@ Ansible/WSL описан в `../ansible-ci/PIPELINE.MD`.
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --include-data-sql
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build --include-data-sql
 ```
 
 Деплой уже собранного релиза:
@@ -57,6 +59,7 @@ Ansible/WSL описан в `../ansible-ci/PIPELINE.MD`.
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --include-data-sql
 ```
 
 Фиксация внешнего TEST/PROD результата:
@@ -74,7 +77,8 @@ Ansible/WSL описан в `../ansible-ci/PIPELINE.MD`.
 - локальные backend/frontend source и target репозитории;
 - `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
-- идемпотентность data INSERT SQL, которые попадут в `run_all_insert`;
+- идемпотентность data INSERT SQL, которые попадут в `run_all_insert`, если
+  передан `--include-data-sql`;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
 - SSH-доступ к app VM и DB VM;

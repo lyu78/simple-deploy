@@ -58,6 +58,7 @@ DEFAULT_TIMEOUT = 20
 RELEASE_MANIFEST_NAME = "release_manifest.json"
 DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
 PIP_TRUSTED_HOSTS = "pypi.org files.pythonhosted.org pypi.python.org"
+INCLUDE_DATA_SQL_ENV = "SIMPLE_DEPLOY_INCLUDE_DATA_SQL"
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 DATA_SQL_INSERT_DIRS = ("app_ip_subcompany_catalogs",)
 DATA_SQL_MIXED_DIRS = (
@@ -1166,7 +1167,10 @@ def dry_run(args: argparse.Namespace) -> bool:
         check_origin_network(reporter, f"{name} origin network", origin_url)
 
     check_backend_build_inputs(reporter, env)
-    check_backend_data_insert_idempotency(reporter, env)
+    if getattr(args, "include_data_sql", False):
+        check_backend_data_insert_idempotency(reporter, env)
+    else:
+        reporter.skip("backend data INSERT idempotency", "data SQL artifacts disabled; use --include-data-sql")
     check_outlook_email_config(reporter, runtime)
 
     try:
@@ -1231,6 +1235,7 @@ def build(args: argparse.Namespace) -> int:
     print("BUILD prepare frontend env files", flush=True)
     prepare_frontend_env_files(env)
     build_env = prepare_build_env(env)
+    build_env[INCLUDE_DATA_SQL_ENV] = "1" if getattr(args, "include_data_sql", False) else "0"
     return stream_command(
         [sys.executable, "-u", "create_release.py"],
         cwd=BUILDER_ROOT,
@@ -1907,8 +1912,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=3600)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("dry-run")
-    subparsers.add_parser("build")
+    dry_run_parser = subparsers.add_parser("dry-run")
+    dry_run_parser.add_argument("--include-data-sql", action="store_true")
+
+    build_parser = subparsers.add_parser("build")
+    build_parser.add_argument("--include-data-sql", action="store_true")
 
     deploy_parser = subparsers.add_parser("deploy")
     deploy_parser.add_argument("--build-version", default="")
@@ -1919,6 +1927,7 @@ def parse_args() -> argparse.Namespace:
     pipeline_parser.add_argument("--build-version", default="")
     pipeline_parser.add_argument("--latest", action="store_true")
     pipeline_parser.add_argument("--contour", choices=CONTOURS, default="dev")
+    pipeline_parser.add_argument("--include-data-sql", action="store_true")
 
     baseline_parser = subparsers.add_parser("set-baseline")
     baseline_parser.add_argument("--contour", choices=CONTOURS, required=True)

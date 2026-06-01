@@ -46,8 +46,8 @@ backend commit релиза.
 - frontend runtime archive;
 - `release_manifest.json` с версиями, commit SHA и SQL metadata;
 - schema SQL-архивы `db_schema_dev_*`, `db_schema_test_*`, `db_schema_prod_*`;
-- data SQL-архивы `db_insert_*` и `db_update_*`, если в backend repo есть
-  соответствующие SQL-скрипты.
+- data SQL-архивы `db_insert_*` и `db_update_*`, если build запущен с
+  `--include-data-sql`.
 
 Schema SQL генерируется offline по Git-диапазону backend source repo. Он не
 подтверждает состояние реальной БД сам по себе: фактом применения считается
