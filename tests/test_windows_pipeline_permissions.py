@@ -12,6 +12,8 @@ from tools.windows_pipeline import (
     Artifact,
     CommandResult,
     DbSqlArtifact,
+    Reporter,
+    check_backend_build_inputs,
     derive_service_permission_check,
     is_sudo_command,
     management_commands,
@@ -165,6 +167,57 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
         self.assertEqual(build_env["BACKEND_APP_ROOT_DIR"], "backend_app")
         self.assertEqual(build_env["BACKEND_DJANGO_SETTINGS_MODULE"], "backend_app.settings.base")
+
+    def test_dry_run_fails_when_backend_app_root_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            source_repo.mkdir()
+            (source_repo / "requirements.txt").write_text("Django==4.2\n", encoding="utf-8")
+            reporter = Reporter()
+
+            with patch.dict("os.environ", {}, clear=True):
+                check_backend_build_inputs(
+                    reporter,
+                    {
+                        "BACKEND_SOURCE_REPO_PATH": str(source_repo),
+                        "DEV_DOMAIN": "dev.example.local",
+                    },
+                )
+
+        self.assertTrue(any("BACKEND_APP_ROOT_DIR" in issue for issue in reporter.issues))
+
+    def test_dry_run_checks_backend_settings_import_when_venv_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            app_root = source_repo / "backend_app"
+            venv_scripts = source_repo / ".venv" / "Scripts"
+            app_root.mkdir(parents=True)
+            venv_scripts.mkdir(parents=True)
+            (source_repo / "requirements.txt").write_text("Django==4.2\n", encoding="utf-8")
+            python_path = venv_scripts / "python.exe"
+            python_path.write_text("", encoding="utf-8")
+            reporter = Reporter()
+
+            with patch.dict("os.environ", {}, clear=True):
+                with patch(
+                    "tools.windows_pipeline.run_command",
+                    return_value=CommandResult(0, "backend_app.settings.base\n", ""),
+                ) as run_mock:
+                    check_backend_build_inputs(
+                        reporter,
+                        {
+                            "BACKEND_SOURCE_REPO_PATH": str(source_repo),
+                            "BACKEND_APP_ROOT_DIR": "backend_app",
+                            "BACKEND_DJANGO_SETTINGS_MODULE": "backend_app.settings.base",
+                            "DEV_DOMAIN": "dev.example.local",
+                        },
+                    )
+
+        self.assertEqual(reporter.issues, [])
+        command = run_mock.call_args.args[0]
+        self.assertEqual(command[0], str(python_path))
+        self.assertEqual(command[1:3], ["-Xutf8", "-c"])
+        self.assertIn("backend_app.settings.base", command[3])
 
     def test_outlook_success_email_attaches_release_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

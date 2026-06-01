@@ -497,6 +497,70 @@ def check_repo(reporter: Reporter, name: str, path_value: str) -> str:
     return origin_url
 
 
+def check_backend_build_inputs(reporter: Reporter, env: dict[str, str]) -> None:
+    """Проверяет локальные настройки backend build до запуска create_release.py."""
+    try:
+        build_env = prepare_build_env(env)
+        source_repo = Path(require_value(build_env, "BACKEND_SOURCE_REPO_PATH"))
+        app_root_dir = require_value(build_env, "BACKEND_APP_ROOT_DIR")
+        settings_module = require_value(build_env, "BACKEND_DJANGO_SETTINGS_MODULE")
+        requirements_relative_path = require_value(build_env, "BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH")
+        venv_relative_path = require_value(build_env, "BACKEND_BUILD_VENV_RELATIVE_PATH")
+    except Exception as exc:
+        reporter.fail("backend build config", str(exc))
+        return
+
+    app_root_path = source_repo / Path(app_root_dir)
+    if app_root_path.is_dir():
+        reporter.pass_("backend app root", f"{app_root_dir} -> {app_root_path}")
+    else:
+        reporter.fail(
+            "backend app root",
+            f"BACKEND_APP_ROOT_DIR={app_root_dir!r} не найден: {app_root_path}. "
+            "Задайте реальную директорию backend application root в .env.",
+        )
+
+    requirements_path = source_repo / Path(requirements_relative_path)
+    if requirements_path.is_file():
+        reporter.pass_("backend build requirements", str(requirements_path))
+    else:
+        reporter.fail(
+            "backend build requirements",
+            f"BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH={requirements_relative_path!r} не найден: {requirements_path}",
+        )
+
+    venv_activate_path = source_repo / Path(venv_relative_path)
+    python_path = venv_activate_path.parent / "python.exe"
+    if not python_path.is_file():
+        reporter.skip(
+            "backend Django settings import",
+            f"venv python не найден: {python_path}; build создаст venv и установит requirements",
+        )
+        return
+
+    import_code = (
+        "import importlib, os, sys; "
+        f"sys.path.insert(0, {str(app_root_path)!r}); "
+        f"os.environ.setdefault('DJANGO_SETTINGS_MODULE', {settings_module!r}); "
+        "importlib.import_module(os.environ['DJANGO_SETTINGS_MODULE']); "
+        "print(os.environ['DJANGO_SETTINGS_MODULE'])"
+    )
+    result = run_command(
+        [str(python_path), "-Xutf8", "-c", import_code],
+        cwd=source_repo,
+        timeout=60,
+        env=build_env,
+    )
+    output = (result.stdout or result.stderr).strip()
+    if result.rc == 0:
+        reporter.pass_("backend Django settings import", output or settings_module)
+    else:
+        reporter.fail(
+            "backend Django settings import",
+            output or f"rc={result.rc}; проверьте BACKEND_APP_ROOT_DIR и BACKEND_DJANGO_SETTINGS_MODULE",
+        )
+
+
 def check_origin_network(reporter: Reporter, name: str, origin_url: str) -> None:
     if not origin_url:
         reporter.skip(name, "origin URL неизвестен")
@@ -1029,6 +1093,7 @@ def dry_run(args: argparse.Namespace) -> bool:
         origin_url = check_repo(reporter, name, path)
         check_origin_network(reporter, f"{name} origin network", origin_url)
 
+    check_backend_build_inputs(reporter, env)
     check_outlook_email_config(reporter, runtime)
 
     try:

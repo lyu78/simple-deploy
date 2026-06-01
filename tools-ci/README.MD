@@ -158,6 +158,8 @@ DB_LOGIN_PASSWORD=<password>
 
 - обязательные значения `.env` и наличие `local.secrets.env`;
 - локальные backend/frontend source и target репозитории;
+- `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
+  `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
 - SSH-доступ к app VM и DB VM;
@@ -179,7 +181,7 @@ DB_LOGIN_PASSWORD=<password>
 Backend DB-генераторы копируются во временную директорию
 `BACKEND_SOURCE_REPO_PATH/build_scripts/` из
 `tools-ci/builder/scripts/additional_artifacts/` и запускаются из корня backend
-source repo через Git Bash. После упаковки SQL-артефактов временная директория
+source repo через Python backend venv. После упаковки SQL-артефактов временная директория
 удаляется. Python-окружение для генераторов ищется внутри
 `BACKEND_SOURCE_REPO_PATH` по `BACKEND_BUILD_VENV_RELATIVE_PATH`; если его нет,
 build создает venv и устанавливает production requirements из

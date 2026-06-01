@@ -72,6 +72,8 @@ Ansible/WSL описан в `../ansible-ci/PIPELINE.MD`.
 
 - обязательные значения `.env` и наличие `local.secrets.env`;
 - локальные backend/frontend source и target репозитории;
+- `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
+  `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
 - SSH-доступ к app VM и DB VM;
