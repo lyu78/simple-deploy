@@ -3,11 +3,11 @@
 Проект автоматизирует одностороннюю доставку изменений из внешнего контура во
 внутренний контур, сборку релизных архивов и обновление локального DEV-стенда.
 Рабочая машина является управляющей точкой: на ней лежат рабочие копии внешних и
-внутренних репозиториев, запускается сборщик и с нее Ansible подключается к VM.
+внутренних репозиториев, запускается сборщик и с нее runtime подключается к VM.
 
 ## Текущий Windows-only режим
 
-Актуальный рабочий путь для машины без WSL/Docker - `tools/windows_pipeline.py`.
+Актуальный рабочий путь для машины без WSL/Docker - `tools-ci/tools/windows_pipeline.py`.
 Runner использует Windows Python, Git, Node/npm, Git Bash и Windows OpenSSH
 (`ssh`, `scp`). Ansible остается в репозитории как legacy-вариант для Linux/WSL
 control node, но основная отладка в последних изменениях велась вокруг
@@ -16,11 +16,11 @@ Windows-only runner.
 Команды:
 
 ```bash
-.venv/Scripts/python.exe tools/windows_pipeline.py dry-run
-.venv/Scripts/python.exe tools/windows_pipeline.py build
-.venv/Scripts/python.exe tools/windows_pipeline.py deploy --latest
-.venv/Scripts/python.exe tools/windows_pipeline.py deploy --build-version <version>
-.venv/Scripts/python.exe tools/windows_pipeline.py pipeline
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --latest
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --build-version <version>
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline
 ```
 
 Каждый запуск пишет вывод одновременно в консоль и отдельный файл
@@ -80,7 +80,7 @@ Django management-команды выполняются после распак�
 ```bash
 cd "$APP_WORKDIR"
 . "$APP_VENV_ACTIVATE_PATH"
-python "$APP_MANAGE_PY_PATH" migrate
+python "$APP_MANAGE_PY_PATH" migrate --fake
 python "$APP_MANAGE_PY_PATH" sync_action_role
 ```
 
@@ -162,43 +162,33 @@ COM. Доступные переменные шаблонов: `{build_version}`
 `release_manifest.json` из директории релиза, если файл существует; отсутствие
 манифеста логируется как WARN и само по себе не блокирует отправку.
 
-## Главная точка входа
+## Документы пайплайна
 
-Штатный запуск один:
+Пайплайн разделен на продуктовый уровень и две технологические реализации:
 
-```bash
-ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
-  -i inventories/dev/hosts.yml playbooks/pipeline.yml
-```
-
-`playbooks/pipeline.yml` только управляет порядком и подключает внутренние этапы:
-
-- `playbooks/stages/build_release.yml` - подготовка окружения и запуск сборщика;
-- `playbooks/stages/deploy_local_contour.yml` - обновление локального DEV-контура.
-
-Повторная раскатка уже собранного релиза идет через тот же вход:
-
-```bash
-ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
-  -i inventories/dev/hosts.yml playbooks/pipeline.yml \
-  -e run_build=false -e build_version=<версия>
-```
+- `PIPELINE.MD` - продуктовая схема процесса без привязки к runtime, пригодная
+  как основа BPMN.
+- `tools-ci/PIPELINE.MD` - основной Windows/Python E2E процесс через
+  `tools-ci/tools/windows_pipeline.py`.
+- `ansible-ci/PIPELINE.MD` - legacy Ansible/WSL E2E процесс через
+  `ansible-ci/playbooks/pipeline.yml`.
 
 ## Структура
 
-- `builder/` - существующая сборочная подсистема: `create_release.py`, Python-код,
+- `tools-ci/builder/` - существующая сборочная подсистема: `create_release.py`, Python-код,
   shell-архиваторы и настройки frontend-сборки.
-- `requirements.dev.txt` - Python-зависимости сборщика из `builder/`.
-- `requirements.ansible.txt` - Python-зависимости Ansible-слоя.
-- `playbooks/` - единый pipeline, dry run и внутренние этапы.
-- `roles/` - Ansible-роли доставки артефактов, DB-работ, сервисных команд,
+- `tools-ci/tools/windows_pipeline.py` - основной Windows/Python runner.
+- `tools-ci/requirements.dev.txt` - Python-зависимости сборщика из `tools-ci/builder/`.
+- `ansible-ci/requirements.ansible.txt` - Python-зависимости Ansible-слоя.
+- `ansible-ci/playbooks/` - legacy Ansible pipeline, dry run и внутренние этапы.
+- `ansible-ci/roles/` - Ansible-роли доставки артефактов, DB-работ, сервисных команд,
   миграций, healthcheck и отчета.
-- `group_vars/dev.yml` - схема DEV-контура и производные значения.
+- `ansible-ci/group_vars/dev.yml` - схема DEV-контура и производные значения.
 - `.env` - локальная конфигурация рабочей машины, не хранится в репозитории.
 - `.env.example` - пример `.env` с нереальными, но похожими на боевые значениями.
-- `group_vars/vault.yml` - секреты Ansible Vault, не хранится в репозитории.
-- `builder/settings/*/.env.template` - шаблоны frontend `.env`; реальные
-  `builder/settings/*/.env` генерируются локально перед сборкой и игнорируются Git.
+- `ansible-ci/group_vars/vault.yml` - секреты Ansible Vault, не хранится в репозитории.
+- `tools-ci/builder/settings/*/.env.template` - шаблоны frontend `.env`; реальные
+  `tools-ci/builder/settings/*/.env` генерируются локально перед сборкой и игнорируются Git.
 
 ## Конфигурация
 
@@ -210,7 +200,7 @@ Ansible должен падать на проверке конфигурации
 
 `PROJECT_ROOT_WSL`, `RELEASE_ROOT_WSL` и `RELEASE_ROOT_BASH` необязательны:
 
-- корень проекта по умолчанию считается от `playbook_dir`;
+- корень проекта по умолчанию считается от `inventory_dir`;
 - директория релизов по умолчанию равна `<корень проекта>/releases`;
 - Git Bash-путь к релизам строится автоматически из WSL-пути.
 
@@ -226,30 +216,41 @@ frontend-репозитория и использует только `RELEASE_RO
 
 ## Граница ответственности
 
-`builder/create_release.py`:
+`tools-ci/builder/create_release.py`:
 
 - синхронизирует внешние и внутренние рабочие копии;
 - собирает backend/frontend-архивы;
 - пушит ветки во внутренние репозитории;
 - не знает про VM и раскатку.
 
-Ansible:
+`tools-ci/tools/windows_pipeline.py`:
+
+- является основной операторской точкой входа для Windows-only режима;
+- читает `.env`, `local.secrets.env` и `windows_pipeline.local.json`;
+- запускает `tools-ci/builder/create_release.py` для сборки релиза;
+- выбирает собранный релиз;
+- доставляет schema SQL на DB VM и backend/frontend архивы на app VM;
+- выполняет DB-работы, `migrate --fake`, `sync_action_role`, сервисные команды,
+  healthcheck и фиксацию baseline.
+
+Legacy Ansible:
 
 - читает `.env` и vault-секреты;
 - вычисляет дефолтные пути проекта и релизов;
-- создает `builder/settings/*/.env` из tracked-шаблонов `.env.template` и
+- создает `tools-ci/builder/settings/*/.env` из tracked-шаблонов `.env.template` и
   подставляет туда домены;
-- запускает `builder/create_release.py`;
+- запускает `tools-ci/builder/create_release.py`;
 - выбирает собранный релиз;
 - доставляет архивы на app VM;
 - выполняет DB-работы, миграции, сервисные команды и healthcheck.
 
-## Dry run
+## Legacy Ansible dry run
 
 Безопасная диагностика:
 
 ```bash
-ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
+cd ansible-ci
+ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
   -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml
 ```
 
@@ -286,14 +287,15 @@ runtime-команды, PostgreSQL через `psql` на DB VM и HTTP endpoint
 По умолчанию dry run не требует `build_version` и не проверяет конкретные архивы:
 
 ```bash
-ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
+cd ansible-ci
+ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
   -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml
 ```
 
 Проверка архивов включается явно через `-e build_version=<версия>` или
 `-e use_latest_release=true`.
 
-## Продуктовая модель dry run
+## Продуктовая модель Ansible dry run
 
 Dry run является проверкой готовности контура к работе, а не проверкой того, что
 Ansible умеет выполнить отдельную техническую задачу. Поэтому вывод разделен на
@@ -357,19 +359,19 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 В репозитории не должны храниться локальные значения рабочей машины:
 
 - корневой `.env` игнорируется;
-- `group_vars/vault.yml` и `.vault-pass` игнорируются;
-- реальные `builder/settings/*/.env` игнорируются, потому что Ansible записывает
+- `ansible-ci/group_vars/vault.yml` и `.vault-pass` игнорируются;
+- реальные `tools-ci/builder/settings/*/.env` игнорируются, потому что Ansible записывает
   туда домены из локального `.env`;
-- в Git хранятся только `builder/settings/*/.env.template` с плейсхолдерами
+- в Git хранятся только `tools-ci/builder/settings/*/.env.template` с плейсхолдерами
   `__ANSIBLE_*`;
 - `.venv-ansible/`, `__pycache__/` и локальные runtime-артефакты не коммитятся.
 ## Поток backend DB-артефактов
 
 - Работа ведется в локальной ветке `dev`.
-- Дополнительные генераторы backend-артефактов лежат в `builder/scripts/additional_artifacts/`.
+- Дополнительные генераторы backend-артефактов лежат в `tools-ci/builder/scripts/additional_artifacts/`.
 - Backend target repo остается только альтернативной sync-репой. Sync заменяет в target только top-level элементы, которые есть в source repo, и не трогает top-level элементы target, отсутствующие в source.
 - Backend application archive собирается из `BACKEND_SOURCE_REPO_PATH/BACKEND_APP_ROOT_DIR`; default `BACKEND_APP_ROOT_DIR` равен `example_backend_app`.
-- Во время backend build DB-генераторы копируются в служебную директорию `BACKEND_SOURCE_REPO_PATH/build_scripts/` и запускаются из корня backend source repo. Сейчас для отладки эта директория остается после упаковки; следующий build пересоздает ее из `builder/scripts/additional_artifacts/`. Промежуточные DB-файлы и backend application archive генерируются из состояния source repo; target repo используется только как альтернативная sync-репа.
+- Во время backend build DB-генераторы копируются в служебную директорию `BACKEND_SOURCE_REPO_PATH/build_scripts/` и запускаются из корня backend source repo. Директория пересоздается на каждый build и удаляется после упаковки SQL-артефактов, чтобы не оставлять временные файлы в source repo. Промежуточные DB-файлы и backend application archive генерируются из состояния source repo; target repo используется только как альтернативная sync-репа.
 - Backend build находит venv по `BACKEND_BUILD_VENV_RELATIVE_PATH` относительно `BACKEND_SOURCE_REPO_PATH`; значение по умолчанию - `.venv/Scripts/activate.bat`. Если venv отсутствует, build создает его через Git Bash командой `python -m venv`. Перед каждым запуском генераторов build ставит production-зависимости backend в этот venv через `pip install --trusted-host ... -r <requirements>` из `BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH` (по умолчанию `requirements.txt`). Dev requirements не ставятся. SQL-генераторы запускаются через Git Bash с `python.exe -Xutf8` из source venv, без `cmd.exe` и без `activate.bat`.
 - Сгенерированные SQL-файлы выбираются только если их имена содержат текущий короткий `HEAD` hash backend source repo.
 - Генерация schema summary активна: `create_sql_migrations.py` копируется в `build_scripts`, получает baseline для `dev`, `test`, `prod` через `SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON` и пишет `summary_sql_<contour>_*.sql` плюс `schema_migrations_metadata.json`.
@@ -379,8 +381,8 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 - Windows runner deploy выбирает schema-архив по `--contour`, загружает его на DB VM, распаковывает и выполняет `summary_sql_<contour>_*.sql` из корня распакованного архива до Django management-команд. Schema SQL запускается через `psql --set=ON_ERROR_STOP=1 --single-transaction`, поэтому при ошибке весь файл откатывается PostgreSQL. Data SQL-архивы (`run_all_insert`, `run_all_update`) остаются упакованными для отдельного DB migration flow и не выполняются Windows runner на этом шаге.
 - Сгенерированный schema SQL не коммитится обратно в backend source repo и не хранится в `docs/database/summary`: источником для деплоя являются только релизные архивы и manifest.
 - Ручное применение schema archive на TEST/PROD описано в `instructions/manual-schema-sql-deploy.md`; после успешного ручного применения оператор simple-deploy двигает baseline через `mark-applied`.
-- Вспомогательные функции для git output, строгого поиска одного файла и добавления файлов в tar лежат в `builder/src/utils.py`; `build_backend.py` оставляет у себя только backend-specific orchestration.
-- Логи backend DB artifacts показывают создание/копирование/запуск `build_scripts`, точные команды генераторов, директории/паттерны поиска сгенерированных SQL-файлов и временный пропуск очистки `build_scripts`.
+- Вспомогательные функции для git output, строгого поиска одного файла и добавления файлов в tar лежат в `tools-ci/builder/src/utils.py`; `build_backend.py` оставляет у себя только backend-specific orchestration.
+- Логи backend DB artifacts показывают создание/копирование/запуск и удаление `build_scripts`, точные команды генераторов и директории/паттерны поиска сгенерированных SQL-файлов.
 - Шаг копирования генераторов пересоздает `<BACKEND_SOURCE_REPO_PATH>/build_scripts` на каждый build и падает, если такой путь уже существует, но не является директорией.
 
 ## Техдолг
@@ -399,13 +401,13 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 Команды Windows runner:
 
 ```bash
-.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour dev --backend-commit <dev_backend_commit>
-.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour test --backend-commit <test_backend_commit>
-.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour prod --backend-commit <prod_backend_commit>
-.venv/Scripts/python.exe tools/windows_pipeline.py set-baseline --contour test --build-version <previous_successful_release_version>
-.venv/Scripts/python.exe tools/windows_pipeline.py deploy --contour dev --latest
-.venv/Scripts/python.exe tools/windows_pipeline.py mark-applied --contour test --build-version <successful_release_version>
-.venv/Scripts/python.exe tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour dev --backend-commit <dev_backend_commit>
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour test --backend-commit <test_backend_commit>
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour prod --backend-commit <prod_backend_commit>
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour test --build-version <previous_successful_release_version>
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-applied --contour test --build-version <successful_release_version>
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
 ```
 
 DEV обычно идет от предыдущего локально зафиксированного состояния к текущему release commit. После успешного `deploy --contour dev` baseline `dev` двигается автоматически. TEST и PROD собираются как from-to диапазоны от baseline соответствующего контура до commit релиза; после успешного применения на внешнем контуре оператор должен явно выполнить `mark-applied`, иначе следующий релиз снова будет строиться от старого baseline. При ошибке используется `mark-failed`, baseline при этом не меняется.

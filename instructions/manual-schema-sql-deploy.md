@@ -81,7 +81,7 @@ PGPASSWORD='<password>' psql \
 Оператор simple-deploy после этого фиксирует baseline:
 
 ```powershell
-.venv\Scripts\python.exe tools\windows_pipeline.py mark-applied --contour test --build-version <release>
+.venv\Scripts\python.exe tools-ci\tools\windows_pipeline.py mark-applied --contour test --build-version <release>
 ```
 
 При ошибке не выполняйте `mark-applied`. Сохраните stdout/stderr `psql` и

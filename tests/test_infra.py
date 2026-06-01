@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "builder"))
+sys.path.insert(0, str(ROOT / "tools-ci" / "builder"))
 
 from src.infra import get_new_build_version  # noqa: E402
 

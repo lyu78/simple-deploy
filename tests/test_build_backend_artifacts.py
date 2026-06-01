@@ -8,7 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "builder"))
+BUILDER_ROOT = ROOT / "tools-ci" / "builder"
+sys.path.insert(0, str(BUILDER_ROOT))
 
 from src.build_backend import (  # noqa: E402
     _add_run_all_includes_to_tar,
@@ -26,7 +27,7 @@ from src.utils import add_file_to_tar  # noqa: E402
 
 
 def load_create_run_all_sql_module():
-    module_path = ROOT / "builder" / "scripts" / "additional_artifacts" / "create_run_all_sql.py"
+    module_path = BUILDER_ROOT / "scripts" / "additional_artifacts" / "create_run_all_sql.py"
     spec = importlib.util.spec_from_file_location("create_run_all_sql", module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -131,7 +132,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _run_all_include_paths(self.repo, run_all)
 
-    def test_build_scripts_directory_is_kept_for_debug(self):
+    def test_build_scripts_directory_is_cleaned_after_generation(self):
         stale_file = self._write("build_scripts/stale.sql")
 
         build_scripts_dir = _prepare_build_scripts(self.repo)
@@ -143,7 +144,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
 
         _cleanup_build_scripts(build_scripts_dir)
 
-        self.assertTrue(build_scripts_dir.exists())
+        self.assertFalse(build_scripts_dir.exists())
 
     def test_run_all_preamble_contains_postgres_session_settings(self):
         module = load_create_run_all_sql_module()
@@ -304,7 +305,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(archive_env["BACKEND_APP_ROOT_DIR"], "backend_app")
 
     def test_backend_archive_script_excludes_python_cache(self):
-        script_path = ROOT / "builder" / "scripts" / "archive_script_backend.sh"
+        script_path = BUILDER_ROOT / "scripts" / "archive_script_backend.sh"
         content = script_path.read_text(encoding="utf-8")
 
         self.assertIn('--exclude="*/__pycache__/*"', content)

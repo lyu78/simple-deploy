@@ -21,9 +21,9 @@
 
 ## Эталонные Файлы
 
-- `builder/scripts/additional_artifacts/create_sql_migrations.py`
-- `builder/src/release_state.py`
-- `tools/windows_pipeline.py`
+- `tools-ci/builder/scripts/additional_artifacts/create_sql_migrations.py`
+- `tools-ci/builder/src/release_state.py`
+- `tools-ci/tools/windows_pipeline.py`
 - `docs/release-sql-migrations-flow.puml`
 ## Актуальный стандарт
 

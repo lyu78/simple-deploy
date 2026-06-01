@@ -402,11 +402,11 @@ dump/*.dump
 
 media/
 /.env
-builder/settings/*/.env
+tools-ci/builder/settings/*/.env
 # *.tar.gz
 
 # Локальные секреты Ansible
-group_vars/vault.yml
+ansible-ci/group_vars/vault.yml
 .vault-pass
 .venv-ansible/
 

@@ -15,7 +15,7 @@ cp .env.example .env
 ```
 
 После копирования заполните `.env` путями, хостами, портами и доменами своей
-рабочей машины. `group_vars/dev.yml` читает эти значения и строит на их основе
+рабочей машины. `ansible-ci/group_vars/dev.yml` читает эти значения и строит на их основе
 пути, URL, build environment и параметры раскатки.
 
 `PROJECT_ROOT_WSL`, `RELEASE_ROOT_WSL` и `RELEASE_ROOT_BASH` можно оставить пустыми.
@@ -25,13 +25,13 @@ cp .env.example .env
 Установите минимальные инструменты в WSL:
 
 ```bash
-.venv-ansible/bin/python -m pip install -r requirements.dev.txt
-.venv-ansible/bin/python -m pip install -r requirements.ansible.txt
+.venv-ansible/bin/python -m pip install -r tools-ci/requirements.dev.txt
+.venv-ansible/bin/python -m pip install -r ansible-ci/requirements.ansible.txt
 sudo apt-get update
 sudo apt-get install -y postgresql-client
 ```
 
-При запуске из WSL на Windows-диске `/mnt/c` задавайте `ANSIBLE_CONFIG="$PWD/ansible.cfg"`.
+При запуске из WSL на Windows-диске `/mnt/c` переходите в `ansible-ci` и задавайте `ANSIBLE_CONFIG="$PWD/ansible.cfg"`.
 Иначе Ansible может проигнорировать `ansible.cfg` из-за прав drvfs и не найти локальные роли.
 SSH настроен на один парольный prompt без повторных retries, чтобы неверный пароль
 не запрашивался несколько раз подряд.
@@ -39,8 +39,8 @@ SSH настроен на один парольный prompt без повтор
 Создайте файл секретов, если для подключения к БД нужен пароль:
 
 ```bash
-cp group_vars/vault.example.yml group_vars/vault.yml
-ansible-vault encrypt group_vars/vault.yml
+cp ansible-ci/group_vars/vault.example.yml ansible-ci/group_vars/vault.yml
+ansible-vault encrypt ansible-ci/group_vars/vault.yml
 ```
 
 ## Безопасная проверка
@@ -51,7 +51,8 @@ Dry run сначала проверяет доступность `origin` вне
 репозиториев, затем сетевую доступность app VM и DB VM, SSH и остальные условия.
 
 ```bash
-ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
+cd ansible-ci
+ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
   -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml
 ```
 
@@ -60,7 +61,8 @@ ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
 Либо используйте новейшую директорию релиза:
 
 ```bash
-ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
+cd ansible-ci
+ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
   -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml \
   -e use_latest_release=true
 ```
@@ -68,28 +70,30 @@ ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
 ## Основной запуск всего пайплайна
 
 ```bash
-ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
+cd ansible-ci
+ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
   -i inventories/dev/hosts.yml playbooks/pipeline.yml
 ```
 
-Этот запуск сам вызывает `builder/create_release.py`, выбирает собранный релиз и
+Этот запуск сам вызывает `tools-ci/builder/create_release.py`, выбирает собранный релиз и
 обновляет локальный контур.
 
 ## Обновление уже собранного релиза
 
 ```bash
-ANSIBLE_CONFIG="$PWD/ansible.cfg" .venv-ansible/bin/ansible-playbook \
+cd ansible-ci
+ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
   -i inventories/dev/hosts.yml playbooks/pipeline.yml \
   -e run_build=false -e build_version=1.0.3.27052026_1200 --ask-vault-pass
 ```
 
 Отдельного пользовательского playbook для раскатки больше нет. Для штатной сборки,
-повторной раскатки и запуска по расписанию используется `playbooks/pipeline.yml`.
-Внутренние этапы лежат в `playbooks/stages/` и напрямую оператором не запускаются.
+повторной раскатки и запуска по расписанию используется `ansible-ci/playbooks/pipeline.yml`.
+Внутренние этапы лежат в `ansible-ci/playbooks/stages/` и напрямую оператором не запускаются.
 
 ## Настройка деплоя
 
-Перед первым реальным запуском отредактируйте `group_vars/dev.yml`:
+Перед первым реальным запуском отредактируйте `ansible-ci/group_vars/dev.yml`:
 
 - `backend_release_path`
 - `frontend_release_path`

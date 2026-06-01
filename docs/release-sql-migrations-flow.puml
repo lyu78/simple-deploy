@@ -33,7 +33,7 @@ title simple-deploy: полный pipeline от dry-run до DEV/TEST/PROD
 actor "Оператор" as operator
 
 box "Рабочая Windows-машина" #F7F7F7
-participant "tools/windows_pipeline.py\nCLI runner" as runner
+participant "tools-ci/tools/windows_pipeline.py\nCLI runner" as runner
 database "local_state/simple_deploy.sqlite3\nлокальная история контуров" as state
 collections "logs/\nдиагностика и демо-вывод" as logs
 end box

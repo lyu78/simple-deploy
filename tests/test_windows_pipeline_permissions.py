@@ -2,7 +2,11 @@ import unittest
 import json
 import tempfile
 from pathlib import Path
+import sys
 from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools-ci"))
 
 from tools.windows_pipeline import (
     Artifact,
@@ -10,6 +14,7 @@ from tools.windows_pipeline import (
     DbSqlArtifact,
     derive_service_permission_check,
     is_sudo_command,
+    management_commands,
     prepare_build_env,
     resolve_db_schema_artifact,
     run_db_schema_summary,
@@ -20,6 +25,17 @@ from tools.windows_pipeline import (
 
 
 class WindowsPipelinePermissionTests(unittest.TestCase):
+    def test_default_management_commands_fake_migrations(self):
+        commands = management_commands({"APP_MANAGE_PY_PATH": "manage.py"}, {"management_commands": []})
+
+        self.assertEqual(
+            commands,
+            [
+                "python 'manage.py' migrate --fake",
+                "python 'manage.py' sync_action_role",
+            ],
+        )
+
     def test_derive_service_permission_check_keeps_sudo_command(self):
         command = "sudo /bin/systemctl restart nginx"
 
@@ -104,7 +120,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertIn('-f "$sql_file"', final_command)
 
     def test_ansible_schema_migration_uses_single_transaction(self):
-        role_path = Path(__file__).resolve().parents[1] / "roles" / "db_migrations" / "tasks" / "main.yml"
+        role_path = ROOT / "ansible-ci" / "roles" / "db_migrations" / "tasks" / "main.yml"
         content = role_path.read_text(encoding="utf-8")
 
         self.assertIn("--set=ON_ERROR_STOP=1 --single-transaction", content)

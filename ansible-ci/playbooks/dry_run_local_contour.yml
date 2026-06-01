@@ -1,0 +1,817 @@
+---
+# Продуктовый контекст:
+# Полный безопасный аудит готовности локального DEV-контура к обновлению.
+# Playbook ничего не раскатывает, но проходит весь путь проверки до конца и
+# собирает все проблемы в один отчет вместо остановки на первой ошибке.
+#
+# Проверяются:
+# - версии системных инструментов на управляющей машине;
+# - локальный .env и обязательные параметры;
+# - наличие origin URL во внешних и внутренних backend/frontend-репозиториях;
+# - доступность app VM и DB VM по сети;
+# - SSH-аутентификация на app VM и DB VM без повторного долбления пароля;
+# - локальные репозитории, удаленные origin и базовые пути;
+# - удаленные директории, права и runtime-команды на app VM;
+# - PostgreSQL через psql на DB VM и HTTP endpoint стенда;
+# - при явном запросе, наличие выбранного релиза и его архивов.
+#
+# По умолчанию dry run не требует build_version:
+# cd ansible-ci
+# ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
+#   -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml
+#
+# Проверка конкретного уже собранного релиза включается явно:
+# cd ansible-ci
+# ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
+#   -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml \
+#   -e build_version=<версия>
+
+- name: Проверить готовность локального DEV-контура без раскатки
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    dry_run_issues: []
+    dry_run_command_timeout_seconds: 20
+    dry_run_required_vars:
+      - project_root_wsl
+      - release_root_wsl
+      - release_root_windows
+      - release_root_bash
+      - build_version_base
+      - git_bash_path
+      - backend_source_repo_path
+      - backend_target_repo_path
+      - backend_target_repo_path_bash
+      - backend_build_venv_relative_path
+      - frontend_source_repo_path
+      - frontend_target_repo_path
+      - app_vm_host
+      - app_vm_user
+      - db_vm_host
+      - db_vm_user
+      - db_port
+      - db_name
+      - remote_tmp_root
+      - backend_release_path
+      - frontend_release_path
+      - app_workdir
+      - app_venv_activate_path
+      - app_manage_py_path
+      - backup_root_base
+      - dev_domain
+      - test_domain
+      - prod_domain
+      - frontend_test_server_name
+      - frontend_prod_server_name
+    dry_run_system_probes:
+      - name: WSL kernel
+        cmd: "uname -r"
+        issue: "WSL недоступен или не отвечает"
+      - name: WSL version info
+        cmd: "cat /proc/version"
+        issue: "Не удалось прочитать сведения о WSL"
+      - name: Git (WSL)
+        cmd: "git --version"
+        issue: "В WSL не найден git"
+      - name: Git (Windows)
+        cmd: "cmd.exe /C git --version"
+        issue: "В Windows не найден git"
+      - name: Git Bash launcher
+        cmd: "test -x \"$(wslpath -u '{{ git_bash_path }}')\" && echo \"$(wslpath -u '{{ git_bash_path }}')\""
+        issue: "Git Bash launcher недоступен по `GIT_BASH_PATH`"
+      - name: Node.js (Windows)
+        cmd: "cmd.exe /C node --version"
+        issue: "В Windows/Git Bash окружении не найден node"
+      - name: npm (Windows)
+        cmd: "cmd.exe /C npm --version"
+        issue: "В Windows/Git Bash окружении не найден npm"
+      - name: SSH client
+        cmd: "ssh -V"
+        issue: "В WSL не найден ssh client"
+      - name: curl
+        cmd: "curl --version"
+        issue: "В WSL не найден curl"
+      - name: Python 3
+        cmd: "python3 --version"
+        issue: "В WSL не найден python3"
+
+  pre_tasks:
+    - name: Загрузить переменные DEV-контура
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../group_vars/dev.yml"
+
+    - name: Проверить наличие файла с vault-переменными
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../group_vars/vault.yml"
+      register: vault_file
+
+    - name: Загрузить vault-переменные при наличии файла
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../group_vars/vault.yml"
+      no_log: true
+      when: vault_file.stat.exists
+
+    - name: Проверить обязательные параметры локальной конфигурации
+      ansible.builtin.set_fact:
+        dry_run_issues: >-
+          {{
+            dry_run_issues +
+            (
+              [ 'Не заполнен обязательный параметр ' ~ item ~ '. Проверьте ' ~ local_env_file ]
+              if (vars[item] | default('') | string | trim) == ''
+              else []
+            )
+          }}
+      loop: "{{ dry_run_required_vars }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Показать готовность обязательных параметров локальной конфигурации
+      ansible.builtin.debug:
+        msg: >-
+          DRY-RUN {{ 'FAIL' if (vars[item] | default('') | string | trim) == '' else 'PASS' }}
+          required var {{ item }}
+          {{ ('is empty; check ' ~ local_env_file) if (vars[item] | default('') | string | trim) == '' else 'is set' }}
+      loop: "{{ dry_run_required_vars }}"
+      loop_control:
+        label: "{{ item }}"
+
+  tasks:
+    - name: Проверить версии системных инструментов
+      ansible.builtin.shell: "timeout {{ dry_run_command_timeout_seconds }}s {{ item.cmd }}"
+      args:
+        executable: /bin/bash
+      register: dry_run_system_results
+      changed_when: false
+      failed_when: false
+      loop: "{{ dry_run_system_probes }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Показать версии системных инструментов
+      ansible.builtin.debug:
+        msg: >-
+          DRY-RUN {{ 'PASS' if item.rc == 0 else 'FAIL' }}
+          {{ item.item.name }}:
+          rc={{ item.rc }}
+          stdout={{ item.stdout | default('') | trim }}
+          stderr={{ item.stderr | default('') | trim }}
+      loop: "{{ dry_run_system_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Добавить ошибки по системным инструментам
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ item.item.issue ~ detail ] }}"
+      vars:
+        stderr_text: "{{ item.stderr | default('') | trim }}"
+        stdout_text: "{{ item.stdout | default('') | trim }}"
+        detail: >-
+          {{ (': ' ~ stderr_text) if stderr_text | length > 0
+          else (': ' ~ stdout_text) if stdout_text | length > 0
+          else '' }}
+      when: item.rc != 0
+      loop: "{{ dry_run_system_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Проверить локальные Git-репозитории
+      ansible.builtin.shell: |
+        set -euo pipefail
+        timeout {{ dry_run_command_timeout_seconds }}s cmd.exe /C git -C "{{ item.path }}" rev-parse --is-inside-work-tree </dev/null
+        timeout {{ dry_run_command_timeout_seconds }}s cmd.exe /C git -C "{{ item.path }}" remote get-url origin </dev/null
+      args:
+        executable: /bin/bash
+      environment:
+        GIT_TERMINAL_PROMPT: "0"
+      register: dry_run_repo_results
+      changed_when: false
+      failed_when: false
+      loop:
+        - name: backend source
+          path: "{{ backend_source_repo_path }}"
+          issue: "Backend source repo недоступен или не является git worktree"
+        - name: backend target
+          path: "{{ backend_target_repo_path }}"
+          issue: "Backend target repo недоступен или не является git worktree"
+        - name: frontend source
+          path: "{{ frontend_source_repo_path }}"
+          issue: "Frontend source repo недоступен или не является git worktree"
+        - name: frontend target
+          path: "{{ frontend_target_repo_path }}"
+          issue: "Frontend target repo недоступен или не является git worktree"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Показать origin локальных репозиториев
+      ansible.builtin.debug:
+        msg: >-
+          DRY-RUN {{ 'PASS' if item.rc == 0 else 'FAIL' }}
+          {{ item.item.name }}:
+          rc={{ item.rc }}
+          origin={{ item.stdout_lines | last | default('') | trim }}
+          stderr={{ item.stderr | default('') | trim }}
+      loop: "{{ dry_run_repo_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Добавить ошибки по локальным репозиториям
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ item.item.issue ~ repo_detail ] }}"
+      vars:
+        repo_detail: >-
+          {{ (': ' ~ (item.stderr | default('') | trim)) if (item.stderr | default('') | trim) | length > 0
+          else '' }}
+      when: item.rc != 0
+      loop: "{{ dry_run_repo_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Проверить сетевую доступность полного origin URL репозиториев
+      ansible.builtin.shell: |
+        set -euo pipefail
+        origin_url="$(cmd.exe /C git -C "{{ item.path }}" remote get-url origin </dev/null | tr -d '\r')"
+        printf 'origin_url=%s\n' "$origin_url"
+        case "$origin_url" in
+          http://*|https://*)
+            http_code="$(
+              timeout {{ dry_run_command_timeout_seconds }}s curl \
+                --silent \
+                --show-error \
+                --location \
+                --head \
+                --connect-timeout {{ dry_run_command_timeout_seconds }} \
+                --max-time {{ dry_run_command_timeout_seconds }} \
+                --output /dev/null \
+                --write-out '%{http_code}' \
+                "$origin_url"
+            )"
+            test "$http_code" != "000"
+            printf 'http_code=%s\n' "$http_code"
+            ;;
+          ssh://*|git@*)
+            printf 'origin_url=%s\n' "$origin_url"
+            printf 'SSH origin URL detected; curl cannot probe this URL scheme\n' >&2
+            exit 2
+            ;;
+          *)
+            printf 'origin_url=%s\n' "$origin_url"
+            printf 'Unsupported origin URL scheme\n' >&2
+            exit 2
+            ;;
+        esac
+      args:
+        executable: /bin/bash
+      environment:
+        GIT_TERMINAL_PROMPT: "0"
+      register: dry_run_origin_results
+      changed_when: false
+      failed_when: dry_run_origin_results.rc != 0
+      ignore_errors: true
+      loop:
+        - name: backend source origin
+          path: "{{ backend_source_repo_path }}"
+          issue: "Backend source origin недоступен"
+        - name: backend target origin
+          path: "{{ backend_target_repo_path }}"
+          issue: "Backend target origin недоступен"
+        - name: frontend source origin
+          path: "{{ frontend_source_repo_path }}"
+          issue: "Frontend source origin недоступен"
+        - name: frontend target origin
+          path: "{{ frontend_target_repo_path }}"
+          issue: "Frontend target origin недоступен"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Показать статус origin
+      ansible.builtin.debug:
+        msg: >-
+          DRY-RUN {{ 'PASS' if item.rc == 0 else 'FAIL' }}
+          {{ item.item.name }}:
+          rc={{ item.rc }}
+          stdout={{ item.stdout | default('') | trim }}
+          stderr={{ item.stderr | default('') | trim }}
+      loop: "{{ dry_run_origin_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Добавить ошибки по origin
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ item.item.issue ~ origin_detail ] }}"
+      vars:
+        stdout_text: "{{ item.stdout | default('') | trim }}"
+        stderr_text: "{{ item.stderr | default('') | trim }}"
+        origin_detail: >-
+          {{ (': rc=' ~ (item.rc | string) ~ ' stdout=' ~ stdout_text ~ ' stderr=' ~ stderr_text)
+          if (stdout_text | length > 0 or stderr_text | length > 0)
+          else (': rc=' ~ (item.rc | string)) }}
+      when: item.rc != 0
+      loop: "{{ dry_run_origin_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Проверить сетевую доступность app VM
+      ansible.builtin.shell: >-
+        timeout {{ dry_run_command_timeout_seconds }}s
+        nc -z -w {{ dry_run_command_timeout_seconds }} "{{ app_vm_host }}" 22
+      args:
+        executable: /bin/bash
+      register: app_ssh_port
+      changed_when: false
+      failed_when: app_ssh_port.rc != 0
+      ignore_errors: true
+
+    - name: Проверить сетевую доступность DB VM по SSH
+      ansible.builtin.shell: >-
+        timeout {{ dry_run_command_timeout_seconds }}s
+        nc -z -w {{ dry_run_command_timeout_seconds }} "{{ db_vm_host }}" 22
+      args:
+        executable: /bin/bash
+      register: db_ssh_port
+      changed_when: false
+      failed_when: db_ssh_port.rc != 0
+      ignore_errors: true
+
+    - name: Проверить сетевую доступность PostgreSQL на DB VM
+      ansible.builtin.shell: >-
+        timeout {{ dry_run_command_timeout_seconds }}s
+        nc -z -w {{ dry_run_command_timeout_seconds }} "{{ db_vm_host }}" "{{ db_port }}"
+      args:
+        executable: /bin/bash
+      register: db_pg_port
+      changed_when: false
+      failed_when: db_pg_port.rc != 0
+      ignore_errors: true
+
+    - name: Показать готовность TCP-доступности
+      ansible.builtin.debug:
+        msg:
+          - >-
+            DRY-RUN {{ 'PASS' if app_ssh_port.rc == 0 else 'FAIL' }}
+            app VM TCP 22 {{ app_vm_host }}:
+            rc={{ app_ssh_port.rc }}
+            stderr={{ app_ssh_port.stderr | default(app_ssh_port.stdout | default('')) | trim }}
+          - >-
+            DRY-RUN {{ 'PASS' if db_ssh_port.rc == 0 else 'FAIL' }}
+            DB VM TCP 22 {{ db_vm_host }}:
+            rc={{ db_ssh_port.rc }}
+            stderr={{ db_ssh_port.stderr | default(db_ssh_port.stdout | default('')) | trim }}
+          - >-
+            DRY-RUN {{ 'PASS' if db_pg_port.rc == 0 else 'FAIL' }}
+            PostgreSQL TCP {{ db_vm_host }}:{{ db_port }}:
+            rc={{ db_pg_port.rc }}
+            stderr={{ db_pg_port.stderr | default(db_pg_port.stdout | default('')) | trim }}
+
+    - name: Добавить ошибки по TCP-доступности
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + item.issues }}"
+      vars:
+        app_tcp_detail: "{{ app_ssh_port.stderr | default(app_ssh_port.stdout | default(app_ssh_port.msg | default('нет деталей'))) | trim }}"
+        db_ssh_tcp_detail: "{{ db_ssh_port.stderr | default(db_ssh_port.stdout | default(db_ssh_port.msg | default('нет деталей'))) | trim }}"
+        db_pg_tcp_detail: "{{ db_pg_port.stderr | default(db_pg_port.stdout | default(db_pg_port.msg | default('нет деталей'))) | trim }}"
+        item:
+          issues: >-
+            {{
+              ([] if app_ssh_port.rc == 0 else ['app VM недоступна по TCP 22: ' ~ (app_tcp_detail if app_tcp_detail | length > 0 else 'нет деталей')]) +
+              ([] if db_ssh_port.rc == 0 else ['DB VM недоступна по TCP 22: ' ~ (db_ssh_tcp_detail if db_ssh_tcp_detail | length > 0 else 'нет деталей')]) +
+              ([] if db_pg_port.rc == 0 else ['PostgreSQL недоступен по TCP ' ~ db_vm_host ~ ':' ~ (db_port | string) ~ ': ' ~ (db_pg_tcp_detail if db_pg_tcp_detail | length > 0 else 'нет деталей')])
+            }}
+
+    - name: Проверить SSH-аутентификацию на app VM
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh \
+        -o BatchMode=yes \
+        -o NumberOfPasswordPrompts=1 \
+        -o ConnectTimeout=10 \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        {{ app_vm_user }}@{{ app_vm_host }} true
+      args:
+        executable: /bin/bash
+      register: app_ssh_auth
+      changed_when: false
+      failed_when: false
+      when: app_ssh_port.rc == 0
+
+    - name: Проверить SSH-аутентификацию на DB VM
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh \
+        -o BatchMode=yes \
+        -o NumberOfPasswordPrompts=1 \
+        -o ConnectTimeout=10 \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        {{ db_vm_user }}@{{ db_vm_host }} true
+      args:
+        executable: /bin/bash
+      register: db_ssh_auth
+      changed_when: false
+      failed_when: false
+      when: db_ssh_port.rc == 0
+
+    - name: Добавить ошибки по SSH-аутентификации
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + item.issues }}"
+      vars:
+        app_ssh_auth_rc: "{{ (app_ssh_auth | default({})).rc | default(-1) }}"
+        db_ssh_auth_rc: "{{ (db_ssh_auth | default({})).rc | default(-1) }}"
+        item:
+          issues: >-
+            {{
+              ([] if app_ssh_auth_rc | int in [-1, 0, 99] else ['SSH на app VM не проходит для ' ~ app_vm_user ~ '@' ~ app_vm_host ~ ': ' ~ (app_ssh_auth.stderr | default(app_ssh_auth.stdout | default('')) | trim)]) +
+              ([] if db_ssh_auth_rc | int in [-1, 0, 99] else ['SSH на DB VM не проходит для ' ~ db_vm_user ~ '@' ~ db_vm_host ~ ': ' ~ (db_ssh_auth.stderr | default(db_ssh_auth.stdout | default('')) | trim)])
+            }}
+
+    - name: Показать готовность SSH-аутентификации
+      ansible.builtin.debug:
+        msg:
+          - >-
+            DRY-RUN {{ 'SKIP' if (app_ssh_auth.rc | default(99)) == 99 else ('PASS' if app_ssh_auth.rc == 0 else 'FAIL') }}
+            SSH app VM {{ app_vm_user }}@{{ app_vm_host }}:
+            {{ 'TCP 22 недоступен, SSH-проверка пропущена' if (app_ssh_auth.rc | default(99)) == 99 else ('rc=' ~ app_ssh_auth.rc ~ ' stderr=' ~ (app_ssh_auth.stderr | default(app_ssh_auth.stdout | default('')) | trim)) }}
+          - >-
+            DRY-RUN {{ 'SKIP' if (db_ssh_auth.rc | default(99)) == 99 else ('PASS' if db_ssh_auth.rc == 0 else 'FAIL') }}
+            SSH DB VM {{ db_vm_user }}@{{ db_vm_host }}:
+            {{ 'TCP 22 недоступен, SSH-проверка пропущена' if (db_ssh_auth.rc | default(99)) == 99 else ('rc=' ~ db_ssh_auth.rc ~ ' stderr=' ~ (db_ssh_auth.stderr | default(db_ssh_auth.stdout | default('')) | trim)) }}
+
+    - name: Проверить локальные директории проекта и builder
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+      delegate_to: localhost
+      register: local_dir_stats
+      loop:
+        - name: корень проекта
+          path: "{{ project_root_wsl }}"
+        - name: builder
+          path: "{{ builder_dir_wsl }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Добавить ошибки по локальным директориям
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ 'Локальная директория отсутствует: ' ~ item.item.path ] }}"
+      when: (item.stat.isdir | default(false)) == false
+      loop: "{{ local_dir_stats.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Проверить backend build venv в source repo
+      ansible.builtin.stat:
+        path: "{{ backend_source_repo_path }}/{{ backend_build_venv_relative_path }}"
+      delegate_to: localhost
+      register: backend_source_venv_stat
+
+    - name: Показать статус backend build venv
+      ansible.builtin.debug:
+        msg: >-
+          DRY-RUN {{ 'PASS' if backend_source_venv_stat.stat.exists | default(false) else 'WARN' }}
+          backend build venv:
+          {{
+            (backend_source_repo_path ~ '/' ~ backend_build_venv_relative_path)
+            if backend_source_venv_stat.stat.exists | default(false)
+            else ('не найден в source repo; build создаст venv автоматически и установит production requirements без dev requirements')
+          }}
+
+    - name: Проверить локальные Git remote
+      ansible.builtin.shell: |
+        set -euo pipefail
+        timeout {{ dry_run_command_timeout_seconds }}s cmd.exe /C git -C "{{ item.path }}" remote -v </dev/null
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      environment:
+        GIT_TERMINAL_PROMPT: "0"
+      register: local_remote_results
+      changed_when: false
+      failed_when: false
+      loop:
+        - name: backend source
+          path: "{{ backend_source_repo_path }}"
+        - name: backend target
+          path: "{{ backend_target_repo_path }}"
+        - name: frontend source
+          path: "{{ frontend_source_repo_path }}"
+        - name: frontend target
+          path: "{{ frontend_target_repo_path }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Добавить ошибки по локальным git remote
+      ansible.builtin.set_fact:
+        dry_run_issues: >-
+          {{
+            dry_run_issues +
+            (
+              [ 'Не удалось прочитать remotes для ' ~ item.item.name ~ ': ' ~ (item.stderr | default(item.stdout | default('')) | trim) ]
+              if item.rc != 0
+              else []
+            )
+          }}
+      loop: "{{ local_remote_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Проверить выбранный релиз и архивы
+      when: build_version | length > 0 or use_latest_release | bool
+      block:
+        - name: Найти директории релизов
+          ansible.builtin.shell: |
+            set -euo pipefail
+            if [ -d "{{ local_release_root }}" ]; then
+              find "{{ local_release_root }}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+            fi
+          args:
+            executable: /bin/bash
+          delegate_to: localhost
+          register: release_dirs
+          changed_when: false
+          failed_when: false
+
+        - name: Добавить ошибку, если релизов нет
+          ansible.builtin.set_fact:
+            dry_run_issues: "{{ dry_run_issues + [ 'В ' ~ local_release_root ~ ' не найдены директории релизов' ] }}"
+          when:
+            - use_latest_release | bool
+            - release_dirs.stdout_lines | length == 0
+
+        - name: Выбрать релиз для проверки
+          ansible.builtin.set_fact:
+            selected_release_dir: >-
+              {{
+                (local_release_root ~ '/' ~ build_version)
+                if (build_version | length > 0)
+                else (local_release_root ~ '/' ~ (release_dirs.stdout_lines | last))
+              }}
+            effective_build_version: >-
+              {{
+                build_version
+                if (build_version | length > 0)
+                else (release_dirs.stdout_lines | last)
+              }}
+
+        - name: Проверить выбранную директорию релиза
+          ansible.builtin.stat:
+            path: "{{ selected_release_dir }}"
+          delegate_to: localhost
+          register: selected_release_dir_stat
+
+        - name: Добавить ошибку, если выбранный релиз отсутствует
+          ansible.builtin.set_fact:
+            dry_run_issues: "{{ dry_run_issues + [ 'Директория релиза не существует: ' ~ selected_release_dir ] }}"
+          when: (selected_release_dir_stat.stat.isdir | default(false)) == false
+
+        - name: Найти архивы выбранного релиза
+          ansible.builtin.find:
+            paths: "{{ selected_release_dir }}"
+            patterns: "{{ item.pattern }}"
+            file_type: file
+            recurse: false
+          delegate_to: localhost
+          register: artifact_find_results
+          changed_when: false
+          failed_when: false
+          loop: "{{ artifact_items + db_migration_artifacts }}"
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Добавить ошибки по архивам релиза
+          ansible.builtin.set_fact:
+            dry_run_issues: "{{ dry_run_issues + [ 'В ' ~ selected_release_dir ~ ' не найден архив по шаблону ' ~ item.item.pattern ] }}"
+          when: item.files | length == 0
+          loop: "{{ artifact_find_results.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+
+    - name: Проверить директории деплоя на app VM
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh
+        -o BatchMode=yes
+        -o NumberOfPasswordPrompts=1
+        -o ConnectTimeout=10
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        {{ app_vm_user }}@{{ app_vm_host }} 'test -d "{{ item.path }}" && test -r "{{ item.path }}" && test -w "{{ item.path }}" && test -x "{{ item.path }}"'
+      args:
+        executable: /bin/bash
+      register: app_remote_dir_results
+      changed_when: false
+      failed_when: false
+      loop:
+        - name: backend release
+          path: "{{ backend_release_path }}"
+        - name: frontend release
+          path: "{{ frontend_release_path }}"
+        - name: app workdir
+          path: "{{ app_workdir }}"
+        - name: backup root base
+          path: "{{ backup_root_base }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: app_ssh_auth.rc | default(-1) == 0
+
+    - name: Добавить ошибки по remote директориям
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ 'На app VM недоступна директория ' ~ item.item.path ~ ': ' ~ (item.stderr | default(item.stdout | default('')) | trim) ] }}"
+      when: item.rc | default(0) != 0
+      loop: "{{ app_remote_dir_results.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Проверить возможность создать временный файл на app VM
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh
+        -o BatchMode=yes
+        -o NumberOfPasswordPrompts=1
+        -o ConnectTimeout=10
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        {{ app_vm_user }}@{{ app_vm_host }} 'mkdir -p "{{ remote_tmp_root }}" && tmp_file="{{ remote_tmp_root }}/.simple-deploy-dry-run-$$" && touch "$tmp_file" && test -w "$tmp_file" && rm -f "$tmp_file"'
+      args:
+        executable: /bin/bash
+      register: remote_tmp_result
+      changed_when: false
+      failed_when: false
+      when: app_ssh_auth.rc | default(-1) == 0
+
+    - name: Добавить ошибку по remote_tmp_root
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ 'На app VM нельзя использовать remote_tmp_root ' ~ remote_tmp_root ~ ': ' ~ (remote_tmp_result.stderr | default(remote_tmp_result.stdout | default('')) | trim) ] }}"
+      when:
+        - remote_tmp_result is defined
+        - remote_tmp_result.rc | default(0) != 0
+
+    - name: Проверить runtime-команды на app VM
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh
+        -o BatchMode=yes
+        -o NumberOfPasswordPrompts=1
+        -o ConnectTimeout=10
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        {{ app_vm_user }}@{{ app_vm_host }} 'command -v bash && command -v tar && command -v python'
+      args:
+        executable: /bin/bash
+      register: app_runtime_result
+      changed_when: false
+      failed_when: false
+      when: app_ssh_auth.rc | default(-1) == 0
+
+    - name: Добавить ошибку по runtime-командам app VM
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ 'На app VM не хватает runtime-команд bash/tar/python: ' ~ (app_runtime_result.stderr | default(app_runtime_result.stdout | default('')) | trim) ] }}"
+      when:
+        - app_runtime_result is defined
+        - app_runtime_result.rc | default(0) != 0
+
+    - name: Проверить runtime-файлы на app VM
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh
+        -o BatchMode=yes
+        -o NumberOfPasswordPrompts=1
+        -o ConnectTimeout=10
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        {{ app_vm_user }}@{{ app_vm_host }} 'test -f "{{ app_venv_activate_path }}" && test -f "{{ app_workdir }}/{{ app_manage_py_path }}"'
+      args:
+        executable: /bin/bash
+      register: app_runtime_files_result
+      changed_when: false
+      failed_when: false
+      when: app_ssh_auth.rc | default(-1) == 0
+
+    - name: Добавить ошибку по runtime-файлам app VM
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ 'На app VM не найдены venv/manage.py пути: ' ~ (app_runtime_files_result.stderr | default(app_runtime_files_result.stdout | default('')) | trim) ] }}"
+      when:
+        - app_runtime_files_result is defined
+        - app_runtime_files_result.rc | default(0) != 0
+
+    - name: Проверить PostgreSQL client на DB VM
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh \
+        -o BatchMode=yes \
+        -o NumberOfPasswordPrompts=1 \
+        -o ConnectTimeout=10 \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        {{ db_vm_user }}@{{ db_vm_host }} \
+          'command -v bash && command -v tar && {{ db_psql_bin }} --version'
+      args:
+        executable: /bin/bash
+      register: psql_version_result
+      changed_when: false
+      failed_when: false
+      when: db_ssh_auth.rc | default(99) == 0
+
+    - name: Показать PostgreSQL client на DB VM
+      ansible.builtin.debug:
+        msg: >-
+          DRY-RUN {{
+            'SKIP'
+            if psql_version_result.rc | default(99) == 99
+            else ('PASS' if psql_version_result.rc == 0 else 'FAIL')
+          }}
+          PostgreSQL client on DB VM:
+          rc={{ psql_version_result.rc | default('skipped') }}
+          output={{ psql_version_result.stdout | default(psql_version_result.stderr | default('нет вывода')) | trim }}
+
+    - name: Добавить ошибку по PostgreSQL client на DB VM
+      ansible.builtin.set_fact:
+        dry_run_issues: >-
+          {{
+            dry_run_issues +
+            (
+              [ 'psql недоступен на DB VM: ' ~ (psql_version_result.stderr | default(psql_version_result.stdout | default('')) | trim) ]
+              if psql_version_result.rc | default(99) not in [0, 99]
+              else []
+            )
+          }}
+
+    - name: Проверить подключение к PostgreSQL
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh \
+        -o BatchMode=yes \
+        -o NumberOfPasswordPrompts=1 \
+        -o ConnectTimeout=10 \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        {{ db_vm_user }}@{{ db_vm_host }} \
+          'PGPASSWORD="{{ db_login_password }}" {{ db_psql_bin }} --set=ON_ERROR_STOP=1 --host="{{ db_psql_host }}" --port="{{ db_port }}" --username="{{ db_login_user }}" --dbname="{{ db_name }}" -w -c "select 1;"'
+      args:
+        executable: /bin/bash
+      register: psql_connect_result
+      changed_when: false
+      failed_when: false
+      no_log: "{{ db_login_password | length > 0 }}"
+      when:
+        - psql_version_result.rc | default(99) == 0
+
+    - name: Добавить ошибку по PostgreSQL подключению
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ 'Подключение к PostgreSQL не прошло: ' ~ (psql_connect_result.stderr | default(psql_connect_result.stdout | default('')) | trim) ] }}"
+      when:
+        - psql_connect_result is defined
+        - psql_connect_result.rc | default(0) != 0
+
+    - name: Показать готовность PostgreSQL подключения
+      ansible.builtin.debug:
+        msg: >-
+          DRY-RUN {{
+            'SKIP'
+            if ((psql_connect_result | default({})).rc | default(99)) == 99
+            else ('PASS' if psql_connect_result.rc == 0 else 'FAIL')
+          }}
+          PostgreSQL connection {{ db_login_user }}@{{ db_vm_host }}:{{ db_port }}/{{ db_name }}:
+          {{
+            'DB VM SSH или psql на DB VM недоступны, проверка подключения пропущена'
+            if ((psql_connect_result | default({})).rc | default(99)) == 99
+            else ('rc=' ~ psql_connect_result.rc ~ ' stderr=' ~ (psql_connect_result.stderr | default(psql_connect_result.stdout | default('')) | trim))
+          }}
+
+    - name: Проверить HTTP-доступность стенда
+      ansible.builtin.uri:
+        url: "{{ stand_url }}"
+        method: GET
+        validate_certs: "{{ healthcheck_validate_certs }}"
+        timeout: 10
+        status_code:
+          - 200
+          - 301
+          - 302
+          - 401
+          - 403
+      register: http_result
+      failed_when: false
+
+    - name: Добавить ошибку по HTTP endpoint
+      ansible.builtin.set_fact:
+        dry_run_issues: "{{ dry_run_issues + [ 'HTTP endpoint недоступен ' ~ stand_url ~ ': ' ~ (http_result.msg | default('нет деталей')) ] }}"
+      when: http_result.status | default(0) not in [200, 301, 302, 401, 403]
+
+    - name: Показать итоговую готовность dry run
+      ansible.builtin.debug:
+        msg:
+          result: "{{ 'DRY RUN RESULT: FAIL' if dry_run_issues | length > 0 else 'DRY RUN RESULT: PASS' }}"
+          failed_checks_count: "{{ dry_run_issues | length }}"
+          failed_checks: "{{ dry_run_issues }}"
+          release_checked: "{{ (build_version | length > 0 or use_latest_release | bool) | ternary('yes', 'no') }}"
+          selected_release_dir: "{{ selected_release_dir | default('не проверялось') }}"
+          effective_build_version: "{{ effective_build_version | default('не проверялось') }}"
+
+    - name: Завершить dry run с полным списком проблем
+      ansible.builtin.fail:
+        msg: |-
+          Dry run завершен с проблемами:
+          {{ dry_run_issues | map('regex_replace', '^', '- ') | join('\n') }}
+      when: dry_run_issues | length > 0
