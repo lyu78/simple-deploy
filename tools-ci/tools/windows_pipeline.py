@@ -152,6 +152,7 @@ class Reporter:
     def __init__(self) -> None:
         self.issues: list[str] = []
         self.skipped: list[str] = []
+        self.warnings: list[str] = []
 
     def pass_(self, name: str, detail: str = "") -> None:
         suffix = f": {detail}" if detail else ""
@@ -160,6 +161,10 @@ class Reporter:
     def fail(self, name: str, detail: str) -> None:
         print(f"DRY-RUN FAIL {name}: {detail}")
         self.issues.append(f"{name}: {detail}")
+
+    def warn(self, name: str, detail: str) -> None:
+        print(f"DRY-RUN WARN {name}: {detail}")
+        self.warnings.append(f"{name}: {detail}")
 
     def skip(self, name: str, reason: str) -> None:
         print(f"DRY-RUN SKIP {name}: {reason}")
@@ -172,6 +177,10 @@ class Reporter:
             print("skipped_checks:")
             for skipped in self.skipped:
                 print(f"- {skipped}")
+        if self.warnings:
+            print("warnings:")
+            for warning in self.warnings:
+                print(f"- {warning}")
         if self.issues:
             print("failed_checks:")
             for issue in self.issues:
@@ -332,13 +341,23 @@ def load_env(env_file: Path, secrets_file: Path, require_secrets: bool) -> dict[
     return merged
 
 
-def load_runtime_config(config_file: Path) -> dict:
+def load_runtime_config(config_file: Path) -> tuple[dict, list[str]]:
     config = json.loads(json.dumps(DEFAULT_RUNTIME_CONFIG))
+    configured_keys: set[str] = set()
     if config_file.exists():
         with config_file.open("r", encoding="utf-8") as file:
             override = json.load(file)
+        configured_keys = set(override)
         config.update(override)
-    return config
+    defaulted_keys = sorted(set(DEFAULT_RUNTIME_CONFIG) - configured_keys)
+    return config, defaulted_keys
+
+
+def runtime_default_preview(value: object) -> str:
+    text = json.dumps(value, ensure_ascii=False)
+    if len(text) > 80:
+        return text[:77] + "..."
+    return text
 
 
 def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
@@ -1277,11 +1296,17 @@ def dry_run(args: argparse.Namespace) -> bool:
     reporter = Reporter()
     try:
         env = load_env(args.env_file, args.secrets_file, require_secrets=True)
-        runtime = load_runtime_config(args.config_file)
+        runtime, defaulted_runtime_keys = load_runtime_config(args.config_file)
         reporter.pass_("config files", f"{args.env_file}, {args.secrets_file}")
     except Exception as exc:
         reporter.fail("config files", str(exc))
         return reporter.result()
+
+    for key in defaulted_runtime_keys:
+        reporter.warn(
+            f"runtime {key}",
+            f"missing in {args.config_file}; using default {runtime_default_preview(DEFAULT_RUNTIME_CONFIG[key])}",
+        )
 
     for key in required_env_keys():
         if env.get(key, "").strip():
@@ -1917,7 +1942,7 @@ def deploy(args: argparse.Namespace) -> int:
     """Выполняет deploy выбранного релиза на указанный контур."""
     print("DEPLOY load config", flush=True)
     env = load_env(args.env_file, args.secrets_file, require_secrets=True)
-    runtime = load_runtime_config(args.config_file)
+    runtime, _defaulted_runtime_keys = load_runtime_config(args.config_file)
     build_version, release_dir = resolve_release_dir(env, args.build_version, args.latest)
     contour = validate_contour(args.contour)
     print(f"DEPLOY build_version: {build_version}", flush=True)

@@ -21,6 +21,7 @@ from tools.windows_pipeline import (
     deploy,
     derive_service_permission_check,
     is_sudo_command,
+    load_runtime_config,
     management_commands,
     prepare_build_env,
     resolve_db_schema_artifact,
@@ -33,6 +34,15 @@ from tools.windows_pipeline import (
 
 
 class WindowsPipelinePermissionTests(unittest.TestCase):
+    def test_reporter_warn_does_not_fail_result(self):
+        reporter = Reporter()
+
+        reporter.warn("runtime db_maintenance_sql_timeout_seconds", "missing; using default 900")
+
+        self.assertEqual(reporter.issues, [])
+        self.assertTrue(reporter.result())
+        self.assertIn("runtime db_maintenance_sql_timeout_seconds", reporter.warnings[0])
+
     def test_default_management_commands_fake_migrations(self):
         commands = management_commands({"APP_MANAGE_PY_PATH": "manage.py"}, {"management_commands": []})
 
@@ -199,6 +209,17 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertFalse(check_runtime_config(reporter, runtime))
         self.assertTrue(any("sql_scripts #1" in issue for issue in reporter.issues))
 
+    def test_load_runtime_config_reports_defaulted_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "windows_pipeline.local.json"
+            config_path.write_text('{"backup_enabled": true}\n', encoding="utf-8")
+
+            runtime, defaulted_keys = load_runtime_config(config_path)
+
+        self.assertTrue(runtime["backup_enabled"])
+        self.assertIn("db_maintenance_sql_timeout_seconds", defaulted_keys)
+        self.assertNotIn("backup_enabled", defaulted_keys)
+
     def test_ansible_schema_migration_uses_single_transaction(self):
         role_path = ROOT / "ansible-ci" / "roles" / "db_migrations" / "tasks" / "main.yml"
         content = role_path.read_text(encoding="utf-8")
@@ -285,7 +306,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         release_dir = Path("releases") / "1.2.3"
 
         with patch("tools.windows_pipeline.load_env", return_value=env):
-            with patch("tools.windows_pipeline.load_runtime_config", return_value={}):
+            with patch("tools.windows_pipeline.load_runtime_config", return_value=({}, [])):
                 with patch("tools.windows_pipeline.resolve_release_dir", return_value=("1.2.3", release_dir)):
                     with patch(
                         "tools.windows_pipeline.resolve_artifacts",
@@ -309,7 +330,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         release_dir = Path("releases") / "1.2.3"
 
         with patch("tools.windows_pipeline.load_env", return_value={}):
-            with patch("tools.windows_pipeline.load_runtime_config", return_value={}):
+            with patch("tools.windows_pipeline.load_runtime_config", return_value=({}, [])):
                 with patch("tools.windows_pipeline.resolve_release_dir", return_value=("1.2.3", release_dir)):
                     with patch(
                         "tools.windows_pipeline.resolve_artifacts",
