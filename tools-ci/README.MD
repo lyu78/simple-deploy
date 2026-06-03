@@ -95,7 +95,10 @@ DB_LOGIN_PASSWORD=<password>
 ```
 
 Поддерживаемые фазы service steps: `before_unpack`, `after_unpack`,
-`after_migrate`. Шаги без `phase` выполняются как `after_migrate`.
+`after_migrate`. Шаги без `phase` выполняются как `after_migrate`. Если
+`manage.py` требует поднятый Redis/KeyDB, добавьте идемпотентный `start/status`
+KeyDB в `after_unpack`, а явный restart `stop/start/status` KeyDB задавайте в
+`after_migrate`.
 
 Во время `dry-run` runner получает список доступных sudo-команд через
 `sudo -n -l`, затем проверяет каждую sudo service step без выполнения самой
@@ -136,6 +139,8 @@ deploy-simple ALL=(root) NOPASSWD: SIMPLE_DEPLOY_SYSTEMD
 ```bash
 sudo visudo -cf /etc/sudoers.d/simple-deploy
 sudo -n -l /bin/systemctl stop celerybeat_local.service
+sudo -n -l /bin/systemctl stop keydb_local.service
+sudo -n -l /bin/systemctl start keydb_local.service
 sudo -n -l /bin/systemctl start celerybeat_local.service
 systemctl status celerybeat_local.service
 ```
@@ -163,6 +168,7 @@ systemctl status celerybeat_local.service
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --include-data-sql
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --app-only
 ```
 
 Сборка релиза:
@@ -178,6 +184,17 @@ systemctl status celerybeat_local.service
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --build-version <version>
 ```
+
+Если DB schema SQL уже успешно применился, а deploy упал позже на app VM,
+используйте recovery-режим без подключения к DB VM:
+
+```bash
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest --app-only
+```
+
+`--app-only` пропускает DB maintenance, DB schema artifact и `psql`, но заново
+выполняет app service steps, upload/unpack backend/frontend, Django management,
+healthcheck и фиксацию baseline.
 
 Полный локальный цикл:
 
@@ -262,12 +279,13 @@ SQL-архив по `--contour`, загружает его на DB VM и при�
 psql --set=ON_ERROR_STOP=1 --single-transaction
 ```
 
-После schema SQL runner распаковывает backend/frontend, выполняет service steps,
-Django management-команды, healthcheck и при успешном завершении двигает baseline
-выбранного контура. Если `deploy` или `pipeline` падает после выбора релиза,
-runner автоматически пишет failed attempt в `deployment_attempts` без сдвига
-baseline. Для TEST/PROD, если применение выполнялось внешним или ручным
-процессом, используйте `mark-applied` или `mark-failed`.
+Runner выполняет DB maintenance `before_unpack`, останавливает сервисы,
+распаковывает backend/frontend, применяет schema SQL, выполняет Django
+management-команды, `after_migrate` service steps, healthcheck и при успешном
+завершении двигает baseline выбранного контура. Если `deploy` или `pipeline` падает после выбора релиза, runner
+автоматически пишет failed attempt в `deployment_attempts` без сдвига baseline.
+Для TEST/PROD, если применение выполнялось внешним или ручным процессом,
+используйте `mark-applied` или `mark-failed`.
 
 Ручное применение schema SQL на TEST/PROD описано в
 `../instructions/manual-schema-sql-deploy.md`.

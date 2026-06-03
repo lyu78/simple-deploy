@@ -1,6 +1,7 @@
 import unittest
 import json
 import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 import sys
 from argparse import Namespace
@@ -18,11 +19,13 @@ from tools.windows_pipeline import (
     check_backend_data_insert_idempotency,
     check_backend_build_inputs,
     check_runtime_config,
+    check_ssh_runtime,
     deploy,
     derive_service_permission_check,
     is_sudo_command,
     load_runtime_config,
     management_commands,
+    pipeline,
     prepare_build_env,
     resolve_db_schema_artifact,
     run_db_schema_summary,
@@ -256,6 +259,20 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertTrue(check_runtime_config(reporter, runtime))
         self.assertEqual(reporter.issues, [])
 
+    def test_check_ssh_runtime_app_only_skips_db_vm(self):
+        reporter = Reporter()
+        env = {
+            "APP_VM_USER": "deploy-simple",
+            "APP_VM_HOST": "app.example.local",
+        }
+
+        with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "ok\n", "")) as ssh_mock:
+            result = check_ssh_runtime(reporter, env, app_only=True)
+
+        self.assertEqual(result, {"app": True, "db": False})
+        self.assertEqual(ssh_mock.call_count, 1)
+        self.assertTrue(any("DB VM SSH/psql" in item for item in reporter.skipped))
+
     def test_load_runtime_config_reports_defaulted_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "windows_pipeline.local.json"
@@ -340,6 +357,29 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         build_env = stream_mock.call_args.kwargs["env"]
         self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "1")
 
+    def test_pipeline_preserves_app_only_for_deploy(self):
+        args = Namespace(
+            env_file=Path(".env"),
+            secrets_file=Path("local.secrets.env"),
+            config_file=Path("windows_pipeline.local.json"),
+            timeout=3600,
+            build_version="",
+            latest=False,
+            contour="dev",
+            include_data_sql=False,
+            app_only=True,
+        )
+
+        with patch("tools.windows_pipeline.dry_run", return_value=True):
+            with patch("tools.windows_pipeline.build", return_value=0):
+                with patch("tools.windows_pipeline.deploy", return_value=0) as deploy_mock:
+                    self.assertEqual(pipeline(args), 0)
+
+        deploy_args = deploy_mock.call_args.args[0]
+        self.assertTrue(deploy_args.app_only)
+        self.assertTrue(deploy_args.latest)
+        self.assertEqual(deploy_args.build_version, "")
+
     def test_deploy_failure_records_failed_attempt(self):
         args = Namespace(
             env_file=Path(".env"),
@@ -364,6 +404,64 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
                                 deploy(args)
 
         mark_failed_mock.assert_called_once_with("dev", "1.2.3", release_dir, "artifact missing")
+
+    def test_deploy_app_only_skips_db_steps(self):
+        args = Namespace(
+            env_file=Path(".env"),
+            secrets_file=Path("local.secrets.env"),
+            config_file=Path("windows_pipeline.local.json"),
+            build_version="1.2.3",
+            latest=False,
+            contour="dev",
+            app_only=True,
+        )
+        env = {
+            "APP_VM_USER": "deploy-simple",
+            "APP_VM_HOST": "app.example.local",
+            "APP_WORKDIR": "/home/admin/app-backend",
+            "APP_VENV_ACTIVATE_PATH": "/home/admin/app-backend/venv/bin/activate",
+            "REMOTE_TMP_ROOT": "/tmp/simple-deploy",
+            "DEV_DOMAIN": "dev.example.local",
+        }
+        runtime = {"service_steps": [], "healthcheck_enabled": True}
+        release_dir = Path("releases") / "1.2.3"
+        artifact = Artifact(
+            "backend",
+            Path("backend.tar.gz"),
+            "/tmp/simple-deploy/1.2.3/backend.tar.gz",
+            "/home/admin/app-backend/gazproject_2_0",
+        )
+
+        with ExitStack() as stack:
+            load_env_mock = stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
+            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=("1.2.3", release_dir)))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[artifact]))
+            resolve_db_mock = stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact"))
+            db_maintenance_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance"))
+            db_schema_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_schema_summary"))
+            service_mock = stack.enter_context(patch("tools.windows_pipeline.run_service_steps"))
+            stack.enter_context(
+                patch("tools.windows_pipeline.management_commands", return_value=["python manage.py migrate --fake"])
+            )
+            stack.enter_context(patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")))
+            stack.enter_context(patch("tools.windows_pipeline.scp_file", return_value=CommandResult(0, "", "")))
+            healthcheck_mock = stack.enter_context(patch("tools.windows_pipeline.healthcheck"))
+            mark_applied_mock = stack.enter_context(patch("tools.windows_pipeline.mark_contour_applied"))
+            stack.enter_context(patch("tools.windows_pipeline.send_outlook_success_email"))
+
+            self.assertEqual(deploy(args), 0)
+
+        load_env_mock.assert_called_once_with(args.env_file, args.secrets_file, require_secrets=False)
+        resolve_db_mock.assert_not_called()
+        db_maintenance_mock.assert_not_called()
+        db_schema_mock.assert_not_called()
+        self.assertEqual(
+            [call.args[2] for call in service_mock.call_args_list],
+            ["before_unpack", "after_unpack", "after_migrate"],
+        )
+        healthcheck_mock.assert_called_once()
+        mark_applied_mock.assert_called_once_with("dev", "1.2.3", release_dir)
 
     def test_deploy_failure_record_error_preserves_original_error(self):
         args = Namespace(

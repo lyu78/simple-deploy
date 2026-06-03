@@ -666,12 +666,15 @@ def check_windows_command(reporter: Reporter, name: str, command: str) -> bool:
     return check_command(reporter, name, ["cmd.exe", "/C", command])
 
 
-def check_ssh_key_files(reporter: Reporter, env: dict[str, str]) -> None:
+def check_ssh_key_files(reporter: Reporter, env: dict[str, str], app_only: bool = False) -> None:
     keys = [
         ("SSH key", env.get("SSH_KEY_PATH", "")),
         ("app SSH key", env.get("APP_SSH_KEY_PATH", "")),
-        ("DB SSH key", env.get("DB_SSH_KEY_PATH", "")),
     ]
+    if app_only:
+        reporter.skip("DB SSH key", "app-only mode")
+    else:
+        keys.append(("DB SSH key", env.get("DB_SSH_KEY_PATH", "")))
     configured = False
     for name, path_value in keys:
         if not path_value.strip():
@@ -915,11 +918,9 @@ def sh_quote(value: str | Path) -> str:
     return "'" + text.replace("'", "'\"'\"'") + "'"
 
 
-def check_ssh_runtime(reporter: Reporter, env: dict[str, str]) -> dict[str, bool]:
+def check_ssh_runtime(reporter: Reporter, env: dict[str, str], app_only: bool = False) -> dict[str, bool]:
     app_user = require_value(env, "APP_VM_USER")
     app_host = require_value(env, "APP_VM_HOST")
-    db_user = require_value(env, "DB_VM_USER")
-    db_host = require_value(env, "DB_VM_HOST")
     result = {"app": False, "db": False}
 
     app = ssh_command(
@@ -936,6 +937,13 @@ def check_ssh_runtime(reporter: Reporter, env: dict[str, str]) -> dict[str, bool
         reporter.fail("app VM SSH/runtime", (app.stderr or app.stdout).strip() or f"rc={app.rc}")
         reporter.skip("app VM deploy checks", "app VM SSH/runtime недоступен")
 
+    if app_only:
+        reporter.skip("DB VM SSH/psql", "app-only mode")
+        reporter.skip("DB SQL checks", "app-only mode")
+        return result
+
+    db_user = require_value(env, "DB_VM_USER")
+    db_host = require_value(env, "DB_VM_HOST")
     db = ssh_command(env, db_user, db_host, "echo ok && command -v psql >/dev/null", "DB")
     if db.rc == 0:
         reporter.pass_("DB VM SSH/psql", db.stdout.strip())
@@ -1324,8 +1332,9 @@ def check_portal_release_version(env: dict[str, str], runtime: dict, expected_ve
 
 def dry_run(args: argparse.Namespace) -> bool:
     reporter = Reporter()
+    app_only = bool(getattr(args, "app_only", False))
     try:
-        env = load_env(args.env_file, args.secrets_file, require_secrets=True)
+        env = load_env(args.env_file, args.secrets_file, require_secrets=not app_only)
         runtime, defaulted_runtime_keys = load_runtime_config(args.config_file)
         reporter.pass_("config files", f"{args.env_file}, {args.secrets_file}")
     except Exception as exc:
@@ -1338,7 +1347,7 @@ def dry_run(args: argparse.Namespace) -> bool:
             f"missing in {args.config_file}; using default {runtime_default_preview(DEFAULT_RUNTIME_CONFIG[key])}",
         )
 
-    for key in required_env_keys():
+    for key in required_env_keys(app_only=app_only):
         if env.get(key, "").strip():
             reporter.pass_(f"env {key}")
         else:
@@ -1359,7 +1368,7 @@ def dry_run(args: argparse.Namespace) -> bool:
     else:
         reporter.fail("Git Bash", f"не найден: {git_bash}")
 
-    check_ssh_key_files(reporter, env)
+    check_ssh_key_files(reporter, env, app_only=app_only)
 
     origins = [
         ("backend source repo", env.get("BACKEND_SOURCE_REPO_PATH", "")),
@@ -1382,7 +1391,7 @@ def dry_run(args: argparse.Namespace) -> bool:
         reporter.skip("Outlook email", "runtime config invalid")
 
     try:
-        ssh_state = check_ssh_runtime(reporter, env)
+        ssh_state = check_ssh_runtime(reporter, env, app_only=app_only)
     except Exception as exc:
         reporter.fail("SSH runtime checks", str(exc))
         ssh_state = {"app": False, "db": False}
@@ -1406,7 +1415,9 @@ def dry_run(args: argparse.Namespace) -> bool:
         else:
             reporter.skip("DEV HTTP endpoint", "healthcheck disabled")
 
-    if not runtime_config_ok:
+    if app_only:
+        reporter.skip("DB psql login", "app-only mode")
+    elif not runtime_config_ok:
         reporter.skip("DB psql login", "runtime config invalid")
     elif ssh_state["db"]:
         check_db_psql_login(reporter, env, runtime)
@@ -1416,8 +1427,8 @@ def dry_run(args: argparse.Namespace) -> bool:
     return reporter.result()
 
 
-def required_env_keys() -> list[str]:
-    return [
+def required_env_keys(app_only: bool = False) -> list[str]:
+    keys = [
         "BUILD_VERSION_BASE",
         "GIT_BASH_PATH",
         "BACKEND_SOURCE_REPO_PATH",
@@ -1442,6 +1453,9 @@ def required_env_keys() -> list[str]:
         "FRONTEND_TEST_SERVER_NAME",
         "FRONTEND_PROD_SERVER_NAME",
     ]
+    if app_only:
+        return [key for key in keys if key not in {"DB_VM_HOST", "DB_VM_USER", "DB_PORT", "DB_NAME"}]
+    return keys
 
 
 def build(args: argparse.Namespace) -> int:
@@ -1971,23 +1985,28 @@ Write-Output 'sent'
 def deploy(args: argparse.Namespace) -> int:
     """Выполняет deploy выбранного релиза на указанный контур."""
     print("DEPLOY load config", flush=True)
-    env = load_env(args.env_file, args.secrets_file, require_secrets=True)
+    app_only = bool(getattr(args, "app_only", False))
+    env = load_env(args.env_file, args.secrets_file, require_secrets=not app_only)
     runtime, _defaulted_runtime_keys = load_runtime_config(args.config_file)
     build_version, release_dir = resolve_release_dir(env, args.build_version, args.latest)
     contour = validate_contour(args.contour)
     print(f"DEPLOY build_version: {build_version}", flush=True)
     print(f"DEPLOY contour: {contour}", flush=True)
     print(f"DEPLOY release_dir: {release_dir}", flush=True)
+    print(f"DEPLOY mode: {'app-only' if app_only else 'full'}", flush=True)
 
     success_recorded = False
     try:
         artifacts = resolve_artifacts(env, build_version, release_dir)
-        db_schema_artifact = resolve_db_schema_artifact(env, build_version, release_dir, contour)
         app_user = require_value(env, "APP_VM_USER")
         app_host = require_value(env, "APP_VM_HOST")
         remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
 
-        run_db_maintenance(env, runtime, "before_unpack")
+        if app_only:
+            print("SKIP DB steps: app-only mode", flush=True)
+        else:
+            db_schema_artifact = resolve_db_schema_artifact(env, build_version, release_dir, contour)
+            run_db_maintenance(env, runtime, "before_unpack")
         run_service_steps(env, runtime, "before_unpack")
 
         print(f"RUN create remote release dir: {remote_dir}", flush=True)
@@ -2033,8 +2052,9 @@ def deploy(args: argparse.Namespace) -> int:
             )
 
         run_service_steps(env, runtime, "after_unpack")
-        run_db_maintenance(env, runtime, "before_migrate")
-        run_db_schema_summary(env, runtime, db_schema_artifact)
+        if not app_only:
+            run_db_maintenance(env, runtime, "before_migrate")
+            run_db_schema_summary(env, runtime, db_schema_artifact)
 
         for command in management_commands(env, runtime):
             remote = (
@@ -2048,7 +2068,8 @@ def deploy(args: argparse.Namespace) -> int:
                 ssh_command(env, app_user, app_host, remote, "APP", timeout=300),
             )
 
-        run_db_maintenance(env, runtime, "after_migrate")
+        if not app_only:
+            run_db_maintenance(env, runtime, "after_migrate")
         run_service_steps(env, runtime, "after_migrate")
 
         if runtime.get("healthcheck_enabled", True):
@@ -2172,6 +2193,7 @@ def parse_args() -> argparse.Namespace:
 
     dry_run_parser = subparsers.add_parser("dry-run")
     dry_run_parser.add_argument("--include-data-sql", action="store_true")
+    dry_run_parser.add_argument("--app-only", action="store_true")
 
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument("--include-data-sql", action="store_true")
@@ -2180,12 +2202,14 @@ def parse_args() -> argparse.Namespace:
     deploy_parser.add_argument("--build-version", default="")
     deploy_parser.add_argument("--latest", action="store_true")
     deploy_parser.add_argument("--contour", choices=CONTOURS, default="dev")
+    deploy_parser.add_argument("--app-only", action="store_true")
 
     pipeline_parser = subparsers.add_parser("pipeline")
     pipeline_parser.add_argument("--build-version", default="")
     pipeline_parser.add_argument("--latest", action="store_true")
     pipeline_parser.add_argument("--contour", choices=CONTOURS, default="dev")
     pipeline_parser.add_argument("--include-data-sql", action="store_true")
+    pipeline_parser.add_argument("--app-only", action="store_true")
 
     baseline_parser = subparsers.add_parser("set-baseline")
     baseline_parser.add_argument("--contour", choices=CONTOURS, required=True)

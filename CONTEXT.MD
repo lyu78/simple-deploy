@@ -94,7 +94,10 @@ python "$APP_MANAGE_PY_PATH" sync_action_role
 Команды запуска/проверки сервисов задаются в `windows_pipeline.local.json` в
 `service_steps`. Поддерживаемые фазы: `before_unpack`, `after_unpack`,
 `after_migrate`; шаги без `phase` считаются `after_migrate`. Порядок выполнения
-соответствует порядку в JSON.
+соответствует порядку в JSON. Если `manage.py` зависит от Redis/KeyDB при
+импорте settings/Celery, в `after_unpack` выполняется идемпотентный
+`start/status` KeyDB перед management-командами, а явный restart
+`stop/start/status` KeyDB задается в `after_migrate`.
 
 Пример:
 
@@ -129,7 +132,8 @@ Service steps, меняющие состояние systemd unit (`start`, `stop`
 Для текущего DEV service order sudoers должен покрывать только state-changing
 команды: stop `nginx`, `gunicorn_local.service`, `celery_local.service`,
 `celerybeat_local.service`, `keydb_local.service`, `file_proxy_local.service`,
-`minio_local.service`, затем start в обратном порядке. Удобный формат:
+`minio_local.service`; затем start app-сервисов в обратном порядке. Удобный
+формат:
 
 ```sudoers
 Cmnd_Alias SIMPLE_DEPLOY_SYSTEMD = \
@@ -153,6 +157,8 @@ deploy-simple ALL=(root) NOPASSWD: SIMPLE_DEPLOY_SYSTEMD
 
 Проверки: `sudo visudo -cf /etc/sudoers.d/simple-deploy`,
 `sudo -n -l /bin/systemctl stop celerybeat_local.service`,
+`sudo -n -l /bin/systemctl stop keydb_local.service`,
+`sudo -n -l /bin/systemctl start keydb_local.service`,
 `sudo -n -l /bin/systemctl start celerybeat_local.service`.
 `systemctl status ...` в sudoers не нужен, если статус доступен без sudo.
 Если `sudo -l -U deploy-simple` дополнительно показывает `(ALL) ALL`, это
@@ -272,6 +278,9 @@ frontend-репозитория и использует только `RELEASE_RO
 - доставляет schema SQL на DB VM и backend/frontend архивы на app VM;
 - выполняет DB-работы, `migrate --fake`, `sync_action_role`, сервисные команды,
   healthcheck и фиксацию baseline.
+- поддерживает `deploy --app-only` / `pipeline --app-only` для recovery после
+  уже успешного DB schema SQL: режим не подключается к DB VM, не требует DB
+  password и повторяет только app VM часть.
 
 Legacy Ansible:
 
@@ -448,11 +457,16 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour prod --backend-commit <prod_backend_commit>
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour test --build-version <previous_successful_release_version>
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest --app-only
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-applied --contour test --build-version <successful_release_version>
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
 ```
 
 DEV обычно идет от предыдущего локально зафиксированного состояния к текущему release commit. После успешного `deploy --contour dev` baseline `dev` двигается автоматически. Если `deploy` или `pipeline` падает после выбора релиза, runner автоматически пишет failed attempt в `deployment_attempts` без сдвига baseline. TEST и PROD собираются как from-to диапазоны от baseline соответствующего контура до commit релиза; после успешного применения на внешнем контуре оператор должен явно выполнить `mark-applied`, иначе следующий релиз снова будет строиться от старого baseline. При ошибке внешнего применения используется `mark-failed`, baseline при этом не меняется.
+Если падение произошло после успешного `DB schema summary SQL`, полный повтор
+`deploy --latest` может заново выполнить тот же DB SQL. Для восстановления APP
+части используйте `--app-only`: он пропускает DB maintenance/schema artifact/psql
+и после успеха двигает baseline обычным `mark-applied`.
 
 Пример диапазонов: если DEV сейчас на `C2`, TEST/PROD на `C1`, а новый backend source repo на `C3`, перед build нужно поставить `dev=C2`, `test=C1`, `prod=C1`. Build создаст `db_schema_dev` для `C2..C3` и `db_schema_test`/`db_schema_prod` для `C1..C3`. Нельзя заранее ставить baseline на `C3` до успешного применения, иначе следующий build посчитает `C3` уже примененным.
 

@@ -13,6 +13,18 @@
   "service_permission_checks_enabled": true,
   "service_steps": [
     {
+      "name": "ensure example cache before management",
+      "phase": "after_unpack",
+      "command": "sudo /bin/systemctl start example-cache.service",
+      "permission_check_command": "sudo /bin/systemctl start example-cache.service"
+    },
+    {
+      "name": "status example cache before management",
+      "phase": "after_unpack",
+      "command": "systemctl status example-cache.service",
+      "permission_check_command": "systemctl status example-cache.service"
+    },
+    {
       "name": "restart example backend",
       "phase": "after_migrate",
       "command": "sudo /bin/systemctl restart example-backend.service",
