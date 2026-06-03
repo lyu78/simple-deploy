@@ -17,6 +17,7 @@ from tools.windows_pipeline import (
     build,
     check_backend_data_insert_idempotency,
     check_backend_build_inputs,
+    check_runtime_config,
     deploy,
     derive_service_permission_check,
     is_sudo_command,
@@ -24,6 +25,7 @@ from tools.windows_pipeline import (
     prepare_build_env,
     resolve_db_schema_artifact,
     run_db_schema_summary,
+    run_db_maintenance,
     scp_file,
     send_outlook_success_email,
     sudo_list_command,
@@ -124,6 +126,78 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertIn("--set=ON_ERROR_STOP=1", final_command)
         self.assertIn("--single-transaction", final_command)
         self.assertIn('-f "$sql_file"', final_command)
+
+    def test_run_db_maintenance_uses_configured_timeout(self):
+        env = {
+            "DB_VM_USER": "db-user",
+            "DB_VM_HOST": "db.example.local",
+            "DB_PORT": "5432",
+            "DB_NAME": "appdb",
+            "DB_LOGIN_USER": "postgres",
+            "DB_LOGIN_PASSWORD": "secret",
+        }
+        runtime = {
+            "db_maintenance_sql_phase": "before_unpack",
+            "db_maintenance_sql": ["VACUUM ANALYZE;"],
+            "db_maintenance_sql_timeout_seconds": 900,
+            "sql_scripts": [],
+        }
+
+        with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
+            run_db_maintenance(env, runtime, "before_unpack")
+
+        self.assertEqual(ssh_mock.call_args.kwargs["timeout"], 900)
+
+    def test_run_db_maintenance_uses_timeout_for_sql_scripts(self):
+        env = {
+            "DB_VM_USER": "db-user",
+            "DB_VM_HOST": "db.example.local",
+            "DB_PORT": "5432",
+            "DB_NAME": "appdb",
+            "DB_LOGIN_USER": "postgres",
+            "DB_LOGIN_PASSWORD": "secret",
+        }
+        runtime = {
+            "db_maintenance_sql": [],
+            "db_maintenance_sql_timeout_seconds": 900,
+            "sql_scripts": [
+                {
+                    "path": "README.MD",
+                    "phase": "before_unpack",
+                }
+            ],
+        }
+
+        with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
+            run_db_maintenance(env, runtime, "before_unpack")
+
+        self.assertEqual(ssh_mock.call_args.kwargs["timeout"], 900)
+
+    def test_windows_pipeline_example_runtime_config_is_valid(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        reporter = Reporter()
+
+        self.assertTrue(check_runtime_config(reporter, runtime))
+        self.assertEqual(reporter.issues, [])
+
+    def test_runtime_config_rejects_bad_maintenance_timeout(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        runtime["db_maintenance_sql_timeout_seconds"] = "900s"
+        reporter = Reporter()
+
+        self.assertFalse(check_runtime_config(reporter, runtime))
+        self.assertTrue(any("db_maintenance_sql_timeout_seconds" in issue for issue in reporter.issues))
+
+    def test_runtime_config_checks_sql_script_shape(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        runtime["sql_scripts"] = [{"path": "missing.sql", "phase": "after_unpack"}]
+        reporter = Reporter()
+
+        self.assertFalse(check_runtime_config(reporter, runtime))
+        self.assertTrue(any("sql_scripts #1" in issue for issue in reporter.issues))
 
     def test_ansible_schema_migration_uses_single_transaction(self):
         role_path = ROOT / "ansible-ci" / "roles" / "db_migrations" / "tasks" / "main.yml"

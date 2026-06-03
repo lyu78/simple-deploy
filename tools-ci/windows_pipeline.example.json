@@ -7,6 +7,7 @@
   "db_maintenance_sql": [
     "VACUUM ANALYZE;"
   ],
+  "db_maintenance_sql_timeout_seconds": 900,
   "sql_scripts": [],
   "management_commands": [],
   "service_permission_checks_enabled": true,

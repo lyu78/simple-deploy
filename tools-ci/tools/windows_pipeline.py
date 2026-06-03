@@ -76,6 +76,7 @@ DEFAULT_RUNTIME_CONFIG = {
     "db_psql_host": "localhost",
     "db_maintenance_sql_phase": "before_unpack",
     "db_maintenance_sql": ["VACUUM ANALYZE;"],
+    "db_maintenance_sql_timeout_seconds": 900,
     "sql_scripts": [],
     "management_commands": [],
     "service_permission_checks_enabled": True,
@@ -101,6 +102,25 @@ DEFAULT_RUNTIME_CONFIG = {
     ),
     "outlook_email_required": False,
 }
+
+DB_MAINTENANCE_PHASES = {"before_unpack", "before_migrate", "after_migrate"}
+SERVICE_PHASES = {"before_unpack", "after_unpack", "after_migrate"}
+RUNTIME_BOOL_FIELDS = (
+    "backup_enabled",
+    "db_maintenance_enabled",
+    "service_permission_checks_enabled",
+    "healthcheck_enabled",
+    "healthcheck_validate_certs",
+    "portal_version_check_enabled",
+    "outlook_email_enabled",
+    "outlook_email_required",
+)
+RUNTIME_POSITIVE_INT_FIELDS = (
+    "db_maintenance_sql_timeout_seconds",
+    "healthcheck_retries",
+    "healthcheck_delay",
+    "portal_version_asset_limit",
+)
 
 
 @dataclass
@@ -319,6 +339,134 @@ def load_runtime_config(config_file: Path) -> dict:
             override = json.load(file)
         config.update(override)
     return config
+
+
+def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
+    ok = True
+    unknown_keys = sorted(set(runtime) - set(DEFAULT_RUNTIME_CONFIG))
+    if unknown_keys:
+        reporter.fail("runtime config keys", "unknown key(s): " + ", ".join(unknown_keys))
+        ok = False
+    else:
+        reporter.pass_("runtime config keys", f"{len(DEFAULT_RUNTIME_CONFIG)} known key(s)")
+
+    for field in RUNTIME_BOOL_FIELDS:
+        if isinstance(runtime.get(field), bool):
+            continue
+        reporter.fail(f"runtime {field}", "expected boolean true/false")
+        ok = False
+
+    for field in RUNTIME_POSITIVE_INT_FIELDS:
+        value = runtime.get(field)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            continue
+        reporter.fail(f"runtime {field}", "expected positive integer")
+        ok = False
+
+    for field in ("db_psql_bin", "db_psql_host"):
+        value = runtime.get(field)
+        if isinstance(value, str) and value.strip():
+            continue
+        reporter.fail(f"runtime {field}", "expected non-empty string")
+        ok = False
+
+    phase = runtime.get("db_maintenance_sql_phase")
+    if phase not in DB_MAINTENANCE_PHASES:
+        reporter.fail(
+            "runtime db_maintenance_sql_phase",
+            "expected one of: " + ", ".join(sorted(DB_MAINTENANCE_PHASES)),
+        )
+        ok = False
+
+    for field in ("db_maintenance_sql", "management_commands", "healthcheck_commands"):
+        value = runtime.get(field)
+        if not isinstance(value, list):
+            reporter.fail(f"runtime {field}", "expected list")
+            ok = False
+            continue
+        bad_indexes = [
+            str(index)
+            for index, item in enumerate(value, start=1)
+            if not isinstance(item, str) or not item.strip()
+        ]
+        if bad_indexes:
+            reporter.fail(
+                f"runtime {field}",
+                "expected non-empty string item(s), bad index(es): " + ", ".join(bad_indexes),
+            )
+            ok = False
+
+    for field in ("outlook_email_recipients", "outlook_email_cc"):
+        value = runtime.get(field)
+        if isinstance(value, str):
+            continue
+        if isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value):
+            continue
+        if isinstance(value, list) and not value:
+            continue
+        reporter.fail(f"runtime {field}", "expected string or list of non-empty strings")
+        ok = False
+
+    for field in ("outlook_email_subject", "outlook_email_body"):
+        if isinstance(runtime.get(field), str):
+            continue
+        reporter.fail(f"runtime {field}", "expected string")
+        ok = False
+
+    sql_scripts = runtime.get("sql_scripts")
+    if not isinstance(sql_scripts, list):
+        reporter.fail("runtime sql_scripts", "expected list")
+        ok = False
+    else:
+        for index, script in enumerate(sql_scripts, start=1):
+            label = f"runtime sql_scripts #{index}"
+            if not isinstance(script, dict):
+                reporter.fail(label, "expected object with path and phase")
+                ok = False
+                continue
+            path_value = script.get("path")
+            if not isinstance(path_value, str) or not path_value.strip():
+                reporter.fail(label, "path must be a non-empty string")
+                ok = False
+            else:
+                path = ROOT / path_value
+                if path.is_file():
+                    reporter.pass_(f"{label} path", str(path))
+                else:
+                    reporter.fail(label, f"path not found: {path}")
+                    ok = False
+            script_phase = script.get("phase")
+            if script_phase not in DB_MAINTENANCE_PHASES:
+                reporter.fail(label, "phase must be one of: " + ", ".join(sorted(DB_MAINTENANCE_PHASES)))
+                ok = False
+
+    service_steps = runtime.get("service_steps")
+    if not isinstance(service_steps, list):
+        reporter.fail("runtime service_steps", "expected list")
+        ok = False
+    else:
+        for index, step in enumerate(service_steps, start=1):
+            label = f"runtime service_steps #{index}"
+            if not isinstance(step, dict):
+                reporter.fail(label, "expected object with command and optional phase")
+                ok = False
+                continue
+            command = step.get("command")
+            if not isinstance(command, str) or not command.strip():
+                reporter.fail(label, "command must be a non-empty string")
+                ok = False
+            step_phase = step.get("phase", "after_migrate")
+            if step_phase not in SERVICE_PHASES:
+                reporter.fail(label, "phase must be one of: " + ", ".join(sorted(SERVICE_PHASES)))
+                ok = False
+            for optional_field in ("name", "permission_check_command"):
+                if optional_field in step and not isinstance(step[optional_field], str):
+                    reporter.fail(label, f"{optional_field} must be a string when set")
+                    ok = False
+
+    if ok:
+        reporter.pass_("runtime config values", "types and ranges are valid")
+    return ok
 
 
 def management_commands(env: dict[str, str], runtime: dict) -> list[str]:
@@ -1141,6 +1289,8 @@ def dry_run(args: argparse.Namespace) -> bool:
         else:
             reporter.fail(f"env {key}", "значение не задано")
 
+    runtime_config_ok = check_runtime_config(reporter, runtime)
+
     check_command(reporter, "Python", [sys.executable, "--version"])
     check_windows_command(reporter, "git", "git --version")
     check_windows_command(reporter, "node", "node --version")
@@ -1171,7 +1321,10 @@ def dry_run(args: argparse.Namespace) -> bool:
         check_backend_data_insert_idempotency(reporter, env)
     else:
         reporter.skip("backend data INSERT idempotency", "data SQL artifacts disabled; use --include-data-sql")
-    check_outlook_email_config(reporter, runtime)
+    if runtime_config_ok:
+        check_outlook_email_config(reporter, runtime)
+    else:
+        reporter.skip("Outlook email", "runtime config invalid")
 
     try:
         ssh_state = check_ssh_runtime(reporter, env)
@@ -1185,6 +1338,10 @@ def dry_run(args: argparse.Namespace) -> bool:
         reporter.skip("app VM directory checks", "app VM unavailable")
         reporter.skip("service permission checks", "app VM unavailable")
         reporter.skip("DEV HTTP endpoint", "app VM недоступна, healthcheck неинформативен")
+    elif not runtime_config_ok:
+        reporter.skip("app VM directory checks", "runtime config invalid")
+        reporter.skip("service permission checks", "runtime config invalid")
+        reporter.skip("DEV HTTP endpoint", "runtime config invalid")
     else:
         check_app_deploy_directories(reporter, env, runtime)
         check_app_manage_py(reporter, env)
@@ -1194,7 +1351,9 @@ def dry_run(args: argparse.Namespace) -> bool:
         else:
             reporter.skip("DEV HTTP endpoint", "healthcheck disabled")
 
-    if ssh_state["db"]:
+    if not runtime_config_ok:
+        reporter.skip("DB psql login", "runtime config invalid")
+    elif ssh_state["db"]:
         check_db_psql_login(reporter, env, runtime)
     else:
         reporter.skip("DB psql login", "DB VM SSH/psql unavailable")
@@ -1449,12 +1608,13 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
     db_user = require_value(env, "DB_VM_USER")
     db_host = require_value(env, "DB_VM_HOST")
     psql_base, mask = db_psql_base_command(env, runtime)
+    timeout = int(runtime.get("db_maintenance_sql_timeout_seconds", 900))
 
     if phase == runtime.get("db_maintenance_sql_phase", "before_unpack"):
         for index, sql in enumerate(runtime.get("db_maintenance_sql", []), start=1):
             print(f"RUN DB inline SQL {phase} #{index}", flush=True)
             command = f"{psql_base} --command={sh_quote(sql)}"
-            result = ssh_command(env, db_user, db_host, command, "DB", timeout=120, mask=mask)
+            result = ssh_command(env, db_user, db_host, command, "DB", timeout=timeout, mask=mask)
             run_or_raise(f"DB inline SQL {phase} #{index}", result, mask=mask)
 
     for script in runtime.get("sql_scripts", []):
@@ -1463,7 +1623,7 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
         path = ROOT / script["path"]
         sql = path.read_text(encoding="utf-8")
         print(f"RUN DB SQL script {path}", flush=True)
-        result = ssh_command(env, db_user, db_host, psql_base, "DB", input_text=sql, timeout=120, mask=mask)
+        result = ssh_command(env, db_user, db_host, psql_base, "DB", input_text=sql, timeout=timeout, mask=mask)
         run_or_raise(f"DB SQL script {path}", result, mask=mask)
 
 
