@@ -209,6 +209,53 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertFalse(check_runtime_config(reporter, runtime))
         self.assertTrue(any("sql_scripts #1" in issue for issue in reporter.issues))
 
+    def test_runtime_config_rejects_bare_systemctl_service_step(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        runtime["service_steps"] = [
+            {
+                "name": "stop celerybeat",
+                "phase": "before_unpack",
+                "command": "systemctl stop celerybeat_local.service",
+            }
+        ]
+        reporter = Reporter()
+
+        self.assertFalse(check_runtime_config(reporter, runtime))
+        self.assertTrue(any("systemctl service commands except status must use sudo" in issue for issue in reporter.issues))
+
+    def test_runtime_config_accepts_bare_systemctl_status_service_step(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        runtime["service_steps"] = [
+            {
+                "name": "status celerybeat",
+                "phase": "after_migrate",
+                "command": "systemctl status celerybeat_local.service",
+                "permission_check_command": "systemctl status celerybeat_local.service",
+            }
+        ]
+        reporter = Reporter()
+
+        self.assertTrue(check_runtime_config(reporter, runtime))
+        self.assertEqual(reporter.issues, [])
+
+    def test_runtime_config_accepts_sudo_systemctl_service_step(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        runtime["service_steps"] = [
+            {
+                "name": "stop celerybeat",
+                "phase": "before_unpack",
+                "command": "sudo /bin/systemctl stop celerybeat_local.service",
+                "permission_check_command": "sudo /bin/systemctl stop celerybeat_local.service",
+            }
+        ]
+        reporter = Reporter()
+
+        self.assertTrue(check_runtime_config(reporter, runtime))
+        self.assertEqual(reporter.issues, [])
+
     def test_load_runtime_config_reports_defaulted_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "windows_pipeline.local.json"

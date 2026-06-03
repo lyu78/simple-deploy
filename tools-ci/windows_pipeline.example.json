@@ -15,7 +15,14 @@
     {
       "name": "restart example backend",
       "phase": "after_migrate",
-      "command": "systemctl restart example-backend.service"
+      "command": "sudo /bin/systemctl restart example-backend.service",
+      "permission_check_command": "sudo /bin/systemctl restart example-backend.service"
+    },
+    {
+      "name": "status example backend",
+      "phase": "after_migrate",
+      "command": "systemctl status example-backend.service",
+      "permission_check_command": "systemctl status example-backend.service"
     },
     {
       "name": "restart custom app",

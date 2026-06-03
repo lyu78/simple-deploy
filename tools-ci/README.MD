@@ -102,6 +102,44 @@ DB_LOGIN_PASSWORD=<password>
 сервисной команды. Если для шага нужна отдельная команда проверки, задайте
 `permission_check_command` тоже через `sudo`.
 
+Команды `systemctl start/stop/restart/reload ...` в `service_steps` должны идти
+через `sudo /bin/systemctl ...`. Команды `systemctl status ...` можно задавать
+без `sudo`; они выполняются после `start` и уронят deploy, если unit не активен.
+
+Пример `/etc/sudoers.d/simple-deploy` для текущего DEV-порядка stop/start:
+
+```sudoers
+Cmnd_Alias SIMPLE_DEPLOY_SYSTEMD = \
+    /bin/systemctl stop nginx, \
+    /bin/systemctl stop gunicorn_local.service, \
+    /bin/systemctl stop celery_local.service, \
+    /bin/systemctl stop celerybeat_local.service, \
+    /bin/systemctl stop keydb_local.service, \
+    /bin/systemctl stop file_proxy_local.service, \
+    /bin/systemctl stop minio_local.service, \
+    /bin/systemctl start minio_local.service, \
+    /bin/systemctl start file_proxy_local.service, \
+    /bin/systemctl start keydb_local.service, \
+    /bin/systemctl start celerybeat_local.service, \
+    /bin/systemctl start celery_local.service, \
+    /bin/systemctl start gunicorn_local.service, \
+    /bin/systemctl start nginx
+
+deploy-simple ALL=(root) NOPASSWD: SIMPLE_DEPLOY_SYSTEMD
+```
+
+Если `command -v systemctl` возвращает не `/bin/systemctl`, используйте этот
+фактический путь и в sudoers, и в `windows_pipeline.local.json`. Команды
+`systemctl status ...` в sudoers добавлять не нужно, если они доступны без sudo.
+После правки проверьте файл и конкретные права:
+
+```bash
+sudo visudo -cf /etc/sudoers.d/simple-deploy
+sudo -n -l /bin/systemctl stop celerybeat_local.service
+sudo -n -l /bin/systemctl start celerybeat_local.service
+systemctl status celerybeat_local.service
+```
+
 ## Команды оператора
 
 Первичная инициализация baseline выполняется один раз перед первой сборкой.

@@ -110,24 +110,64 @@ python "$APP_MANAGE_PY_PATH" sync_action_role
     {
       "name": "status nginx",
       "phase": "after_migrate",
-      "command": "sudo /bin/systemctl status nginx",
-      "permission_check_command": "sudo /bin/systemctl status nginx"
+      "command": "systemctl status nginx",
+      "permission_check_command": "systemctl status nginx"
     }
   ]
 }
 ```
 
-Сервисные команды запускаются только через `sudo`, но пользователь не должен быть
+Service steps, меняющие состояние systemd unit (`start`, `stop`, `restart`,
+`reload`), запускаются через `sudo`; `systemctl status ...` можно задавать без
+`sudo`. Пользователь не должен быть
 в полном sudo/wheel. Для него создается точечное правило
 `/etc/sudoers.d/simple-deploy` через `visudo` с `NOPASSWD` только для нужных
-`/bin/systemctl start/status/restart ...` команд. Если `systemctl` лежит не в
+`/bin/systemctl start/stop/restart ...` команд. Если `systemctl` лежит не в
 `/bin`, путь нужно проверить через `command -v systemctl` и использовать
 фактический путь.
+
+Для текущего DEV service order sudoers должен покрывать только state-changing
+команды: stop `nginx`, `gunicorn_local.service`, `celery_local.service`,
+`celerybeat_local.service`, `keydb_local.service`, `file_proxy_local.service`,
+`minio_local.service`, затем start в обратном порядке. Удобный формат:
+
+```sudoers
+Cmnd_Alias SIMPLE_DEPLOY_SYSTEMD = \
+    /bin/systemctl stop nginx, \
+    /bin/systemctl stop gunicorn_local.service, \
+    /bin/systemctl stop celery_local.service, \
+    /bin/systemctl stop celerybeat_local.service, \
+    /bin/systemctl stop keydb_local.service, \
+    /bin/systemctl stop file_proxy_local.service, \
+    /bin/systemctl stop minio_local.service, \
+    /bin/systemctl start minio_local.service, \
+    /bin/systemctl start file_proxy_local.service, \
+    /bin/systemctl start keydb_local.service, \
+    /bin/systemctl start celerybeat_local.service, \
+    /bin/systemctl start celery_local.service, \
+    /bin/systemctl start gunicorn_local.service, \
+    /bin/systemctl start nginx
+
+deploy-simple ALL=(root) NOPASSWD: SIMPLE_DEPLOY_SYSTEMD
+```
+
+Проверки: `sudo visudo -cf /etc/sudoers.d/simple-deploy`,
+`sudo -n -l /bin/systemctl stop celerybeat_local.service`,
+`sudo -n -l /bin/systemctl start celerybeat_local.service`.
+`systemctl status ...` в sudoers не нужен, если статус доступен без sudo.
+Если `sudo -l -U deploy-simple` дополнительно показывает `(ALL) ALL`, это
+отдельное общее sudo-правило, чаще всего через группу. Deploy на него не
+опирается: для runner достаточно точечного `NOPASSWD` списка выше. С точки
+зрения least privilege общее правило лучше убрать, но отсутствие пароля у
+`deploy-simple` делает его не блокирующим для текущего deploy.
 
 Dry-run для sudo service steps сначала смотрит общий список доступных команд через
 `sudo -n -l`, затем проверяет каждый шаг через `sudo -n -l <команда без sudo>`.
 Реальная сервисная команда на dry-run не выполняется, даже если
 `permission_check_command` задан как `sudo /bin/systemctl start ...`.
+Runtime validation считает `systemctl start/stop/restart/reload ...` без `sudo`
+ошибкой config; `systemctl status ...` без `sudo` разрешен. Deploy выполняет
+service step дословно и иначе получает `Interactive authentication required`.
 
 ## Финальный healthcheck портала
 

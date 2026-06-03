@@ -360,6 +360,30 @@ def runtime_default_preview(value: object) -> str:
     return text
 
 
+def is_bare_systemctl_command(command: object) -> bool:
+    if not isinstance(command, str):
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return bool(tokens and tokens[0] == "systemctl")
+
+
+def is_bare_systemctl_status_command(command: object) -> bool:
+    if not isinstance(command, str):
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return len(tokens) >= 3 and tokens[0] == "systemctl" and tokens[1] == "status"
+
+
+def is_disallowed_bare_systemctl_command(command: object) -> bool:
+    return is_bare_systemctl_command(command) and not is_bare_systemctl_status_command(command)
+
+
 def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
     ok = True
     unknown_keys = sorted(set(runtime) - set(DEFAULT_RUNTIME_CONFIG))
@@ -474,6 +498,9 @@ def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
             if not isinstance(command, str) or not command.strip():
                 reporter.fail(label, "command must be a non-empty string")
                 ok = False
+            elif is_disallowed_bare_systemctl_command(command):
+                reporter.fail(label, "systemctl service commands except status must use sudo")
+                ok = False
             step_phase = step.get("phase", "after_migrate")
             if step_phase not in SERVICE_PHASES:
                 reporter.fail(label, "phase must be one of: " + ", ".join(sorted(SERVICE_PHASES)))
@@ -481,6 +508,9 @@ def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
             for optional_field in ("name", "permission_check_command"):
                 if optional_field in step and not isinstance(step[optional_field], str):
                     reporter.fail(label, f"{optional_field} must be a string when set")
+                    ok = False
+                elif is_disallowed_bare_systemctl_command(step.get(optional_field)):
+                    reporter.fail(label, f"{optional_field} must use sudo for systemctl commands except status")
                     ok = False
 
     if ok:
