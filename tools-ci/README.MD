@@ -108,6 +108,9 @@ KeyDB в `after_unpack`, а явный restart `stop/start/status` KeyDB зад�
 Команды `systemctl start/stop/restart/reload ...` в `service_steps` должны идти
 через `sudo /bin/systemctl ...`. Команды `systemctl status ...` можно задавать
 без `sudo`; они выполняются после `start` и уронят deploy, если unit не активен.
+На `dry-run` bare `systemctl status ...` считается успешной проверкой доступа
+даже при `Active: inactive (dead)` и rc=3: это означает, что статус читается,
+а не что unit уже запущен.
 
 Пример `/etc/sudoers.d/simple-deploy` для текущего DEV-порядка stop/start:
 

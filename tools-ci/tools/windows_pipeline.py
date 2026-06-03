@@ -384,6 +384,10 @@ def is_disallowed_bare_systemctl_command(command: object) -> bool:
     return is_bare_systemctl_command(command) and not is_bare_systemctl_status_command(command)
 
 
+def is_readable_systemctl_status_result(command: str, result: CommandResult) -> bool:
+    return is_bare_systemctl_status_command(command) and result.rc in {0, 3}
+
+
 def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
     ok = True
     unknown_keys = sorted(set(runtime) - set(DEFAULT_RUNTIME_CONFIG))
@@ -1148,10 +1152,12 @@ def check_service_permissions(reporter: Reporter, env: dict[str, str], runtime: 
 
         result = ssh_command(env, app_user, app_host, check_command_text, "APP", timeout=30)
         output = (result.stdout or result.stderr).strip()
-        if result.rc == 0:
+        if result.rc == 0 or is_readable_systemctl_status_result(check_command_text, result):
             detail = output.splitlines()[0] if output else check_command_text
             if derived_check:
                 detail = f"{detail} (systemctl --dry-run; authorization not guaranteed)"
+            if result.rc != 0:
+                detail = f"{detail} (status readable; unit may be inactive)"
             reporter.pass_(f"service permission {label}", detail)
         else:
             reporter.fail(f"service permission {label}", output or f"rc={result.rc}")

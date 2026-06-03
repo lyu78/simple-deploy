@@ -128,6 +128,10 @@ Service steps, меняющие состояние systemd unit (`start`, `stop`
 `/bin/systemctl start/stop/restart ...` команд. Если `systemctl` лежит не в
 `/bin`, путь нужно проверить через `command -v systemctl` и использовать
 фактический путь.
+`systemctl status ...` на inactive unit возвращает rc=3; dry-run считает такой
+ответ успешной проверкой доступа, если stdout/stderr читается. В реальном deploy
+status-шаг после start остается обычной проверкой здоровья unit и должен падать,
+если service не активен.
 
 Для текущего DEV service order sudoers должен покрывать только state-changing
 команды: stop `nginx`, `gunicorn_local.service`, `celery_local.service`,

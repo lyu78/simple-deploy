@@ -19,6 +19,7 @@ from tools.windows_pipeline import (
     check_backend_data_insert_idempotency,
     check_backend_build_inputs,
     check_runtime_config,
+    check_service_permissions,
     check_ssh_runtime,
     deploy,
     derive_service_permission_check,
@@ -272,6 +273,32 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertEqual(result, {"app": True, "db": False})
         self.assertEqual(ssh_mock.call_count, 1)
         self.assertTrue(any("DB VM SSH/psql" in item for item in reporter.skipped))
+
+    def test_service_permission_accepts_readable_inactive_systemctl_status(self):
+        reporter = Reporter()
+        env = {
+            "APP_VM_USER": "deploy-simple",
+            "APP_VM_HOST": "app.example.local",
+        }
+        runtime = {
+            "service_steps": [
+                {
+                    "name": "status keydb",
+                    "command": "systemctl status keydb_local.service",
+                    "permission_check_command": "systemctl status keydb_local.service",
+                }
+            ]
+        }
+        status_output = "keydb_local.service - Key DB local\nActive: inactive (dead)\n"
+
+        with patch.object(reporter, "pass_", wraps=reporter.pass_) as pass_mock:
+            with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(3, status_output, "")):
+                check_service_permissions(reporter, env, runtime)
+
+        self.assertEqual(reporter.issues, [])
+        self.assertTrue(
+            any("status readable; unit may be inactive" in call.args[1] for call in pass_mock.call_args_list)
+        )
 
     def test_load_runtime_config_reports_defaulted_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
