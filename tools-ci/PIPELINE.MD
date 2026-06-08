@@ -128,7 +128,9 @@ SQL-архив по `--contour` и выполняет порядок:
     с `ON_ERROR_STOP` и одной транзакцией.
 11. Django management-команды из `windows_pipeline.local.json` или дефолт:
     `migrate --fake`, затем `sync_action_role`.
-12. DB maintenance SQL и service steps фазы `after_migrate`.
+12. DB maintenance SQL/scripts фазы `after_migrate`, включая информационные
+    SQL-отчеты в порядке `sql_scripts`, затем service steps фазы
+    `after_migrate`.
 13. HTTP healthcheck и проверка `build_version` в портале.
 14. Фиксация успешного применения контура в локальной SQLite-базе.
 15. Outlook email об успешном deploy, если включен.

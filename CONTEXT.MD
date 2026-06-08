@@ -433,6 +433,8 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 - Если `--include-data-sql` передан и INSERT-скрипты не идемпотентны, `create_run_all_sql.py` завершается с ненулевым кодом, и build pipeline должен упасть до продолжения упаковки релиза. Dry-run проверяет эту идемпотентность только в режиме `--include-data-sql`.
 - Windows runner deploy выбирает schema-архив по `--contour`, загружает его на DB VM, распаковывает и выполняет `summary_sql_<contour>_*.sql` из корня распакованного архива до Django management-команд. Schema SQL запускается через `psql --set=ON_ERROR_STOP=1 --single-transaction`, поэтому при ошибке весь файл откатывается PostgreSQL. Data SQL-архивы (`run_all_insert`, `run_all_update`) остаются упакованными для отдельного DB migration flow и не выполняются Windows runner на этом шаге.
 - Windows runner запускает DB maintenance SQL (`db_maintenance_sql`, например `VACUUM ANALYZE;`) отдельно от schema SQL. Таймаут этого шага настраивается через `db_maintenance_sql_timeout_seconds` в runtime JSON, по умолчанию `900` секунд; `dry-run` предупреждает о runtime-ключах, отсутствующих в локальном JSON и взятых из defaults, и валидирует итоговый runtime config, включая этот таймаут, типы boolean/list/string/int, допустимые фазы, `sql_scripts`, `service_steps`, healthcheck и Outlook-поля.
+- Информационные SQL-отчеты `sql/public_table_size_report.sql` и `sql/public_table_maintenance_diagnostics.sql` подключаются через `sql_scripts` на фазе `after_migrate` и выполняются в порядке JSON: сначала размер таблиц `public`, затем read-only диагностика `ANALYZE`/`VACUUM ANALYZE`/ручной проверки bloat и индексов. Обычный Windows deploy выполняет эти отчеты независимо от наличия data SQL-архивов; если `run_all_insert`/`run_all_update` применяются отдельным DB migration flow, такой же порядок отчетов нужно добавить в тот flow после data scripts.
+- После `69c4820` dry-run на DEV подтвержден: bare `systemctl status ...` без sudo не требует sudoers; inactive unit с rc=3 считается успешной permission-проверкой, если статус читается. Health/status failures в реальном deploy остаются runtime-проверками после start.
 - Сгенерированный schema SQL не коммитится обратно в backend source repo и не хранится в `docs/database/summary`: источником для деплоя являются только релизные архивы и manifest.
 - Ручное применение schema archive на TEST/PROD описано в `instructions/manual-schema-sql-deploy.md`; после успешного ручного применения оператор simple-deploy двигает baseline через `mark-applied`.
 - Вспомогательные функции для git output, строгого поиска одного файла и добавления файлов в tar лежат в `tools-ci/builder/src/utils.py`; `build_backend.py` оставляет у себя только backend-specific orchestration.
@@ -481,3 +483,19 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - `release-sql-migrations-flow.puml/pdf` - полный поток от dry-run до DEV/TEST/PROD;
 - `release-sql-migrations-build-dev.puml/pdf` - сборка и размещение на DEV;
 - `release-sql-migrations-test-prod.puml/pdf` - продвижение на TEST и PROD.
+
+## Внутренний контекст ревью data SQL markup
+
+Инструкция для сотрудника по исправлению разметки лежит в `instructions/sql-script-markup-remediation-plan.md`.
+Она не должна содержать тестовые команды и критерии приемки: это рабочее задание, а не checklist для исполнителя.
+
+Ожидания для внутренней проверки результата:
+
+- `create_index/**.sql` и legacy `fix_migrations/**.sql` не имеют `simple-deploy`-разметки и не попадают в `script_docs.md`;
+- единственный найденный важный неразмеченный non-fix data script - `app_ip_subcompany_prw/update/update_app_ip_subcompany_stagecost.sql`;
+- после удаления ошибочной разметки с `create_index/gasprojectdata` и добавления этого non-fix data script ожидаемо около `88` размеченных SQL-файлов;
+- `group` должен соответствовать домену и целевой таблице: в частности, LTI stagecomment не должен быть `cc_app_ip_subcompany_stagecomment`, а PNCA stagecomment не должен быть `pnca_app_ip_subcompany_stagecost`;
+- `critical=false` допустим только при явном обосновании, для обычных `insert/update/set_default/delete` базовый выбор - `critical=true`;
+- `parallel=true` допустим только для реально независимых скриптов, без записи в одну таблицу или зависимости по данным;
+- baseline по комментариям времени выполнения: примерно `7 ч 12 мин 47 сек` по 80 скриптам с распознанным временем, плюс 3 файла с `X msec`;
+- топовая задача на оптимизацию - `app_ip_subcompany_cc/update/update_stagecommissioningcc_for_cc_objects_commissioning.sql`, текущее время около `3 ч 38 мин 5 сек`.

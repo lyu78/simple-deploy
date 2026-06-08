@@ -74,6 +74,28 @@ DB_LOGIN_PASSWORD=<password>
 - `outlook_email_*` - уведомление через desktop Outlook;
 - `backup_enabled` и связанные настройки backup.
 
+Пример информационных SQL-отчетов после DB-части deploy:
+
+```json
+{
+  "sql_scripts": [
+    {
+      "path": "sql/public_table_size_report.sql",
+      "phase": "after_migrate"
+    },
+    {
+      "path": "sql/public_table_maintenance_diagnostics.sql",
+      "phase": "after_migrate"
+    }
+  ]
+}
+```
+
+Runner выполняет `sql_scripts` последовательно в порядке JSON. Поэтому отчет
+по размеру таблиц должен идти первым, а диагностика обслуживания - сразу после
+него. Вывод этих скриптов попадает в консоль и в
+`logs/<timestamp>-<command>.log`.
+
 Минимальный пример `service_steps`:
 
 ```json

@@ -8,7 +8,16 @@
     "VACUUM ANALYZE;"
   ],
   "db_maintenance_sql_timeout_seconds": 900,
-  "sql_scripts": [],
+  "sql_scripts": [
+    {
+      "path": "sql/public_table_size_report.sql",
+      "phase": "after_migrate"
+    },
+    {
+      "path": "sql/public_table_maintenance_diagnostics.sql",
+      "phase": "after_migrate"
+    }
+  ],
   "management_commands": [],
   "service_permission_checks_enabled": true,
   "service_steps": [
