@@ -93,6 +93,8 @@ SQL-диапазон.
   TEST/PROD.
 - `instructions/data-sql-script-markup.md` - правила разметки data SQL-скриптов
   backend repo.
+- `instructions/data-sql-validation-rules.md` - read-only правила проверки
+  идемпотентности и бизнес-ключей data SQL.
 - `tools-ci/tools/windows_task_scheduler/README.md` - пример запуска pipeline по
   расписанию через Windows Task Scheduler.
 - `CONTEXT.MD` - текущий технический контекст, решения и ограничения для

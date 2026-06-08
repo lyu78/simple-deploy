@@ -614,6 +614,146 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
         self.assertEqual(reporter.issues, [])
 
+    def test_dry_run_fails_on_catalog_business_key_duplicate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            insert_dir = source_repo / "docs/database/scripts/app_ip_subcompany_catalogs/insert_04_26"
+            insert_dir.mkdir(parents=True)
+            sql = insert_dir / "insert_contractsubject.sql"
+            sql.write_text(
+                "\n".join(
+                    [
+                        "INSERT INTO public.app_ip_subcompany_catalog_contractsubject (id, title)",
+                        "VALUES (1, 'same title')",
+                        "ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title;",
+                        "INSERT INTO public.app_ip_subcompany_catalog_contractsubject (id, title)",
+                        "VALUES (2, 'same title')",
+                        "ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title;",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            reporter = Reporter()
+
+            check_backend_data_insert_idempotency(
+                reporter,
+                {"BACKEND_SOURCE_REPO_PATH": str(source_repo)},
+            )
+
+        self.assertTrue(any("catalog business key duplicate" in issue for issue in reporter.issues))
+        self.assertTrue(any("same title" in issue for issue in reporter.issues))
+
+    def test_dry_run_allows_full_state_truncate_insert_sql(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            insert_dir = source_repo / "docs/database/scripts/app_ip_subcompany_cc/insert_04_26"
+            insert_dir.mkdir(parents=True)
+            sql = insert_dir / "insert_full_state.sql"
+            sql.write_text(
+                "TRUNCATE TABLE public.some_owned_table RESTART IDENTITY;\n"
+                "INSERT INTO public.some_owned_table (id) VALUES (1);\n",
+                encoding="utf-8",
+            )
+            reporter = Reporter()
+
+            check_backend_data_insert_idempotency(
+                reporter,
+                {"BACKEND_SOURCE_REPO_PATH": str(source_repo)},
+            )
+
+        self.assertEqual(reporter.issues, [])
+
+    def test_dry_run_allows_full_state_drop_create_insert_sql(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            insert_dir = source_repo / "docs/database/scripts/app_ip_subcompany_cc/insert_04_26"
+            insert_dir.mkdir(parents=True)
+            sql = insert_dir / "insert_recreated_table.sql"
+            sql.write_text(
+                "DROP TABLE IF EXISTS public.some_owned_table;\n"
+                "CREATE TABLE public.some_owned_table (id bigint PRIMARY KEY);\n"
+                "INSERT INTO public.some_owned_table (id) VALUES (1);\n",
+                encoding="utf-8",
+            )
+            reporter = Reporter()
+
+            check_backend_data_insert_idempotency(
+                reporter,
+                {"BACKEND_SOURCE_REPO_PATH": str(source_repo)},
+            )
+
+        self.assertEqual(reporter.issues, [])
+
+    def test_dry_run_fails_on_insert_new_objects_truncate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            insert_dir = (
+                source_repo
+                / "docs/database/scripts/insert_new_objects/insert_04_26/insert_cc_and_prw_objects/1_iteration"
+            )
+            insert_dir.mkdir(parents=True)
+            sql = insert_dir / "insert_app_ip_subcompany_objectplanning.sql"
+            sql.write_text(
+                "TRUNCATE TABLE public.app_ip_subcompany_objectplanning;\n"
+                "INSERT INTO public.app_ip_subcompany_objectplanning (id) VALUES (1) "
+                "ON CONFLICT DO NOTHING;\n",
+                encoding="utf-8",
+            )
+            reporter = Reporter()
+
+            check_backend_data_insert_idempotency(
+                reporter,
+                {"BACKEND_SOURCE_REPO_PATH": str(source_repo)},
+            )
+
+        self.assertTrue(any("insert-if-missing idempotency" in issue for issue in reporter.issues))
+
+    def test_dry_run_fails_on_insert_new_objects_without_do_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            insert_dir = (
+                source_repo
+                / "docs/database/scripts/insert_new_objects/insert_04_26/insert_cc_and_prw_objects/1_iteration"
+            )
+            insert_dir.mkdir(parents=True)
+            sql = insert_dir / "insert_app_ip_subcompany_objectplanning.sql"
+            sql.write_text(
+                "INSERT INTO public.app_ip_subcompany_objectplanning (id) VALUES (1) "
+                "ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id;\n",
+                encoding="utf-8",
+            )
+            reporter = Reporter()
+
+            check_backend_data_insert_idempotency(
+                reporter,
+                {"BACKEND_SOURCE_REPO_PATH": str(source_repo)},
+            )
+
+        self.assertTrue(any("insert-if-missing idempotency" in issue for issue in reporter.issues))
+
+    def test_dry_run_passes_on_insert_new_objects_do_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            insert_dir = (
+                source_repo
+                / "docs/database/scripts/insert_new_objects/insert_04_26/insert_cc_and_prw_objects/1_iteration"
+            )
+            insert_dir.mkdir(parents=True)
+            sql = insert_dir / "insert_app_ip_subcompany_objectplanning.sql"
+            sql.write_text(
+                "INSERT INTO public.app_ip_subcompany_objectplanning (id) VALUES (1) "
+                "ON CONFLICT DO NOTHING;\n",
+                encoding="utf-8",
+            )
+            reporter = Reporter()
+
+            check_backend_data_insert_idempotency(
+                reporter,
+                {"BACKEND_SOURCE_REPO_PATH": str(source_repo)},
+            )
+
+        self.assertEqual(reporter.issues, [])
+
     def test_outlook_success_email_attaches_release_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             release_dir = Path(tmp)

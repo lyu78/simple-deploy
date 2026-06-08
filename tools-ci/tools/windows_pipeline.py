@@ -67,6 +67,36 @@ DATA_SQL_MIXED_DIRS = (
     "app_ip_subcompany_onna",
     "app_ip_subcompany_prw",
 )
+DATA_SQL_INSERT_IF_MISSING_DIRS = ("insert_new_objects",)
+
+
+@dataclass(frozen=True)
+class SqlBusinessKey:
+    columns: tuple[str, ...]
+    ignore_blank: bool = False
+
+
+@dataclass(frozen=True)
+class SqlInsertRow:
+    table: str
+    columns: tuple[str, ...]
+    values: tuple[str | None, ...]
+    line: int
+
+
+@dataclass(frozen=True)
+class SqlValidationProblem:
+    path: Path
+    rule: str
+    detail: str
+
+
+CATALOG_BUSINESS_KEYS: dict[str, tuple[SqlBusinessKey, ...]] = {
+    "app_ip_subcompany_catalog_contractsubject": (SqlBusinessKey(("title",)),),
+    "app_ip_subcompany_catalog_contracttype": (SqlBusinessKey(("title",)),),
+    "app_ip_subcompany_catalog_region": (SqlBusinessKey(("code",)),),
+    "app_ip_subcompany_catalog_contractor": (SqlBusinessKey(("tin",), ignore_blank=True),),
+}
 
 
 DEFAULT_RUNTIME_CONFIG = {
@@ -775,11 +805,33 @@ def check_backend_build_inputs(reporter: Reporter, env: dict[str, str]) -> None:
 
 
 def is_data_insert_idempotent(path: Path) -> bool:
-    """Проверяет INSERT SQL тем же эвристическим правилом, что create_run_all_sql.py."""
+    """Проверяет базовую повторяемость full-state INSERT SQL."""
     content = path.read_text(encoding="utf-8", errors="ignore").upper()
     if "INSERT INTO" not in content:
         return True
-    return "ON CONFLICT" in content or "TRUNCATE" in content or "MERGE" in content
+    return (
+        "ON CONFLICT" in content
+        or "TRUNCATE" in content
+        or "MERGE" in content
+        or ("DROP TABLE" in content and "CREATE TABLE" in content)
+    )
+
+
+def is_insert_if_missing_idempotent(path: Path) -> bool:
+    """Проверяет, что insert-if-missing SQL только добавляет отсутствующие строки."""
+    content = path.read_text(encoding="utf-8", errors="ignore")
+    upper_content = content.upper()
+    if "INSERT INTO" not in upper_content:
+        return True
+    if re.search(r"\bTRUNCATE\b", content, flags=re.IGNORECASE):
+        return False
+    return bool(
+        re.search(
+            r"\bON\s+CONFLICT\b(?:.|\n)*?\bDO\s+NOTHING\b",
+            content,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def iter_sql_files(root: Path, include_insert_only: bool) -> Iterable[Path]:
@@ -795,8 +847,185 @@ def iter_sql_files(root: Path, include_insert_only: bool) -> Iterable[Path]:
         yield path
 
 
+def split_sql_statements(content: str) -> list[tuple[str, int]]:
+    statements: list[tuple[str, int]] = []
+    start = 0
+    start_line = 1
+    line = 1
+    in_string = False
+    index = 0
+    while index < len(content):
+        char = content[index]
+        if char == "'":
+            if in_string and index + 1 < len(content) and content[index + 1] == "'":
+                index += 1
+            else:
+                in_string = not in_string
+        elif char == ";" and not in_string:
+            raw_statement = content[start:index]
+            statement = raw_statement.strip()
+            if statement:
+                leading_whitespace = raw_statement[: len(raw_statement) - len(raw_statement.lstrip())]
+                statements.append((statement, start_line + leading_whitespace.count("\n")))
+            start = index + 1
+            start_line = line
+        if char == "\n":
+            line += 1
+        index += 1
+
+    raw_tail = content[start:]
+    tail = raw_tail.strip()
+    if tail:
+        leading_whitespace = raw_tail[: len(raw_tail) - len(raw_tail.lstrip())]
+        statements.append((tail, start_line + leading_whitespace.count("\n")))
+    return statements
+
+
+def split_sql_csv(text: str) -> list[str]:
+    values: list[str] = []
+    start = 0
+    depth = 0
+    in_string = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "'":
+            if in_string and index + 1 < len(text) and text[index + 1] == "'":
+                index += 1
+            else:
+                in_string = not in_string
+        elif not in_string:
+            if char == "(":
+                depth += 1
+            elif char == ")" and depth > 0:
+                depth -= 1
+            elif char == "," and depth == 0:
+                values.append(text[start:index].strip())
+                start = index + 1
+        index += 1
+    values.append(text[start:].strip())
+    return values
+
+
+def iter_values_tuples(values_sql: str) -> Iterable[tuple[str, int]]:
+    depth = 0
+    start: int | None = None
+    line = 0
+    tuple_line = 0
+    in_string = False
+    index = 0
+    while index < len(values_sql):
+        char = values_sql[index]
+        if char == "'":
+            if in_string and index + 1 < len(values_sql) and values_sql[index + 1] == "'":
+                index += 1
+            else:
+                in_string = not in_string
+        elif not in_string:
+            if char == "(":
+                if depth == 0:
+                    start = index + 1
+                    tuple_line = line
+                depth += 1
+            elif char == ")" and depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    yield values_sql[start:index], tuple_line
+                    start = None
+        if char == "\n":
+            line += 1
+        index += 1
+
+
+def parse_sql_literal(value: str) -> str | None:
+    value = value.strip()
+    if value.upper() == "NULL":
+        return None
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    return value
+
+
+def normalize_sql_table(table: str) -> str:
+    parts = [part.strip('"').lower() for part in table.split(".")]
+    return parts[-1]
+
+
+def parse_insert_rows(content: str) -> list[SqlInsertRow]:
+    rows: list[SqlInsertRow] = []
+    insert_re = re.compile(
+        r"\bINSERT\s+INTO\s+([A-Za-z0-9_\".]+)\s*\((.*?)\)\s*VALUES\s*(.*)",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for statement, statement_line in split_sql_statements(content):
+        match = insert_re.search(statement)
+        if not match:
+            continue
+        table = normalize_sql_table(match.group(1))
+        columns = tuple(column.strip().strip('"').lower() for column in split_sql_csv(match.group(2)))
+        values_line_offset = statement[: match.start(3)].count("\n")
+        values_sql = re.split(r"\bON\s+CONFLICT\b|\bRETURNING\b", match.group(3), maxsplit=1, flags=re.IGNORECASE)[0]
+        for tuple_sql, tuple_line in iter_values_tuples(values_sql):
+            values = tuple(parse_sql_literal(value) for value in split_sql_csv(tuple_sql))
+            if len(values) != len(columns):
+                continue
+            rows.append(
+                SqlInsertRow(
+                    table=table,
+                    columns=columns,
+                    values=values,
+                    line=statement_line + values_line_offset + tuple_line,
+                )
+            )
+    return rows
+
+
+def find_catalog_business_key_conflicts(path: Path, relative_path: Path) -> list[SqlValidationProblem]:
+    content = path.read_text(encoding="utf-8", errors="ignore")
+    grouped_rows: dict[tuple[str, tuple[str, ...]], dict[tuple[str | None, ...], SqlInsertRow]] = {}
+    problems: list[SqlValidationProblem] = []
+
+    for row in parse_insert_rows(content):
+        business_keys = CATALOG_BUSINESS_KEYS.get(row.table, ())
+        if not business_keys:
+            continue
+        row_by_column = dict(zip(row.columns, row.values))
+        for business_key in business_keys:
+            if not all(column in row_by_column for column in business_key.columns):
+                continue
+            key_values = tuple(row_by_column[column] for column in business_key.columns)
+            if business_key.ignore_blank and any(value in (None, "") for value in key_values):
+                continue
+
+            group_key = (row.table, business_key.columns)
+            rows_by_key = grouped_rows.setdefault(group_key, {})
+            previous = rows_by_key.get(key_values)
+            if previous is None:
+                rows_by_key[key_values] = row
+                continue
+            if previous.values == row.values:
+                continue
+
+            id_index = row.columns.index("id") if "id" in row.columns else None
+            previous_id = previous.values[id_index] if id_index is not None else "?"
+            current_id = row.values[id_index] if id_index is not None else "?"
+            problems.append(
+                SqlValidationProblem(
+                    path=relative_path,
+                    rule="catalog business key duplicate",
+                    detail=(
+                        f"{row.table} key {business_key.columns}={key_values!r} "
+                        f"conflicts at lines {previous.line} and {row.line} "
+                        f"(id {previous_id!r} vs {current_id!r})"
+                    ),
+                )
+            )
+
+    return problems
+
+
 def non_idempotent_data_insert_scripts(source_repo: Path) -> list[Path]:
-    """Находит data INSERT SQL, которые остановят create_run_all_sql.py."""
+    """Находит full-state data INSERT SQL, которые не имеют повторяемой стратегии."""
     scripts_root = source_repo / DATABASE_SCRIPTS_PREFIX
     problems: list[Path] = []
 
@@ -815,6 +1044,46 @@ def non_idempotent_data_insert_scripts(source_repo: Path) -> list[Path]:
     return sorted(problems)
 
 
+def validate_backend_data_insert_sql(source_repo: Path) -> list[SqlValidationProblem]:
+    scripts_root = source_repo / DATABASE_SCRIPTS_PREFIX
+    problems = [
+        SqlValidationProblem(
+            path=path,
+            rule="full-state idempotency",
+            detail="INSERT script must use ON CONFLICT, TRUNCATE, MERGE, or DROP TABLE + CREATE TABLE",
+        )
+        for path in non_idempotent_data_insert_scripts(source_repo)
+    ]
+
+    for directory in DATA_SQL_INSERT_DIRS:
+        root = scripts_root / directory
+        for path in iter_sql_files(root, include_insert_only=False):
+            relative_path = path.relative_to(source_repo)
+            problems.extend(find_catalog_business_key_conflicts(path, relative_path))
+
+    for directory in DATA_SQL_MIXED_DIRS:
+        root = scripts_root / directory
+        for path in iter_sql_files(root, include_insert_only=True):
+            relative_path = path.relative_to(source_repo)
+            problems.extend(find_catalog_business_key_conflicts(path, relative_path))
+
+    for directory in DATA_SQL_INSERT_IF_MISSING_DIRS:
+        root = scripts_root / directory
+        for path in iter_sql_files(root, include_insert_only=True):
+            relative_path = path.relative_to(source_repo)
+            if not is_insert_if_missing_idempotent(path):
+                problems.append(
+                    SqlValidationProblem(
+                        path=relative_path,
+                        rule="insert-if-missing idempotency",
+                        detail="insert_new_objects SQL must not TRUNCATE and must use ON CONFLICT DO NOTHING",
+                    )
+                )
+            problems.extend(find_catalog_business_key_conflicts(path, relative_path))
+
+    return sorted(problems, key=lambda problem: (problem.path.as_posix(), problem.rule, problem.detail))
+
+
 def check_backend_data_insert_idempotency(reporter: Reporter, env: dict[str, str]) -> None:
     """Проверяет idempotency data INSERT SQL до build, без создания build_scripts."""
     source_repo = Path(require_value(env, "BACKEND_SOURCE_REPO_PATH"))
@@ -823,16 +1092,19 @@ def check_backend_data_insert_idempotency(reporter: Reporter, env: dict[str, str
         reporter.skip("backend data INSERT idempotency", f"директория не найдена: {scripts_root}")
         return
 
-    problems = non_idempotent_data_insert_scripts(source_repo)
+    problems = validate_backend_data_insert_sql(source_repo)
     if not problems:
-        reporter.pass_("backend data INSERT idempotency", "все INSERT-скрипты идемпотентны")
+        reporter.pass_("backend data INSERT idempotency", "все INSERT-скрипты прошли validation rules")
         return
 
-    shown = [path.as_posix() for path in problems[:20]]
+    shown = [
+        f"{problem.path.as_posix()}: {problem.rule}: {problem.detail}"
+        for problem in problems[:20]
+    ]
     suffix = "" if len(problems) <= len(shown) else f"\n... и еще {len(problems) - len(shown)}"
     reporter.fail(
         "backend data INSERT idempotency",
-        f"найдено {len(problems)} non-idempotent INSERT script(s):\n"
+        f"найдено {len(problems)} SQL validation problem(s):\n"
         + "\n".join(shown)
         + suffix,
     )
