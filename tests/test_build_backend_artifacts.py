@@ -246,6 +246,27 @@ class BuildBackendArtifactTests(unittest.TestCase):
 
         self.assertTrue(module.check_idempotent(sql))
 
+    def test_run_all_insert_files_use_forward_slash_paths(self):
+        module = load_create_run_all_sql_module()
+        old_base_dir = module.BASE_DIR
+        old_scripts_dir = module.SCRIPTS_DIR
+        module.BASE_DIR = str(self.repo)
+        module.SCRIPTS_DIR = str(self.repo / "docs/database/scripts")
+        try:
+            insert_dir = self.repo / "docs/database/scripts/app_ip_subcompany_catalogs/insert_01_26"
+            self._write(
+                "docs/database/scripts/app_ip_subcompany_catalogs/insert_01_26/insert_catalog.sql",
+                "INSERT INTO public.catalog (id) VALUES (1) ON CONFLICT (id) DO NOTHING;\n",
+            )
+
+            self.assertEqual(
+                module.find_sql_files(str(insert_dir), check_inserts=True, errors_list=[]),
+                ["docs/database/scripts/app_ip_subcompany_catalogs/insert_01_26/insert_catalog.sql"],
+            )
+        finally:
+            module.BASE_DIR = old_base_dir
+            module.SCRIPTS_DIR = old_scripts_dir
+
     def test_update_sequential_metadata_files_are_sorted_and_exclude_inserts(self):
         module = load_create_run_all_sql_module()
         old_base_dir = module.BASE_DIR
@@ -289,8 +310,8 @@ class BuildBackendArtifactTests(unittest.TestCase):
             self.assertEqual(
                 module.find_metadata_sql_files(module.UPDATE_SEQUENTIAL_KINDS),
                 [
-                    str(Path("docs/database/scripts/domain_a/default.sql")),
-                    str(Path("docs/database/scripts/domain_b/update.sql")),
+                    "docs/database/scripts/domain_a/default.sql",
+                    "docs/database/scripts/domain_b/update.sql",
                 ],
             )
         finally:

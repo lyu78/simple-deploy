@@ -237,7 +237,7 @@ def find_sql_files(path, include_insert_only=False, check_inserts=False, errors_
         for f in files_in_dir:
             if f.endswith(".sql"):
                 full = os.path.join(root, f)
-                rel = os.path.relpath(full, BASE_DIR)
+                rel = to_archive_path(os.path.relpath(full, BASE_DIR))
 
                 if check_inserts and not check_idempotent(full):
                     msg = f"{rel}"
@@ -325,7 +325,7 @@ def find_metadata_sql_entries(kinds):
     return sorted(entries, key=lambda entry: (entry["order"], entry["group"], entry["archive_path"]))
 
 def find_metadata_sql_files(kinds):
-    return [entry["path"] for entry in find_metadata_sql_entries(kinds)]
+    return [entry["archive_path"] for entry in find_metadata_sql_entries(kinds)]
 
 def write_run_all_preamble(out, on_error_stop, session_settings=None):
     out.write(f"-- Commit: {COMMIT_HASH}\n")
