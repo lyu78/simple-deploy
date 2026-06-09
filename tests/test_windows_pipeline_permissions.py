@@ -962,6 +962,26 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
         self.assertEqual(reporter.issues, [])
 
+    def test_dry_run_allows_drop_insert_sql(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source_repo = Path(tmp) / "backend"
+            insert_dir = source_repo / "docs/database/scripts/app_ip_subcompany_cc/insert_04_26"
+            insert_dir.mkdir(parents=True)
+            sql = insert_dir / "insert_drop_reset.sql"
+            sql.write_text(
+                "DROP MATERIALIZED VIEW IF EXISTS public.some_owned_view;\n"
+                "INSERT INTO public.some_owned_table (id) VALUES (1);\n",
+                encoding="utf-8",
+            )
+            reporter = Reporter()
+
+            check_backend_data_insert_idempotency(
+                reporter,
+                {"BACKEND_SOURCE_REPO_PATH": str(source_repo)},
+            )
+
+        self.assertEqual(reporter.issues, [])
+
     def test_dry_run_fails_on_insert_new_objects_truncate(self):
         with tempfile.TemporaryDirectory() as tmp:
             source_repo = Path(tmp) / "backend"

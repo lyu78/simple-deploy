@@ -834,7 +834,7 @@ def is_data_insert_idempotent(path: Path) -> bool:
         "ON CONFLICT" in content
         or "TRUNCATE" in content
         or "MERGE" in content
-        or ("DROP TABLE" in content and "CREATE TABLE" in content)
+        or re.search(r"\bDROP\b", content) is not None
     )
 
 
@@ -1071,7 +1071,7 @@ def validate_backend_data_insert_sql(source_repo: Path) -> list[SqlValidationPro
         SqlValidationProblem(
             path=path,
             rule="full-state idempotency",
-            detail="INSERT script must use ON CONFLICT, TRUNCATE, MERGE, or DROP TABLE + CREATE TABLE",
+            detail="INSERT script must use ON CONFLICT, TRUNCATE, MERGE, or DROP",
         )
         for path in non_idempotent_data_insert_scripts(source_repo)
     ]

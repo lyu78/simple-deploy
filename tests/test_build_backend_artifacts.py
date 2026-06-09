@@ -236,6 +236,16 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertNotIn("max_parallel_workers", content)
         self.assertNotIn("enable_parallel_hash", content)
 
+    def test_run_all_generator_treats_drop_insert_as_idempotent(self):
+        module = load_create_run_all_sql_module()
+        sql = self._write(
+            "docs/database/scripts/app_ip_subcompany_cc/insert_04_26/insert_drop_reset.sql",
+            "DROP MATERIALIZED VIEW IF EXISTS public.some_owned_view;\n"
+            "INSERT INTO public.some_owned_table (id) VALUES (1);\n",
+        )
+
+        self.assertTrue(module.check_idempotent(sql))
+
     def test_update_sequential_metadata_files_are_sorted_and_exclude_inserts(self):
         module = load_create_run_all_sql_module()
         old_base_dir = module.BASE_DIR

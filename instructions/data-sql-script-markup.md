@@ -160,8 +160,7 @@ best-effort cleanup, пересчет необязательных кешей и
 - `UPDATE ... SET column = DEFAULT WHERE ...` для `set_default`;
 - `DELETE ... WHERE ...` с точным и повторяемым условием для `delete`;
 - явный `TRUNCATE + INSERT` только для таблиц, где это безопасно;
-- явный `DROP TABLE IF EXISTS + CREATE TABLE + INSERT` только для полностью
-  контролируемых таблиц;
+- явный `DROP ... + INSERT` только для полностью контролируемых объектов;
 - проверки существования объектов или данных до изменения.
 
 ## Пример insert

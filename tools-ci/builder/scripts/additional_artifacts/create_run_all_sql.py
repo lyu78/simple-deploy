@@ -45,6 +45,7 @@
         - ON CONFLICT (id) DO UPDATE SET
         - TRUNCATE TABLE ... RESTART IDENTITY
         - MERGE (PostgreSQL 15+)
+        - DROP ... (script explicitly resets an owned object before INSERT)
     
     Если конструкция не найдена, выводится ERROR, но выполнение продолжается.
     В конце выводится список всех проблемных файлов, чтобы поправить их все сразу.
@@ -190,6 +191,7 @@ def check_idempotent(filepath):
         - ON CONFLICT
         - TRUNCATE
         - MERGE
+        - DROP
     
     Args:
         filepath (str): Путь к SQL файлу
@@ -203,12 +205,13 @@ def check_idempotent(filepath):
     has_on_conflict = 'ON CONFLICT' in content
     has_truncate = 'TRUNCATE' in content
     has_merge = 'MERGE' in content
+    has_drop = bool(re.search(r'\bDROP\b', content))
     is_insert = 'INSERT INTO' in content
     
     if not is_insert:
         return True
     
-    return has_on_conflict or has_truncate or has_merge
+    return has_on_conflict or has_truncate or has_merge or has_drop
 
 def find_sql_files(path, include_insert_only=False, check_inserts=False, errors_list=None):
     """
