@@ -51,7 +51,8 @@ collections "RELEASE_ROOT_WINDOWS/<build_version>\nrelease directory" as release
 participant "release_manifest.json\ncommits + artifact metadata" as manifest
 collections "backend/frontend tar.gz\napplication artifacts" as app_artifacts
 collections "db_schema_dev/test/prod tar.gz\nschema SQL artifacts" as schema_artifacts
-collections "db_insert/db_update tar.gz\ndata SQL artifacts" as data_artifacts
+collections "db_insert/db_update_sequential/db_update_parallel tar.gz\ndata SQL artifacts" as data_artifacts
+collections "tools-ci/maintenance_stub/maintenance_stub.tar.gz\nuniversal maintenance page" as maintenance_stub
 end box
 
 box "DEV контур" #E8F8EA
@@ -77,6 +78,7 @@ runner -> backend_src: проверить Git repo и origin URL
 runner -> frontend_src: проверить Git repo и origin URL
 runner -> dev_app: проверить SSH/runtime/пути app VM
 runner -> dev_db: проверить SSH/psql/login PostgreSQL
+runner -> maintenance_stub: проверить наличие default stub archive
 runner -> logs: записать dry-run log
 runner --> operator: DRY-RUN PASS/FAIL/SKIP
 
@@ -105,11 +107,11 @@ backend_src -> backend_src: сгенерировать PostgreSQL DDL offline\n�
 backend_src --> runner: summary_sql_dev/test/prod + metadata
 
 runner -> backend_src: запустить create_run_all_sql.py
-backend_src --> runner: run_all_insert.sql + run_all_update.sql
+backend_src --> runner: run_all_insert.sql + run_all_update_sequential.sql + run_all_update_parallel.sh
 
 runner -> release_dir: создать release directory
 runner -> schema_artifacts: упаковать db_schema_dev/test/prod tar.gz
-runner -> data_artifacts: упаковать db_insert/db_update tar.gz
+runner -> data_artifacts: упаковать db_insert/db_update_sequential/db_update_parallel tar.gz
 runner -> app_artifacts: упаковать backend/frontend tar.gz
 runner -> manifest: записать build_version,\nrepo commits,\nSQL ranges,\nartifact names
 runner -> state: записать release metadata
@@ -121,14 +123,22 @@ operator -> runner: deploy --latest --contour dev
 runner -> release_dir: выбрать release
 runner -> app_artifacts: найти backend/frontend archives
 runner -> schema_artifacts: найти db_schema_dev archive
-runner -> dev_db: upload + unpack db_schema_dev
+runner -> data_artifacts: найти db_insert + db_update_parallel archives
+runner -> maintenance_stub: взять universal stub archive
+runner -> dev_app: upload backend/frontend + maintenance stub
+runner -> dev_app: service steps before_unpack\nостановить backend/workers
+runner -> dev_app: unpack maintenance stub\nв FRONTEND_RELEASE_PATH
+runner -> dev_db: upload + unpack db_schema_dev/db_insert/db_update_parallel
 runner -> dev_db: psql --single-transaction -f summary_sql_dev_*.sql
-runner -> dev_app: upload backend/frontend archives
-runner -> dev_app: очистить release paths\nс сохранением .env
-runner -> dev_app: unpack backend/frontend
+runner -> dev_db: psql -f run_all_insert_*.sql
+runner -> dev_db: bash run_all_update_parallel_*.sh\nlive [START]/[RUNNING]/wave logs
+runner -> dev_db: DB maintenance + sql_scripts
+runner -> dev_app: unpack backend
 runner -> dev_app: python manage.py migrate --fake
 runner -> dev_app: python manage.py sync_action_role
-runner -> dev_app: service steps + healthcheck
+runner -> dev_app: service steps after_migrate\nподнять backend/workers
+runner -> dev_app: unpack frontend\nзаменить stub
+runner -> dev_app: healthcheck
 
 alt DEV deploy successful
     runner -> state: mark-applied dev\nlast_success = backend commit релиза

@@ -84,6 +84,16 @@ DB-сессия/одно ядро и update/set_default нужно выполн�
 Порядок берется из metadata: сначала `order`, затем `group`, затем путь файла.
 `parallel` в этом fallback игнорируется.
 
+Для основного параллельного update-сценария генерируется
+`run_all_update_parallel_<commit>.sh`. Он использует тот же набор
+`kind=update`/`kind=set_default`, но выполняет `order` как барьерные wave:
+следующая wave стартует только после завершения предыдущей. `parallel=true`
+запускается в background с лимитом `SIMPLE_DEPLOY_UPDATE_MAX_WORKERS` (default
+`8`), а `parallel=false` выполняется эксклюзивно внутри wave. Runner печатает в
+терминал live-status `[RUNNING]` со списком активных скриптов, timing каждого
+скрипта, timing wave и общий итог; полный psql output каждого скрипта пишется в
+`logs/update_parallel/<timestamp>/scripts/*.log`.
+
 Если все `update`-скрипты зависят только от уже выполненных `insert`-скриптов и
 не зависят друг от друга, планирование похоже на задачу `P || Cmax`:
 распределение независимых работ по одинаковым параллельным машинам с

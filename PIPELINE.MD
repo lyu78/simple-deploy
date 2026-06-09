@@ -21,9 +21,9 @@
 - Внутренние Git-репозитории - целевой GitLab для синхронизированного кода и
   аудита изменений.
 - Release storage - локальная директория версий релиза с manifest и архивами.
-- DB VM - место применения schema SQL и технических SQL-команд.
-- App VM - место распаковки backend/frontend, запуска management-команд,
-  сервисных шагов и healthcheck.
+- DB VM - место применения schema SQL, data SQL и технических SQL-команд.
+- App VM - место включения maintenance-заглушки, распаковки backend/frontend,
+  запуска management-команд, сервисных шагов и healthcheck.
 
 ## Основной поток
 
@@ -38,20 +38,20 @@
    репозиториев во внутренние рабочие копии.
 4. Сборочный этап создает версию релиза в формате
    `<BUILD_VERSION_BASE>.<ddMMyyyy_HHmm>`, например `1.2.3.30052026_1437`.
-   В директорию релиза попадают runtime-архивы приложения, SQL-архивы миграций
-   и `release_manifest.json`.
+   В директорию релиза попадают runtime-архивы приложения, schema SQL-архивы,
+   data SQL-архивы при включенном data SQL build и `release_manifest.json`.
 5. Внутренние рабочие копии получают синхронизационные ветки; код публикуется во
    внутренний GitLab, а runtime-архивы остаются в release storage.
-6. DB VM получает schema SQL-архив выбранного контура и применяет summary SQL
-   перед Django management-командами. Summary SQL - это сгенерированная
-   SQL-альтернатива Django schema migrations за диапазон backend commit
-   `from..to`: от baseline контура до commit нового релиза.
-7. App VM получает backend/frontend архивы, при необходимости создается backup,
-   затем целевые директории очищаются и заполняются новым содержимым релиза.
-8. App VM выполняет пост-распаковочные действия: service steps, Django
-   `migrate --fake`, `sync_action_role`, дополнительные SQL/service steps.
-9. Рабочая машина выполняет healthcheck стенда и проверку версии портала.
-10. Результат релиза фиксируется как успешный или неуспешный. Успех двигает
+6. Для full deploy DEV app-сервисы останавливаются, а в `FRONTEND_RELEASE_PATH`
+   раскладывается универсальная maintenance-заглушка. Пока backend остановлен,
+   DB VM применяет schema SQL, `run_all_insert_*.sql`, parallel update runner
+   `run_all_update_parallel_*.sh` и DB maintenance.
+7. После успешной DB-части App VM получает настоящий backend, выполняет
+   `after_unpack`, Django `migrate --fake`, `sync_action_role` и `after_migrate`
+   service steps. Настоящий frontend раскладывается последним и заменяет
+   заглушку только после успешного старта backend.
+8. Рабочая машина выполняет healthcheck стенда и проверку версии портала.
+9. Результат релиза фиксируется как успешный или неуспешный. Успех двигает
     baseline выбранного контура на backend commit релиза; ошибка записывает
     попытку без изменения baseline.
 
@@ -59,8 +59,8 @@
 
 - Если dry-run не проходит, процесс завершается до сборки и деплоя.
 - Если сборка не создала обязательные архивы или manifest, деплой не начинается.
-- Если schema SQL не применился, backend/frontend файлы не должны считаться
-  успешно размещенными.
+- Если schema SQL или data SQL не применились, настоящий backend/frontend не
+  должны считаться успешно размещенными; maintenance-заглушка остается на DEV.
 - Если app deploy или healthcheck завершается ошибкой, baseline не двигается.
 - Если deploy успешен, release storage и локальное состояние контуров становятся
   источником для следующего диапазона SQL-миграций.
@@ -68,8 +68,8 @@
 ## Контуры
 
 DEV обычно является автоматизируемым контуром полного цикла: build, schema SQL,
-app deploy, healthcheck и фиксация успеха выполняются одним операторским
-процессом.
+data SQL, maintenance-заглушка, app deploy, healthcheck и фиксация успеха
+выполняются одним операторским процессом.
 
 TEST и PROD могут продвигаться внешним или ручным процессом. Для них критично
 после успешного применения явно зафиксировать результат, чтобы следующий build
@@ -85,6 +85,9 @@ TEST и PROD могут продвигаться внешним или ручн�
   backend-приложения.
 - `frontend_r_<release>-bf_<build_flavor>-env_<env>.tar.gz` - runtime-архив
   frontend-сборки.
+- `tools-ci/maintenance_stub/maintenance_stub.tar.gz` - универсальная статическая
+  заглушка DEV, не привязанная к версии релиза; используется только на время
+  full deploy до успешного старта backend.
 - `db_schema_dev_r_<release>-c_<commit>.tar.gz`,
   `db_schema_test_r_<release>-c_<commit>.tar.gz`,
   `db_schema_prod_r_<release>-c_<commit>.tar.gz` - schema SQL-архивы для
@@ -92,11 +95,12 @@ TEST и PROD могут продвигаться внешним или ручн�
   с SQL-представлением schema migrations за диапазон `baseline..release commit`.
 - `db_insert_r_<release>-c_<commit>.tar.gz` - data SQL-архив insert-миграций с
   `run_all_insert_<commit>.sql` и SQL-файлами, на которые он ссылается.
-- `db_update_r_<release>-c_<commit>.tar.gz` - data SQL-архив update-миграций с
-  `run_all_update_<commit>.sql` и SQL-файлами, на которые он ссылается.
 - `db_update_sequential_r_<release>-c_<commit>.tar.gz` - аварийный data SQL-архив
   последовательных update/set_default-миграций с
   `run_all_update_sequential_<commit>.sql` и SQL-файлами, на которые он ссылается.
+- `db_update_parallel_r_<release>-c_<commit>.tar.gz` - data SQL-архив
+  параллельных wave update/set_default-миграций с
+  `run_all_update_parallel_<commit>.sh` и SQL-файлами, которые он запускает.
 - `success` - релиз применен и baseline контура можно двигать вперед.
 - `failed` - попытка зафиксирована, baseline остается прежним.
 

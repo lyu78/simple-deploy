@@ -18,6 +18,7 @@ from tools.windows_pipeline import (
     build,
     check_backend_data_insert_idempotency,
     check_backend_build_inputs,
+    check_maintenance_stub_archive,
     check_runtime_config,
     check_service_permissions,
     check_ssh_runtime,
@@ -28,7 +29,11 @@ from tools.windows_pipeline import (
     management_commands,
     pipeline,
     prepare_build_env,
+    resolve_db_data_artifact,
     resolve_db_schema_artifact,
+    resolve_maintenance_stub_artifact,
+    run_db_data_insert,
+    run_db_data_update_parallel,
     run_db_schema_summary,
     run_db_maintenance,
     scp_file,
@@ -97,6 +102,62 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             self.assertEqual(artifact.entrypoint_dir, ".")
             self.assertEqual(artifact.entrypoint_pattern, "summary_sql_dev_*.sql")
 
+    def test_resolve_db_data_artifact_insert_and_parallel_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            release_dir = Path(tmp)
+            insert_path = release_dir / "db_insert_r_1.2.3-c_abc123.tar.gz"
+            update_path = release_dir / "db_update_parallel_r_1.2.3-c_abc123.tar.gz"
+            insert_path.write_text("", encoding="utf-8")
+            update_path.write_text("", encoding="utf-8")
+
+            insert = resolve_db_data_artifact({"REMOTE_TMP_ROOT": "/tmp/simple-deploy"}, "1.2.3", release_dir, "insert")
+            update = resolve_db_data_artifact(
+                {"REMOTE_TMP_ROOT": "/tmp/simple-deploy"},
+                "1.2.3",
+                release_dir,
+                "update_parallel",
+            )
+
+        self.assertEqual(insert.local_path, insert_path)
+        self.assertEqual(insert.remote_archive, "/tmp/simple-deploy/1.2.3/db_insert.tar.gz")
+        self.assertEqual(insert.remote_extract_path, "/tmp/simple-deploy/1.2.3/db_insert")
+        self.assertEqual(insert.entrypoint_pattern, "run_all_insert_*.sql")
+        self.assertEqual(update.local_path, update_path)
+        self.assertEqual(update.remote_archive, "/tmp/simple-deploy/1.2.3/db_update_parallel.tar.gz")
+        self.assertEqual(update.remote_extract_path, "/tmp/simple-deploy/1.2.3/db_update_parallel")
+        self.assertEqual(update.entrypoint_pattern, "run_all_update_parallel_*.sh")
+
+    def test_resolve_maintenance_stub_uses_fixed_archive_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stub_path = Path(tmp) / "maintenance_stub.tar.gz"
+            stub_path.write_text("", encoding="utf-8")
+            artifact = resolve_maintenance_stub_artifact(
+                {
+                    "REMOTE_TMP_ROOT": "/tmp/simple-deploy",
+                    "FRONTEND_RELEASE_PATH": "/home/admin/app-frontend/dist",
+                },
+                {"maintenance_stub_archive_path": str(stub_path)},
+                "1.2.3",
+            )
+
+        self.assertEqual(artifact.name, "maintenance_stub")
+        self.assertEqual(artifact.local_path, stub_path)
+        self.assertEqual(artifact.remote_archive, "/tmp/simple-deploy/1.2.3/maintenance_stub.tar.gz")
+        self.assertEqual(artifact.extract_path, "/home/admin/app-frontend/dist")
+
+    def test_check_maintenance_stub_archive_fails_before_deploy_when_missing(self):
+        reporter = Reporter()
+
+        check_maintenance_stub_archive(
+            reporter,
+            {
+                "maintenance_stub_enabled": True,
+                "maintenance_stub_archive_path": "tools-ci/maintenance_stub/missing.tar.gz",
+            },
+        )
+
+        self.assertTrue(any("maintenance stub archive" in issue for issue in reporter.issues))
+
     def test_scp_file_uses_requested_scope(self):
         with tempfile.TemporaryDirectory() as tmp:
             local_path = Path(tmp) / "db_schema.tar.gz"
@@ -140,6 +201,76 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertIn("--set=ON_ERROR_STOP=1", final_command)
         self.assertIn("--single-transaction", final_command)
         self.assertIn('-f "$sql_file"', final_command)
+
+    def test_run_db_data_insert_uses_psql_file_and_data_timeout(self):
+        artifact = DbSqlArtifact(
+            name="db_insert",
+            local_path=Path("db_insert.tar.gz"),
+            remote_archive="/tmp/simple-deploy/1.2.3/db_insert.tar.gz",
+            remote_extract_path="/tmp/simple-deploy/1.2.3/db_insert",
+            entrypoint_dir=".",
+            entrypoint_pattern="run_all_insert_*.sql",
+        )
+        env = {
+            "DB_VM_USER": "db-user",
+            "DB_VM_HOST": "db.example.local",
+            "DB_PORT": "5432",
+            "DB_NAME": "appdb",
+            "DB_LOGIN_USER": "postgres",
+            "DB_LOGIN_PASSWORD": "secret",
+        }
+        runtime = {"db_data_sql_timeout_seconds": 21600}
+
+        with patch("tools.windows_pipeline.upload_unpack_db_sql_artifact"):
+            with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
+                run_db_data_insert(env, runtime, artifact)
+
+        final_command = ssh_mock.call_args.args[3]
+        self.assertIn("run_all_insert_*.sql", final_command)
+        self.assertIn('-f "$sql_file"', final_command)
+        self.assertEqual(ssh_mock.call_args.kwargs["timeout"], 21600)
+
+    def test_run_db_data_update_parallel_streams_bash_runner_with_pg_env(self):
+        artifact = DbSqlArtifact(
+            name="db_update_parallel",
+            local_path=Path("db_update_parallel.tar.gz"),
+            remote_archive="/tmp/simple-deploy/1.2.3/db_update_parallel.tar.gz",
+            remote_extract_path="/tmp/simple-deploy/1.2.3/db_update_parallel",
+            entrypoint_dir=".",
+            entrypoint_pattern="run_all_update_parallel_*.sh",
+        )
+        env = {
+            "DB_VM_USER": "db-user",
+            "DB_VM_HOST": "db.example.local",
+            "DB_PORT": "5432",
+            "DB_NAME": "appdb",
+            "DB_LOGIN_USER": "postgres",
+            "DB_LOGIN_PASSWORD": "secret",
+        }
+        runtime = {
+            "db_psql_bin": "psql",
+            "db_psql_host": "localhost",
+            "db_data_sql_timeout_seconds": 12345,
+            "db_update_parallel_max_workers": 4,
+            "db_update_parallel_status_interval_seconds": 15,
+        }
+
+        with patch("tools.windows_pipeline.upload_unpack_db_sql_artifact"):
+            with patch("tools.windows_pipeline.stream_ssh_command", return_value=CommandResult(0, "", "")) as stream_mock:
+                run_db_data_update_parallel(env, runtime, artifact)
+
+        command = stream_mock.call_args.args[3]
+        self.assertIn("run_all_update_parallel_*.sh", command)
+        self.assertIn("PGHOST='localhost'", command)
+        self.assertIn("PGPORT='5432'", command)
+        self.assertIn("PGUSER='postgres'", command)
+        self.assertIn("PGDATABASE='appdb'", command)
+        self.assertIn("PSQL_BIN='psql'", command)
+        self.assertIn("SIMPLE_DEPLOY_UPDATE_MAX_WORKERS='4'", command)
+        self.assertIn("SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS='15'", command)
+        self.assertIn('bash "$runner"', command)
+        self.assertEqual(stream_mock.call_args.kwargs["timeout"], 12345)
+        self.assertEqual(stream_mock.call_args.kwargs["mask"], ["secret"])
 
     def test_run_db_maintenance_uses_configured_timeout(self):
         env = {
@@ -407,6 +538,29 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertTrue(deploy_args.latest)
         self.assertEqual(deploy_args.build_version, "")
 
+    def test_pipeline_enables_data_sql_build_when_deploy_uses_data_sql(self):
+        args = Namespace(
+            env_file=Path(".env"),
+            secrets_file=Path("local.secrets.env"),
+            config_file=Path("windows_pipeline.local.json"),
+            timeout=3600,
+            build_version="",
+            latest=False,
+            contour="dev",
+            include_data_sql=False,
+            app_only=False,
+        )
+
+        with patch("tools.windows_pipeline.load_runtime_config", return_value=({"data_sql_enabled": True}, [])):
+            with patch("tools.windows_pipeline.dry_run", return_value=True) as dry_run_mock:
+                with patch("tools.windows_pipeline.build", return_value=0) as build_mock:
+                    with patch("tools.windows_pipeline.deploy", return_value=0):
+                        self.assertEqual(pipeline(args), 0)
+
+        self.assertTrue(args.include_data_sql)
+        self.assertTrue(dry_run_mock.call_args.args[0].include_data_sql)
+        self.assertTrue(build_mock.call_args.args[0].include_data_sql)
+
     def test_deploy_failure_records_failed_attempt(self):
         args = Namespace(
             env_file=Path(".env"),
@@ -489,6 +643,123 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         )
         healthcheck_mock.assert_called_once()
         mark_applied_mock.assert_called_once_with("dev", "1.2.3", release_dir)
+
+    def test_deploy_full_keeps_frontend_stub_until_backend_is_started(self):
+        args = Namespace(
+            env_file=Path(".env"),
+            secrets_file=Path("local.secrets.env"),
+            config_file=Path("windows_pipeline.local.json"),
+            build_version="1.2.3",
+            latest=False,
+            contour="dev",
+            app_only=False,
+        )
+        env = {
+            "APP_VM_USER": "deploy-simple",
+            "APP_VM_HOST": "app.example.local",
+            "APP_WORKDIR": "/home/admin/app-backend",
+            "APP_VENV_ACTIVATE_PATH": "/home/admin/app-backend/venv/bin/activate",
+            "REMOTE_TMP_ROOT": "/tmp/simple-deploy",
+            "DEV_DOMAIN": "dev.example.local",
+        }
+        runtime = {
+            "service_steps": [],
+            "healthcheck_enabled": True,
+            "maintenance_stub_enabled": True,
+            "data_sql_enabled": True,
+        }
+        release_dir = Path("releases") / "1.2.3"
+        backend = Artifact("backend", Path("backend.tar.gz"), "/tmp/simple-deploy/1.2.3/backend.tar.gz", "/opt/backend")
+        frontend = Artifact(
+            "frontend",
+            Path("frontend.tar.gz"),
+            "/tmp/simple-deploy/1.2.3/frontend.tar.gz",
+            "/opt/frontend",
+        )
+        stub = Artifact(
+            "maintenance_stub",
+            Path("maintenance_stub.tar.gz"),
+            "/tmp/simple-deploy/1.2.3/maintenance_stub.tar.gz",
+            "/opt/frontend",
+        )
+        db_schema = DbSqlArtifact("db_schema_dev", Path("schema.tar.gz"), "", "", ".", "summary_sql_dev_*.sql")
+        db_insert = DbSqlArtifact("db_insert", Path("insert.tar.gz"), "", "", ".", "run_all_insert_*.sql")
+        db_update = DbSqlArtifact(
+            "db_update_parallel",
+            Path("update.tar.gz"),
+            "",
+            "",
+            ".",
+            "run_all_update_parallel_*.sh",
+        )
+        events = []
+
+        def service_side_effect(_env, _runtime, phase):
+            events.append(f"service:{phase}")
+
+        def unpack_side_effect(_env, artifact):
+            events.append(f"unpack:{artifact.name}")
+
+        def maintenance_side_effect(_env, _runtime, phase):
+            events.append(f"maintenance:{phase}")
+
+        def data_artifact_side_effect(_env, _build_version, _release_dir, kind):
+            return {"insert": db_insert, "update_parallel": db_update}[kind]
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
+            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=("1.2.3", release_dir)))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact", return_value=db_schema))
+            stack.enter_context(
+                patch("tools.windows_pipeline.resolve_db_data_artifact", side_effect=data_artifact_side_effect)
+            )
+            stack.enter_context(patch("tools.windows_pipeline.resolve_maintenance_stub_artifact", return_value=stub))
+            stack.enter_context(
+                patch("tools.windows_pipeline.upload_app_artifacts", side_effect=lambda *_args: events.append("upload"))
+            )
+            stack.enter_context(
+                patch("tools.windows_pipeline.backup_app_artifacts", side_effect=lambda *_args: events.append("backup"))
+            )
+            stack.enter_context(patch("tools.windows_pipeline.run_service_steps", side_effect=service_side_effect))
+            stack.enter_context(patch("tools.windows_pipeline.unpack_app_artifact", side_effect=unpack_side_effect))
+            stack.enter_context(
+                patch("tools.windows_pipeline.run_db_schema_summary", side_effect=lambda *_args: events.append("db:schema"))
+            )
+            stack.enter_context(
+                patch("tools.windows_pipeline.run_db_data_insert", side_effect=lambda *_args: events.append("db:insert"))
+            )
+            stack.enter_context(
+                patch(
+                    "tools.windows_pipeline.run_db_data_update_parallel",
+                    side_effect=lambda *_args: events.append("db:update_parallel"),
+                )
+            )
+            stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance", side_effect=maintenance_side_effect))
+            stack.enter_context(patch("tools.windows_pipeline.management_commands", return_value=["python manage.py migrate"]))
+            stack.enter_context(
+                patch(
+                    "tools.windows_pipeline.ssh_command",
+                    side_effect=lambda *_args, **_kwargs: events.append("management") or CommandResult(0, "", ""),
+                )
+            )
+            stack.enter_context(patch("tools.windows_pipeline.healthcheck", side_effect=lambda *_args: events.append("healthcheck")))
+            stack.enter_context(patch("tools.windows_pipeline.mark_contour_applied"))
+            stack.enter_context(patch("tools.windows_pipeline.send_outlook_success_email"))
+
+            self.assertEqual(deploy(args), 0)
+
+        self.assertLess(events.index("service:before_unpack"), events.index("unpack:maintenance_stub"))
+        self.assertLess(events.index("unpack:maintenance_stub"), events.index("db:schema"))
+        self.assertLess(events.index("db:schema"), events.index("db:insert"))
+        self.assertLess(events.index("db:insert"), events.index("db:update_parallel"))
+        self.assertLess(events.index("db:update_parallel"), events.index("unpack:backend"))
+        self.assertLess(events.index("unpack:backend"), events.index("service:after_unpack"))
+        self.assertLess(events.index("service:after_unpack"), events.index("management"))
+        self.assertLess(events.index("management"), events.index("service:after_migrate"))
+        self.assertLess(events.index("service:after_migrate"), events.index("unpack:frontend"))
+        self.assertLess(events.index("unpack:frontend"), events.index("healthcheck"))
 
     def test_deploy_failure_record_error_preserves_original_error(self):
         args = Namespace(

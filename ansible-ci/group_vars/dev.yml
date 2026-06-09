@@ -145,12 +145,12 @@ db_migration_artifacts:
     remote_extract_path: "{{ remote_release_dir }}/db_insert"
     entrypoint_pattern: "run_all_insert_*.sql"
     entrypoint_dir: "."
-  - name: db_update
+  - name: db_update_sequential
     sql_kind: update
-    pattern: "db_update_r_{{ effective_build_version }}-c_*.tar.gz"
-    remote_archive: "{{ remote_release_dir }}/db_update.tar.gz"
-    remote_extract_path: "{{ remote_release_dir }}/db_update"
-    entrypoint_pattern: "run_all_update_*.sql"
+    pattern: "db_update_sequential_r_{{ effective_build_version }}-c_*.tar.gz"
+    remote_archive: "{{ remote_release_dir }}/db_update_sequential.tar.gz"
+    remote_extract_path: "{{ remote_release_dir }}/db_update_sequential"
+    entrypoint_pattern: "run_all_update_sequential_*.sql"
     entrypoint_dir: "."
 
 # Опциональная резервная копия текущей раскладки перед распаковкой. Пока целевая раскладка не подтверждена,

@@ -242,6 +242,16 @@ insert-скрипты занимают меньше минуты на фоне u
 с `ON_ERROR_STOP=1`. Это fallback для одного ядра/одной DB-сессии; основной
 сценарий параллельного update-runner-а должен развиваться отдельно.
 
+Основной параллельный update-сценарий выделяется в
+`run_all_update_parallel_<commit>.sh` и архив
+`db_update_parallel_r_<release>-c_<commit>.tar.gz`. Runner проходит `order` как
+барьерные wave, запускает `parallel=true` с лимитом
+`SIMPLE_DEPLOY_UPDATE_MAX_WORKERS=8` по умолчанию, выполняет `parallel=false`
+эксклюзивно и использует fail-fast. В терминале видны `[START]`, периодический
+`[RUNNING]` со списком активных скриптов, `[OK]`/`[FAIL]`, длительность каждого
+скрипта, wave и общий итог; полный psql output лежит в
+`logs/update_parallel/<timestamp>/scripts/*.log`.
+
 Файлы с неизвестным временем:
 
 ```text

@@ -1,13 +1,19 @@
 {
   "backup_enabled": false,
+  "maintenance_stub_enabled": true,
+  "maintenance_stub_archive_path": "tools-ci/maintenance_stub/maintenance_stub.tar.gz",
+  "data_sql_enabled": true,
   "db_maintenance_enabled": true,
   "db_psql_bin": "psql",
   "db_psql_host": "localhost",
-  "db_maintenance_sql_phase": "before_unpack",
+  "db_maintenance_sql_phase": "after_migrate",
   "db_maintenance_sql": [
     "VACUUM ANALYZE;"
   ],
   "db_maintenance_sql_timeout_seconds": 900,
+  "db_data_sql_timeout_seconds": 21600,
+  "db_update_parallel_max_workers": 8,
+  "db_update_parallel_status_interval_seconds": 30,
   "sql_scripts": [
     {
       "path": "sql/public_table_size_report.sql",

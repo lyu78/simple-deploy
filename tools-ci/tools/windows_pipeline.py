@@ -57,6 +57,7 @@ DEFAULT_LOG_DIR = ROOT / "logs"
 DEFAULT_TIMEOUT = 20
 RELEASE_MANIFEST_NAME = "release_manifest.json"
 DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
+DEFAULT_MAINTENANCE_STUB_ARCHIVE = "tools-ci/maintenance_stub/maintenance_stub.tar.gz"
 PIP_TRUSTED_HOSTS = "pypi.org files.pythonhosted.org pypi.python.org"
 INCLUDE_DATA_SQL_ENV = "SIMPLE_DEPLOY_INCLUDE_DATA_SQL"
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
@@ -101,12 +102,18 @@ CATALOG_BUSINESS_KEYS: dict[str, tuple[SqlBusinessKey, ...]] = {
 
 DEFAULT_RUNTIME_CONFIG = {
     "backup_enabled": False,
+    "maintenance_stub_enabled": True,
+    "maintenance_stub_archive_path": DEFAULT_MAINTENANCE_STUB_ARCHIVE,
+    "data_sql_enabled": True,
     "db_maintenance_enabled": True,
     "db_psql_bin": "psql",
     "db_psql_host": "localhost",
-    "db_maintenance_sql_phase": "before_unpack",
+    "db_maintenance_sql_phase": "after_migrate",
     "db_maintenance_sql": ["VACUUM ANALYZE;"],
     "db_maintenance_sql_timeout_seconds": 900,
+    "db_data_sql_timeout_seconds": 21600,
+    "db_update_parallel_max_workers": 8,
+    "db_update_parallel_status_interval_seconds": 30,
     "sql_scripts": [],
     "management_commands": [],
     "service_permission_checks_enabled": True,
@@ -137,6 +144,8 @@ DB_MAINTENANCE_PHASES = {"before_unpack", "before_migrate", "after_migrate"}
 SERVICE_PHASES = {"before_unpack", "after_unpack", "after_migrate"}
 RUNTIME_BOOL_FIELDS = (
     "backup_enabled",
+    "maintenance_stub_enabled",
+    "data_sql_enabled",
     "db_maintenance_enabled",
     "service_permission_checks_enabled",
     "healthcheck_enabled",
@@ -147,6 +156,9 @@ RUNTIME_BOOL_FIELDS = (
 )
 RUNTIME_POSITIVE_INT_FIELDS = (
     "db_maintenance_sql_timeout_seconds",
+    "db_data_sql_timeout_seconds",
+    "db_update_parallel_max_workers",
+    "db_update_parallel_status_interval_seconds",
     "healthcheck_retries",
     "healthcheck_delay",
     "portal_version_asset_limit",
@@ -281,6 +293,14 @@ def decode_subprocess_output(data: bytes | str | None) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def mask_text(text: str, mask: Iterable[str] = ()) -> str:
+    masked = text
+    for secret in mask:
+        if secret:
+            masked = masked.replace(secret, "***")
+    return masked
+
+
 def run_command(
     args: list[str],
     cwd: Path | None = None,
@@ -307,10 +327,8 @@ def run_command(
 
     stdout = decode_subprocess_output(completed.stdout)
     stderr = decode_subprocess_output(completed.stderr)
-    for secret in mask:
-        if secret:
-            stdout = stdout.replace(secret, "***")
-            stderr = stderr.replace(secret, "***")
+    stdout = mask_text(stdout, mask)
+    stderr = mask_text(stderr, mask)
     return CommandResult(completed.returncode, stdout, stderr)
 
 
@@ -319,8 +337,11 @@ def stream_command(
     cwd: Path | None = None,
     timeout: int | None = None,
     env: dict[str, str] | None = None,
+    mask: Iterable[str] = (),
 ) -> int:
-    print(f"RUN {' '.join(args)}", flush=True)
+    mask_values = tuple(mask)
+    printable_args = [mask_text(str(arg), mask_values) for arg in args]
+    print(f"RUN {' '.join(printable_args)}", flush=True)
     process = subprocess.Popen(
         args,
         cwd=cwd,
@@ -332,7 +353,7 @@ def stream_command(
     try:
         assert process.stdout is not None
         for line in process.stdout:
-            print(decode_subprocess_output(line), end="", flush=True)
+            print(mask_text(decode_subprocess_output(line), mask_values), end="", flush=True)
             if timeout is not None and time.monotonic() - start > timeout:
                 process.kill()
                 print(f"ERROR: timeout after {timeout}s", file=sys.stderr, flush=True)
@@ -440,7 +461,7 @@ def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
         reporter.fail(f"runtime {field}", "expected positive integer")
         ok = False
 
-    for field in ("db_psql_bin", "db_psql_host"):
+    for field in ("db_psql_bin", "db_psql_host", "maintenance_stub_archive_path"):
         value = runtime.get(field)
         if isinstance(value, str) and value.strip():
             continue
@@ -1165,6 +1186,23 @@ def ssh_command(
     )
 
 
+def stream_ssh_command(
+    env: dict[str, str],
+    user: str,
+    host: str,
+    command: str,
+    scope: str,
+    timeout: int | None = None,
+    mask: Iterable[str] = (),
+) -> CommandResult:
+    rc = stream_command(
+        ssh_base_args(env, user, host, scope) + [command],
+        timeout=timeout,
+        mask=mask,
+    )
+    return CommandResult(rc, "", "")
+
+
 def scp_file(
     env: dict[str, str],
     local_path: Path,
@@ -1194,6 +1232,24 @@ def sh_quote(value: str | Path) -> str:
     return "'" + text.replace("'", "'\"'\"'") + "'"
 
 
+def runtime_local_path(path_value: object) -> Path:
+    path = Path(str(path_value)).expanduser()
+    if path.is_absolute():
+        return path
+    return ROOT / path
+
+
+def check_maintenance_stub_archive(reporter: Reporter, runtime: dict) -> None:
+    if not runtime.get("maintenance_stub_enabled", True):
+        reporter.skip("maintenance stub archive", "disabled")
+        return
+    path = runtime_local_path(runtime.get("maintenance_stub_archive_path", DEFAULT_MAINTENANCE_STUB_ARCHIVE))
+    if path.is_file():
+        reporter.pass_("maintenance stub archive", str(path))
+    else:
+        reporter.fail("maintenance stub archive", f"not found: {path}")
+
+
 def check_ssh_runtime(reporter: Reporter, env: dict[str, str], app_only: bool = False) -> dict[str, bool]:
     app_user = require_value(env, "APP_VM_USER")
     app_host = require_value(env, "APP_VM_HOST")
@@ -1220,7 +1276,13 @@ def check_ssh_runtime(reporter: Reporter, env: dict[str, str], app_only: bool = 
 
     db_user = require_value(env, "DB_VM_USER")
     db_host = require_value(env, "DB_VM_HOST")
-    db = ssh_command(env, db_user, db_host, "echo ok && command -v psql >/dev/null", "DB")
+    db = ssh_command(
+        env,
+        db_user,
+        db_host,
+        "echo ok && command -v psql bash tar find rm chmod >/dev/null",
+        "DB",
+    )
     if db.rc == 0:
         reporter.pass_("DB VM SSH/psql", db.stdout.strip())
         result["db"] = True
@@ -1632,6 +1694,12 @@ def dry_run(args: argparse.Namespace) -> bool:
             reporter.fail(f"env {key}", "значение не задано")
 
     runtime_config_ok = check_runtime_config(reporter, runtime)
+    if app_only:
+        reporter.skip("maintenance stub archive", "app-only mode")
+    elif runtime_config_ok:
+        check_maintenance_stub_archive(reporter, runtime)
+    else:
+        reporter.skip("maintenance stub archive", "runtime config invalid")
 
     check_command(reporter, "Python", [sys.executable, "--version"])
     check_windows_command(reporter, "git", "git --version")
@@ -1833,6 +1901,78 @@ def resolve_db_schema_artifact(
     return artifact
 
 
+def resolve_db_data_artifact(
+    env: dict[str, str],
+    build_version: str,
+    release_dir: Path,
+    kind: str,
+) -> DbSqlArtifact:
+    specs = {
+        "insert": (
+            "db_insert",
+            f"db_insert_r_{build_version}-c_*.tar.gz",
+            "db_insert.tar.gz",
+            "db_insert",
+            "run_all_insert_*.sql",
+        ),
+        "update_parallel": (
+            "db_update_parallel",
+            f"db_update_parallel_r_{build_version}-c_*.tar.gz",
+            "db_update_parallel.tar.gz",
+            "db_update_parallel",
+            "run_all_update_parallel_*.sh",
+        ),
+    }
+    if kind not in specs:
+        raise RuntimeError(f"Unsupported DB data artifact kind: {kind}")
+    if not release_dir.is_dir():
+        raise RuntimeError(f"Release directory does not exist: {release_dir}")
+
+    name, pattern, remote_archive_name, remote_extract_name, entrypoint_pattern = specs[kind]
+    print(f"RESOLVE DB data artifact {name} in: {release_dir}", flush=True)
+    matches = [path for path in release_dir.iterdir() if path.is_file() and fnmatch.fnmatch(path.name, pattern)]
+    if not matches:
+        raise RuntimeError(f"DB data artifact not found in {release_dir} by pattern {pattern}")
+
+    newest = max(matches, key=lambda path: path.stat().st_mtime)
+    remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    artifact = DbSqlArtifact(
+        name=name,
+        local_path=newest,
+        remote_archive=f"{remote_dir}/{remote_archive_name}",
+        remote_extract_path=f"{remote_dir}/{remote_extract_name}",
+        entrypoint_dir=".",
+        entrypoint_pattern=entrypoint_pattern,
+    )
+    print(
+        f"RESOLVE DB data artifact {name}: {artifact.local_path.name} -> {artifact.remote_extract_path}",
+        flush=True,
+    )
+    return artifact
+
+
+def resolve_maintenance_stub_artifact(env: dict[str, str], runtime: dict, build_version: str) -> Artifact:
+    local_path = runtime_local_path(runtime.get("maintenance_stub_archive_path", DEFAULT_MAINTENANCE_STUB_ARCHIVE))
+    if not local_path.is_file():
+        raise RuntimeError(f"Maintenance stub archive not found: {local_path}")
+    remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    artifact = Artifact(
+        name="maintenance_stub",
+        local_path=local_path,
+        remote_archive=f"{remote_dir}/maintenance_stub.tar.gz",
+        extract_path=require_value(env, "FRONTEND_RELEASE_PATH"),
+    )
+    print(f"RESOLVE maintenance stub: {artifact.local_path} -> {artifact.extract_path}", flush=True)
+    return artifact
+
+
+def require_artifact(artifacts: list[Artifact], name: str) -> Artifact:
+    for artifact in artifacts:
+        if artifact.name == name:
+            return artifact
+    raise RuntimeError(f"Resolved app artifact is missing: {name}")
+
+
 def run_or_raise(label: str, result: CommandResult, mask: Iterable[str] = ()) -> None:
     print(f"CHECK {label}", flush=True)
     stdout = result.stdout.strip()
@@ -1872,7 +2012,67 @@ def remote_clean_unpack_command(artifact: Artifact) -> str:
     )
 
 
-def remote_db_schema_unpack_command(artifact: DbSqlArtifact) -> str:
+def upload_app_artifacts(env: dict[str, str], artifacts: list[Artifact], remote_dir: str) -> None:
+    app_user = require_value(env, "APP_VM_USER")
+    app_host = require_value(env, "APP_VM_HOST")
+    print(f"RUN create remote release dir: {remote_dir}", flush=True)
+    run_or_raise(
+        "create remote release dir",
+        ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(remote_dir)}", "APP"),
+    )
+    for artifact in artifacts:
+        print(f"RUN upload {artifact.name}: {artifact.local_path} -> {artifact.remote_archive}", flush=True)
+        run_or_raise(
+            f"upload {artifact.name}",
+            scp_file(env, artifact.local_path, app_user, app_host, artifact.remote_archive),
+        )
+
+
+def backup_app_artifacts(env: dict[str, str], runtime: dict, build_version: str, artifacts: list[Artifact]) -> None:
+    if not runtime.get("backup_enabled", False):
+        return
+
+    app_user = require_value(env, "APP_VM_USER")
+    app_host = require_value(env, "APP_VM_HOST")
+    backup_root = f"{env.get('BACKUP_ROOT_BASE', '/tmp/simple-deploy-backups').rstrip('/')}/{build_version}"
+    print(f"RUN create backup root: {backup_root}", flush=True)
+    run_or_raise(
+        "create backup root",
+        ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(backup_root)}", "APP"),
+    )
+    for artifact in artifacts:
+        extract_path = artifact.extract_path.rstrip("/")
+        backup_parent = str(PurePosixPath(extract_path).parent)
+        backup_name = PurePosixPath(extract_path).name
+        command = (
+            f"test -d {sh_quote(artifact.extract_path)} && "
+            f"tar -czf {sh_quote(backup_root + '/' + artifact.name + '.tar.gz')} "
+            f"-C {sh_quote(backup_parent)} {sh_quote(backup_name)}"
+        )
+        print(f"RUN backup {artifact.name}: {artifact.extract_path}", flush=True)
+        run_or_raise(
+            f"backup {artifact.name}",
+            ssh_command(env, app_user, app_host, command, "APP", timeout=120),
+        )
+
+
+def unpack_app_artifact(env: dict[str, str], artifact: Artifact) -> None:
+    command = remote_clean_unpack_command(artifact)
+    print(f"RUN unpack {artifact.name}: {artifact.remote_archive} -> {artifact.extract_path}", flush=True)
+    run_or_raise(
+        f"unpack {artifact.name}",
+        ssh_command(
+            env,
+            require_value(env, "APP_VM_USER"),
+            require_value(env, "APP_VM_HOST"),
+            command,
+            "APP",
+            timeout=120,
+        ),
+    )
+
+
+def remote_db_sql_unpack_command(artifact: DbSqlArtifact) -> str:
     return (
         "set -e; "
         f"archive={sh_quote(artifact.remote_archive)}; "
@@ -1887,11 +2087,14 @@ def remote_db_schema_unpack_command(artifact: DbSqlArtifact) -> str:
     )
 
 
-def run_db_schema_summary(env: dict[str, str], runtime: dict, artifact: DbSqlArtifact) -> None:
+def remote_db_schema_unpack_command(artifact: DbSqlArtifact) -> str:
+    return remote_db_sql_unpack_command(artifact)
+
+
+def upload_unpack_db_sql_artifact(env: dict[str, str], artifact: DbSqlArtifact) -> None:
     db_user = require_value(env, "DB_VM_USER")
     db_host = require_value(env, "DB_VM_HOST")
     remote_dir = str(PurePosixPath(artifact.remote_archive).parent)
-    psql_base, mask = db_psql_base_command(env, runtime)
 
     print(f"RUN create DB remote release dir: {remote_dir}", flush=True)
     run_or_raise(
@@ -1908,8 +2111,16 @@ def run_db_schema_summary(env: dict[str, str], runtime: dict, artifact: DbSqlArt
     print(f"RUN unpack {artifact.name}: {artifact.remote_archive} -> {artifact.remote_extract_path}", flush=True)
     run_or_raise(
         f"unpack {artifact.name}",
-        ssh_command(env, db_user, db_host, remote_db_schema_unpack_command(artifact), "DB", timeout=120),
+        ssh_command(env, db_user, db_host, remote_db_sql_unpack_command(artifact), "DB", timeout=120),
     )
+
+
+def run_db_schema_summary(env: dict[str, str], runtime: dict, artifact: DbSqlArtifact) -> None:
+    db_user = require_value(env, "DB_VM_USER")
+    db_host = require_value(env, "DB_VM_HOST")
+    psql_base, mask = db_psql_base_command(env, runtime)
+
+    upload_unpack_db_sql_artifact(env, artifact)
 
     command = (
         "set -e; "
@@ -1922,6 +2133,70 @@ def run_db_schema_summary(env: dict[str, str], runtime: dict, artifact: DbSqlArt
     print(f"RUN DB schema summary SQL: {artifact.remote_extract_path}/{artifact.entrypoint_dir}", flush=True)
     result = ssh_command(env, db_user, db_host, command, "DB", timeout=300, mask=mask)
     run_or_raise("DB schema summary SQL", result, mask=mask)
+
+
+def run_db_data_insert(env: dict[str, str], runtime: dict, artifact: DbSqlArtifact) -> None:
+    db_user = require_value(env, "DB_VM_USER")
+    db_host = require_value(env, "DB_VM_HOST")
+    psql_base, mask = db_psql_base_command(env, runtime)
+    timeout = int(runtime.get("db_data_sql_timeout_seconds", 21600))
+
+    upload_unpack_db_sql_artifact(env, artifact)
+
+    command = (
+        "set -e; "
+        f"cd {sh_quote(artifact.remote_extract_path)}; "
+        f"sql_file=$(find {sh_quote(artifact.entrypoint_dir)} -maxdepth 1 -type f "
+        f"-name {sh_quote(artifact.entrypoint_pattern)} | sort | tail -n 1); "
+        'test -n "$sql_file"; '
+        f"{psql_base} -f \"$sql_file\""
+    )
+    print(f"RUN DB data insert SQL: {artifact.remote_extract_path}/{artifact.entrypoint_dir}", flush=True)
+    result = ssh_command(env, db_user, db_host, command, "DB", timeout=timeout, mask=mask)
+    run_or_raise("DB data insert SQL", result, mask=mask)
+
+
+def run_db_data_update_parallel(env: dict[str, str], runtime: dict, artifact: DbSqlArtifact) -> None:
+    db_user = require_value(env, "DB_VM_USER")
+    db_host = require_value(env, "DB_VM_HOST")
+    password = env.get("DB_LOGIN_PASSWORD", "")
+    timeout = int(runtime.get("db_data_sql_timeout_seconds", 21600))
+
+    upload_unpack_db_sql_artifact(env, artifact)
+
+    runner_env = {
+        "PGHOST": str(runtime.get("db_psql_host", "localhost")),
+        "PGPORT": require_value(env, "DB_PORT"),
+        "PGUSER": env.get("DB_LOGIN_USER", "postgres"),
+        "PGDATABASE": require_value(env, "DB_NAME"),
+        "PGPASSWORD": password,
+        "PSQL_BIN": str(runtime.get("db_psql_bin", "psql")),
+        "SIMPLE_DEPLOY_UPDATE_MAX_WORKERS": str(runtime.get("db_update_parallel_max_workers", 8)),
+        "SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS": str(
+            runtime.get("db_update_parallel_status_interval_seconds", 30)
+        ),
+    }
+    env_prefix = " ".join(f"{name}={sh_quote(value)}" for name, value in runner_env.items())
+    command = (
+        "set -e; "
+        f"cd {sh_quote(artifact.remote_extract_path)}; "
+        f"runner=$(find {sh_quote(artifact.entrypoint_dir)} -maxdepth 1 -type f "
+        f"-name {sh_quote(artifact.entrypoint_pattern)} | sort | tail -n 1); "
+        'test -n "$runner"; '
+        'chmod +x "$runner"; '
+        f"{env_prefix} bash \"$runner\""
+    )
+    print(f"RUN DB data update parallel: {artifact.remote_extract_path}/{artifact.entrypoint_dir}", flush=True)
+    result = stream_ssh_command(
+        env,
+        db_user,
+        db_host,
+        command,
+        "DB",
+        timeout=timeout,
+        mask=[password],
+    )
+    run_or_raise("DB data update parallel", result, mask=[password])
 
 
 def run_service_steps(env: dict[str, str], runtime: dict, phase: str) -> None:
@@ -2282,57 +2557,65 @@ def deploy(args: argparse.Namespace) -> int:
 
         if app_only:
             print("SKIP DB steps: app-only mode", flush=True)
+            app_upload_artifacts = artifacts
+            backend_artifact = None
+            frontend_artifact = None
+            maintenance_stub_artifact = None
+            db_schema_artifact = None
+            db_insert_artifact = None
+            db_update_parallel_artifact = None
         else:
+            backend_artifact = require_artifact(artifacts, "backend")
+            frontend_artifact = require_artifact(artifacts, "frontend")
             db_schema_artifact = resolve_db_schema_artifact(env, build_version, release_dir, contour)
-            run_db_maintenance(env, runtime, "before_unpack")
+            if runtime.get("data_sql_enabled", True):
+                db_insert_artifact = resolve_db_data_artifact(env, build_version, release_dir, "insert")
+                db_update_parallel_artifact = resolve_db_data_artifact(
+                    env,
+                    build_version,
+                    release_dir,
+                    "update_parallel",
+                )
+            else:
+                db_insert_artifact = None
+                db_update_parallel_artifact = None
+                print("SKIP DB data SQL artifacts: disabled", flush=True)
+            if runtime.get("maintenance_stub_enabled", True):
+                maintenance_stub_artifact = resolve_maintenance_stub_artifact(env, runtime, build_version)
+            else:
+                maintenance_stub_artifact = None
+                print("SKIP maintenance stub: disabled", flush=True)
+            app_upload_artifacts = [
+                artifact
+                for artifact in (backend_artifact, frontend_artifact, maintenance_stub_artifact)
+                if artifact is not None
+            ]
+
+        upload_app_artifacts(env, app_upload_artifacts, remote_dir)
+        backup_app_artifacts(env, runtime, build_version, artifacts)
+
         run_service_steps(env, runtime, "before_unpack")
 
-        print(f"RUN create remote release dir: {remote_dir}", flush=True)
-        run_or_raise(
-            "create remote release dir",
-            ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(remote_dir)}", "APP"),
-        )
-        for artifact in artifacts:
-            print(f"RUN upload {artifact.name}: {artifact.local_path} -> {artifact.remote_archive}", flush=True)
-            run_or_raise(
-                f"upload {artifact.name}",
-                scp_file(env, artifact.local_path, app_user, app_host, artifact.remote_archive),
-            )
-
-        if runtime.get("backup_enabled", False):
-            backup_root = f"{env.get('BACKUP_ROOT_BASE', '/tmp/simple-deploy-backups').rstrip('/')}/{build_version}"
-            print(f"RUN create backup root: {backup_root}", flush=True)
-            run_or_raise(
-                "create backup root",
-                ssh_command(env, app_user, app_host, f"mkdir -p {sh_quote(backup_root)}", "APP"),
-            )
+        if app_only:
             for artifact in artifacts:
-                extract_path = artifact.extract_path.rstrip("/")
-                backup_parent = str(PurePosixPath(extract_path).parent)
-                backup_name = PurePosixPath(extract_path).name
-                command = (
-                    f"test -d {sh_quote(artifact.extract_path)} && "
-                    f"tar -czf {sh_quote(backup_root + '/' + artifact.name + '.tar.gz')} "
-                    f"-C {sh_quote(backup_parent)} {sh_quote(backup_name)}"
-                )
-                print(f"RUN backup {artifact.name}: {artifact.extract_path}", flush=True)
-                run_or_raise(
-                    f"backup {artifact.name}",
-                    ssh_command(env, app_user, app_host, command, "APP", timeout=120),
-                )
+                unpack_app_artifact(env, artifact)
+        else:
+            if maintenance_stub_artifact is not None:
+                unpack_app_artifact(env, maintenance_stub_artifact)
+            else:
+                print("SKIP maintenance stub unpack: disabled", flush=True)
 
-        for artifact in artifacts:
-            command = remote_clean_unpack_command(artifact)
-            print(f"RUN unpack {artifact.name}: {artifact.remote_archive} -> {artifact.extract_path}", flush=True)
-            run_or_raise(
-                f"unpack {artifact.name}",
-                ssh_command(env, app_user, app_host, command, "APP", timeout=120),
-            )
+            run_db_schema_summary(env, runtime, db_schema_artifact)
+            if db_insert_artifact is not None:
+                run_db_data_insert(env, runtime, db_insert_artifact)
+            if db_update_parallel_artifact is not None:
+                run_db_data_update_parallel(env, runtime, db_update_parallel_artifact)
+            for phase in ("before_unpack", "before_migrate", "after_migrate"):
+                run_db_maintenance(env, runtime, phase)
+
+            unpack_app_artifact(env, backend_artifact)
 
         run_service_steps(env, runtime, "after_unpack")
-        if not app_only:
-            run_db_maintenance(env, runtime, "before_migrate")
-            run_db_schema_summary(env, runtime, db_schema_artifact)
 
         for command in management_commands(env, runtime):
             remote = (
@@ -2346,9 +2629,10 @@ def deploy(args: argparse.Namespace) -> int:
                 ssh_command(env, app_user, app_host, remote, "APP", timeout=300),
             )
 
-        if not app_only:
-            run_db_maintenance(env, runtime, "after_migrate")
         run_service_steps(env, runtime, "after_migrate")
+
+        if not app_only:
+            unpack_app_artifact(env, frontend_artifact)
 
         if runtime.get("healthcheck_enabled", True):
             healthcheck(env, runtime, build_version)
@@ -2451,6 +2735,14 @@ def healthcheck(env: dict[str, str], runtime: dict, expected_version: str = "") 
 
 
 def pipeline(args: argparse.Namespace) -> int:
+    if not getattr(args, "app_only", False) and not getattr(args, "include_data_sql", False):
+        try:
+            runtime, _defaulted_runtime_keys = load_runtime_config(args.config_file)
+        except Exception:
+            runtime = {}
+        if runtime.get("data_sql_enabled", True):
+            print("PIPELINE enable data SQL build: data_sql_enabled=true", flush=True)
+            args.include_data_sql = True
     if not dry_run(args):
         return 1
     build_rc = build(args)

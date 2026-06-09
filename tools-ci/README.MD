@@ -70,9 +70,23 @@ DB_LOGIN_PASSWORD=<password>
 - `service_steps` - сервисные команды на app VM;
 - `management_commands` - Django management-команды;
 - `db_maintenance_sql` и `sql_scripts` - дополнительные SQL-шаги;
+- `maintenance_stub_enabled` и `maintenance_stub_archive_path` - универсальная
+  статическая заглушка для full deploy;
+- `data_sql_enabled`, `db_data_sql_timeout_seconds`,
+  `db_update_parallel_max_workers` и
+  `db_update_parallel_status_interval_seconds` - запуск data SQL в full deploy;
 - `healthcheck_commands` - дополнительные проверки;
 - `outlook_email_*` - уведомление через desktop Outlook;
 - `backup_enabled` и связанные настройки backup.
+
+Default maintenance-заглушка лежит в
+`tools-ci/maintenance_stub/maintenance_stub.tar.gz`. Это готовый статический
+архив, не привязанный к release version. Full deploy загружает его на app VM и
+распаковывает в `FRONTEND_RELEASE_PATH` перед DB-частью. Архив должен
+раскрываться через `tar -xzf ... --strip-components=1`, поэтому текущий default
+имеет верхний каталог `build/`, внутри которого лежат `index.html` и `assets/`.
+Если `maintenance_stub_enabled=true`, `dry-run` проверяет наличие этого файла
+до остановки сервисов.
 
 Пример информационных SQL-отчетов после DB-части deploy:
 
@@ -217,9 +231,9 @@ systemctl status celerybeat_local.service
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest --app-only
 ```
 
-`--app-only` пропускает DB maintenance, DB schema artifact и `psql`, но заново
-выполняет app service steps, upload/unpack backend/frontend, Django management,
-healthcheck и фиксацию baseline.
+`--app-only` пропускает maintenance-заглушку, DB maintenance, DB schema/data
+artifacts и `psql`, но заново выполняет app service steps, upload/unpack
+backend/frontend, Django management, healthcheck и фиксацию baseline.
 
 Полный локальный цикл:
 
@@ -227,6 +241,9 @@ healthcheck и фиксацию baseline.
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --include-data-sql
 ```
+
+Если в runtime config `data_sql_enabled=true`, команда `pipeline` включает
+data SQL build автоматически, даже если `--include-data-sql` не передан явно.
 
 Фиксация внешнего TEST/PROD результата:
 
@@ -245,6 +262,7 @@ healthcheck и фиксацию baseline.
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
 - идемпотентность data INSERT SQL, которые попадут в `run_all_insert`, если
   передан `--include-data-sql`;
+- наличие default maintenance stub archive, если `maintenance_stub_enabled=true`;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
 - SSH-доступ к app VM и DB VM;
@@ -289,11 +307,12 @@ Schema SQL генерируется offline через Django schema editor в �
 `--include-data-sql`:
 
 - `db_insert_r_<release>-c_<commit>.tar.gz` с `run_all_insert_<commit>.sql`;
-- `db_update_r_<release>-c_<commit>.tar.gz` с `run_all_update_<commit>.sql`.
-- `db_update_sequential_r_<release>-c_<commit>.tar.gz` с `run_all_update_sequential_<commit>.sql`.
+- `db_update_sequential_r_<release>-c_<commit>.tar.gz` с `run_all_update_sequential_<commit>.sql`;
+- `db_update_parallel_r_<release>-c_<commit>.tar.gz` с `run_all_update_parallel_<commit>.sh`.
 
-Data SQL-архивы остаются артефактами отдельного DB migration flow. Windows
-runner deploy применяет только schema SQL-архив выбранного контура.
+В штатном full deploy Windows runner применяет `db_insert` и
+`db_update_parallel` после schema SQL. `db_update_sequential` остается
+аварийным ручным вариантом для последовательного запуска на одной DB-сессии.
 
 ## Deploy
 
@@ -305,10 +324,15 @@ SQL-архив по `--contour`, загружает его на DB VM и при�
 psql --set=ON_ERROR_STOP=1 --single-transaction
 ```
 
-Runner выполняет DB maintenance `before_unpack`, останавливает сервисы,
-распаковывает backend/frontend, применяет schema SQL, выполняет Django
-management-команды, `after_migrate` service steps, healthcheck и при успешном
-завершении двигает baseline выбранного контура. Если `deploy` или `pipeline` падает после выбора релиза, runner
+Runner заранее загружает app-артефакты, останавливает сервисы, распаковывает
+`tools-ci/maintenance_stub/maintenance_stub.tar.gz` в `FRONTEND_RELEASE_PATH`,
+затем при остановленном backend выполняет schema SQL, `run_all_insert_*.sql`,
+`run_all_update_parallel_*.sh` и DB maintenance. После DB-части runner
+распаковывает backend, выполняет `after_unpack`, Django management-команды и
+`after_migrate` service steps. Настоящий frontend распаковывается последним,
+после успешного старта backend, заменяя заглушку перед healthcheck.
+
+Если `deploy` или `pipeline` падает после выбора релиза, runner
 автоматически пишет failed attempt в `deployment_attempts` без сдвига baseline.
 Для TEST/PROD, если применение выполнялось внешним или ручным процессом,
 используйте `mark-applied` или `mark-failed`.

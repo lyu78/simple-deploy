@@ -38,6 +38,7 @@ from src.utils import (
 logging.basicConfig(level=logging.INFO)
 
 INCLUDE_RE = re.compile(r"^\s*\\i\s+['\"]?([^'\"\s]+)['\"]?")
+SHELL_INCLUDE_RE = re.compile(r"^\s*#\s*simple-deploy-include:\s*([^\s]+)\s*$")
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
 DEFAULT_BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH = "requirements.txt"
@@ -283,35 +284,54 @@ def _require_schema_metadata_after_generator(build_scripts_dir: Path) -> Path:
     return schema_metadata_path
 
 
+def _validate_db_script_include_path(repo: Path, owner: Path, include_text: str) -> Path:
+    include_path = Path(include_text)
+    if include_path.is_absolute() or ".." in include_path.parts:
+        raise RuntimeError(f"Invalid include path in {owner}: {include_path}")
+
+    if not include_path.is_relative_to(DATABASE_SCRIPTS_PREFIX):
+        raise RuntimeError(
+            f"Include path in {owner} must be inside {DATABASE_SCRIPTS_PREFIX}: {include_path}"
+        )
+
+    source_path = repo / include_path
+    if not source_path.is_file():
+        raise RuntimeError(f"Include file referenced by {owner} was not found: {source_path}")
+
+    return include_path
+
+
 def _run_all_include_paths(repo: Path, run_all_sql: Path) -> list[Path]:
     """Return the docs/database/scripts files referenced by a run_all SQL file."""
     include_paths: list[Path] = []
-
     for line in run_all_sql.read_text(encoding="utf-8").splitlines():
         match = INCLUDE_RE.match(line)
         if not match:
             continue
 
-        include_path = Path(match.group(1))
-        if include_path.is_absolute() or ".." in include_path.parts:
-            raise RuntimeError(f"Invalid include path in {run_all_sql}: {include_path}")
-
-        if not include_path.is_relative_to(DATABASE_SCRIPTS_PREFIX):
-            raise RuntimeError(
-                f"Include path in {run_all_sql} must be inside {DATABASE_SCRIPTS_PREFIX}: {include_path}"
-            )
-
-        source_path = repo / include_path
-        if not source_path.is_file():
-            raise RuntimeError(f"Include file referenced by {run_all_sql} was not found: {source_path}")
-
-        include_paths.append(include_path)
+        include_paths.append(_validate_db_script_include_path(repo, run_all_sql, match.group(1)))
 
     return sorted(set(include_paths))
 
 
 def _add_run_all_includes_to_tar(archive: tarfile.TarFile, repo: Path, run_all_sql: Path) -> None:
     for include_path in _run_all_include_paths(repo, run_all_sql):
+        add_file_to_tar(archive, repo / include_path, include_path.as_posix())
+
+
+def _shell_runner_include_paths(repo: Path, runner: Path) -> list[Path]:
+    """Return the docs/database/scripts files referenced by a generated shell runner."""
+    include_paths: list[Path] = []
+    for line in runner.read_text(encoding="utf-8").splitlines():
+        match = SHELL_INCLUDE_RE.match(line)
+        if not match:
+            continue
+        include_paths.append(_validate_db_script_include_path(repo, runner, match.group(1)))
+    return sorted(set(include_paths))
+
+
+def _add_shell_runner_includes_to_tar(archive: tarfile.TarFile, repo: Path, runner: Path) -> None:
+    for include_path in _shell_runner_include_paths(repo, runner):
         add_file_to_tar(archive, repo / include_path, include_path.as_posix())
 
 
@@ -386,19 +406,22 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
             )
             _log_matching_files(
                 build_scripts_dir,
-                f"run_all_update_{commit_hash}.sql",
-                "run_all update SQL",
-            )
-            _log_matching_files(
-                build_scripts_dir,
                 f"run_all_update_sequential_{commit_hash}.sql",
                 "run_all update sequential SQL",
             )
+            _log_matching_files(
+                build_scripts_dir,
+                f"run_all_update_parallel_{commit_hash}.sh",
+                "run_all update parallel runner",
+            )
             run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
-            run_all_update = one_match(build_scripts_dir, f"run_all_update_{commit_hash}.sql")
             run_all_update_sequential = one_match(
                 build_scripts_dir,
                 f"run_all_update_sequential_{commit_hash}.sql",
+            )
+            run_all_update_parallel = one_match(
+                build_scripts_dir,
+                f"run_all_update_parallel_{commit_hash}.sh",
             )
             data_archives["db_insert_archive"] = _create_db_sql_artifact(
                 release_dir,
@@ -410,16 +433,6 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                     _add_run_all_includes_to_tar(archive, source_repo, run_all_insert),
                 ),
             )
-            data_archives["db_update_archive"] = _create_db_sql_artifact(
-                release_dir,
-                "update",
-                build_version,
-                commit_hash,
-                lambda archive: (
-                    add_file_to_tar(archive, run_all_update, run_all_update.name),
-                    _add_run_all_includes_to_tar(archive, source_repo, run_all_update),
-                ),
-            )
             data_archives["db_update_sequential_archive"] = _create_db_sql_artifact(
                 release_dir,
                 "update_sequential",
@@ -428,6 +441,16 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                 lambda archive: (
                     add_file_to_tar(archive, run_all_update_sequential, run_all_update_sequential.name),
                     _add_run_all_includes_to_tar(archive, source_repo, run_all_update_sequential),
+                ),
+            )
+            data_archives["db_update_parallel_archive"] = _create_db_sql_artifact(
+                release_dir,
+                "update_parallel",
+                build_version,
+                commit_hash,
+                lambda archive: (
+                    add_file_to_tar(archive, run_all_update_parallel, run_all_update_parallel.name),
+                    _add_shell_runner_includes_to_tar(archive, source_repo, run_all_update_parallel),
                 ),
             )
     finally:
