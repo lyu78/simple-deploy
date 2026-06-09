@@ -25,21 +25,23 @@ C:\vibe-repo\simple-deploy\instructions\data-sql-script-markup.md
 - `critical` должен отражать риск для бизнес-состояния;
 - `parallel/order` должны быть пригодны для фактического параллельного запуска в нескольких сессиях.
 
-Текущее состояние по ревью:
+Текущее состояние после исправления разметки:
 
 - всего SQL-файлов: `105`;
-- размечено: `95`;
-- без разметки: `10`;
-- из размеченных файлов `8` относятся к `create_index/gasprojectdata` и должны быть очищены от разметки;
-- из неразмеченных файлов `1` является важным data-changing скриптом и должен получить разметку;
-- `fix_migrations/**` являются legacy-мусором и не должны получать `simple-deploy`-разметку.
+- размечено: `88`;
+- без разметки: `17`;
+- `create_index/**` не имеют `simple-deploy`-разметки;
+- `fix_migrations/**` не имеют `simple-deploy`-разметки;
+- все размеченные data-changing scripts имеют полный набор полей
+  `kind/order/group/parallel/critical`;
+- `critical=false` не используется.
 
-Ожидаемое состояние после исправления:
+Ожидаемое состояние для поддержки:
 
 - `create_index/**.sql` не имеют `simple-deploy`-разметки;
 - `fix_migrations/**.sql` не имеют `simple-deploy`-разметки;
 - важные data-changing scripts имеют полный набор полей `kind/order/group/parallel/critical`;
-- ориентировочно должно остаться `88` размеченных SQL-файлов: `95 - 8 create_index + 1 missing data script`;
+- ориентировочно остается `88` размеченных SQL-файлов;
 - `script_docs.md` не содержит `create_index` и `fix_migrations`.
 
 ## Что удалить из разметки
@@ -203,16 +205,42 @@ cc_app_ip_subcompany_stagecomment
 prw_app_ip_subcompany_stagecomment
 ```
 
-Для таких групп базовое безопасное решение: `parallel=false`, пока не доказана независимость по строкам и отсутствуют конфликты блокировок.
+Для таких групп одинаковый `group` не является автоматическим запретом на
+`parallel=true`, если фильтры разводят ячейки данных. Практическое правило:
+параллельные скрипты не должны писать в одну и ту же ячейку - одну строку и один
+столбец. Для stagecost/stagecomment это проверяется по доменному фильтру
+`partition_item_id`, полному ключу строки (`object_planning_id`, `stage_id`,
+`year_type`, `planning_item`, `scenario_planning`, `cost_item`) и обновляемому
+столбцу. Если после запуска появятся lock waits или deadlock-и, детализацию
+`group` и распределение по `order` нужно пересмотреть отдельно.
 
 ## Baseline по времени выполнения
 
-По комментариям `Query returned successfully in ...` найдено:
+Пересчет по текущим комментариям `Query returned successfully in ...`:
 
-- файлов с временем: `83`;
-- файлов с распознанным временем: `80`;
-- файлов с неизвестным временем: `3`;
-- суммарное распознанное время: примерно `7 ч 12 мин 47 сек`.
+- `insert` без `insert_new_objects/**`: `18` файлов, все с распознанным
+  временем, сумма `26.724 сек`;
+- `insert` вместе с `insert_new_objects/**`: `23` файла, время есть у `19`,
+  сумма распознанного времени `27.035 сек`; новые объекты не входят в текущую
+  задачу и остаются отдельным backlog-пунктом;
+- `set_default`: `8` файлов, время распознано у `5`, минимум `1 мин 12 сек`;
+- `update`: `57` файлов, время распознано у всех `57`, последовательная сумма
+  `4 ч 34 мин 20 сек`.
+
+Решение по insert-фазе: обычные insert-скрипты оставляем на существующем
+последовательном `run_all_insert` с `ON_ERROR_STOP=1` и проверкой
+идемпотентности. Отдельный insert-parallel runner не нужен, потому что обычные
+insert-скрипты занимают меньше минуты на фоне update-фазы. `insert_new_objects/**`
+не входит в текущую оптимизацию и остается backlog-темой для ручного
+одноразового применения.
+
+Аварийный последовательный update-сценарий выделяется в отдельный
+`run_all_update_sequential_<commit>.sql` и отдельный архив
+`db_update_sequential_r_<release>-c_<commit>.tar.gz`. Он включает только
+`kind=update` и `kind=set_default`, исключает `kind=insert` и
+`insert_new_objects/**`, сортирует файлы по `order`, `group`, path и запускается
+с `ON_ERROR_STOP=1`. Это fallback для одного ядра/одной DB-сессии; основной
+сценарий параллельного update-runner-а должен развиваться отдельно.
 
 Файлы с неизвестным временем:
 
@@ -222,10 +250,17 @@ app_ip_subcompany_cc\set_default\update_set_null_for_stagecomment.sql
 app_ip_subcompany_prw\set_default\update_set_null_for_stagecomment.sql
 ```
 
-Отдельно: неразмеченный, но важный и небыстрый скрипт:
+Сумма `update` по текущим order-волнам:
 
 ```text
-app_ip_subcompany_prw\update\update_app_ip_subcompany_stagecost.sql - 6 мин 52 сек
+500: 1.335 сек
+501: 1.335 сек
+503: 3.635 сек
+504: 1.635 сек
+600: 2 ч 29 мин 17 сек
+601: 51 мин 5 сек
+602: 11 мин 28 сек
+603: 2 мин 22 сек
 ```
 
 ## Топ-10 самых медленных скриптов
@@ -234,16 +269,16 @@ app_ip_subcompany_prw\update\update_app_ip_subcompany_stagecost.sql - 6 мин 5
 
 | # | Скрипт | Текущее время |
 |---|---|---:|
-| 1 | `app_ip_subcompany_cc\update\update_stagecommissioningcc_for_cc_objects_commissioning.sql` | 3 ч 38 мин 5 сек |
-| 2 | `app_ip_subcompany_prw\update\update_app_ip_subcompany_stagecostprw_first_stage.sql` | 40 мин |
-| 3 | `app_ip_subcompany\update\cc\update_stagecost_for_cc_objects_subcompany_cost_cost_item_limit.sql` | 21 мин 1 сек |
-| 4 | `app_ip_subcompany\update\prw\update_stagecost_for_prw_objects_subcompany_cost_five_years_first_stage.sql` | 18 мин 16 сек |
-| 5 | `app_ip_subcompany\update\cc\update_stagecost_for_cc_objects_subcompany_cost_plannings_first_stage.sql` | 13 мин 28 сек |
-| 6 | `app_ip_subcompany\update\prw\update_stagecost_for_prw_objects_investment_commission_cost_plannings_first_stage.sql` | 13 мин 25 сек |
-| 7 | `app_ip_subcompany\update\cc\update_stagecost_for_cc_objects_ic_cost_item_limit.sql` | 13 мин 23 сек |
-| 8 | `app_ip_subcompany_onna\update\update_stagecostonna.sql` | 10 мин 42 сек |
-| 9 | `app_ip_subcompany_onna\update\update_stagecomment.sql` | 10 мин 32 сек |
-| 10 | `app_ip_subcompany\update\cc\update_stagecost_for_cc_objects_investment_commission_cost_plannings_first_stage.sql` | 9 мин 7 сек |
+| 1 | `app_ip_subcompany_prw\update\update_app_ip_subcompany_stagecostprw_first_stage.sql` | 40 мин |
+| 2 | `app_ip_subcompany\update\cc\update_stagecost_for_cc_objects_subcompany_cost_cost_item_limit.sql` | 21 мин 1 сек |
+| 3 | `app_ip_subcompany\update\prw\update_stagecost_for_prw_objects_subcompany_cost_five_years_first_stage.sql` | 18 мин 16 сек |
+| 4 | `app_ip_subcompany\update\cc\update_stagecost_for_cc_objects_subcompany_cost_plannings_first_stage.sql` | 13 мин 28 сек |
+| 5 | `app_ip_subcompany\update\prw\update_stagecost_for_prw_objects_investment_commission_cost_plannings_first_stage.sql` | 13 мин 25 сек |
+| 6 | `app_ip_subcompany\update\cc\update_stagecost_for_cc_objects_ic_cost_item_limit.sql` | 13 мин 23 сек |
+| 7 | `app_ip_subcompany_onna\update\update_stagecostonna.sql` | 11 мин 42 сек |
+| 8 | `app_ip_subcompany_onna\update\update_stagecomment.sql` | 11 мин 32 сек |
+| 9 | `app_ip_subcompany\update\cc\update_stagecost_for_cc_objects_investment_commission_cost_plannings_first_stage.sql` | 9 мин 7 сек |
+| 10 | `app_ip_subcompany\update\cc\update_stagecost_for_cc_objects_investment_commission_cost_estimate_cost_cost_item_limit.sql` | 8 мин 52 сек |
 
 Что проверить в задаче на оптимизацию:
 

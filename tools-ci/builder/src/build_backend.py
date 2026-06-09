@@ -389,8 +389,17 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                 f"run_all_update_{commit_hash}.sql",
                 "run_all update SQL",
             )
+            _log_matching_files(
+                build_scripts_dir,
+                f"run_all_update_sequential_{commit_hash}.sql",
+                "run_all update sequential SQL",
+            )
             run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
             run_all_update = one_match(build_scripts_dir, f"run_all_update_{commit_hash}.sql")
+            run_all_update_sequential = one_match(
+                build_scripts_dir,
+                f"run_all_update_sequential_{commit_hash}.sql",
+            )
             data_archives["db_insert_archive"] = _create_db_sql_artifact(
                 release_dir,
                 "insert",
@@ -409,6 +418,16 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                 lambda archive: (
                     add_file_to_tar(archive, run_all_update, run_all_update.name),
                     _add_run_all_includes_to_tar(archive, source_repo, run_all_update),
+                ),
+            )
+            data_archives["db_update_sequential_archive"] = _create_db_sql_artifact(
+                release_dir,
+                "update_sequential",
+                build_version,
+                commit_hash,
+                lambda archive: (
+                    add_file_to_tar(archive, run_all_update_sequential, run_all_update_sequential.name),
+                    _add_run_all_includes_to_tar(archive, source_repo, run_all_update_sequential),
                 ),
             )
     finally:

@@ -105,6 +105,32 @@ class BuildBackendArtifactTests(unittest.TestCase):
             ],
         )
 
+    def test_update_sequential_archive_contains_entrypoint_and_its_includes(self):
+        self._write("docs/database/scripts/app/update/a.sql")
+        run_all = self._write(
+            "run_all_update_sequential_abc123.sql",
+            "\\i 'docs/database/scripts/app/update/a.sql'\n",
+        )
+
+        archive_name = _create_db_sql_artifact(
+            self.release_dir,
+            "update_sequential",
+            "1.2.3",
+            "abc123",
+            lambda archive: (
+                add_file_to_tar(archive, run_all, run_all.name),
+                _add_run_all_includes_to_tar(archive, self.repo, run_all),
+            ),
+        )
+
+        self.assertEqual(
+            self._tar_names(archive_name),
+            [
+                "docs/database/scripts/app/update/a.sql",
+                "run_all_update_sequential_abc123.sql",
+            ],
+        )
+
     def test_schema_archive_contains_only_summary_sql(self):
         summary = self._write("build_scripts/summary_sql_dev_2026_abc123.sql")
 
@@ -163,6 +189,66 @@ class BuildBackendArtifactTests(unittest.TestCase):
             self.assertIn(f"{setting}\n", content)
         self.assertTrue(content.rstrip().endswith("SET synchronous_commit = ON;"))
         self.assertIn("\\i 'docs/database/scripts/app/insert/a.sql'\n", content)
+
+    def test_update_sequential_preamble_uses_conservative_session_settings(self):
+        module = load_create_run_all_sql_module()
+        out = io.StringIO()
+
+        module.write_run_all_preamble(out, 1, module.PSQL_SEQUENTIAL_SESSION_SETTINGS)
+        content = out.getvalue()
+
+        self.assertIn("\\set ON_ERROR_STOP 1\n", content)
+        for setting in module.PSQL_SEQUENTIAL_SESSION_SETTINGS:
+            self.assertIn(f"{setting}\n", content)
+        self.assertNotIn("max_parallel_workers", content)
+        self.assertNotIn("enable_parallel_hash", content)
+
+    def test_update_sequential_metadata_files_are_sorted_and_exclude_inserts(self):
+        module = load_create_run_all_sql_module()
+        old_base_dir = module.BASE_DIR
+        old_scripts_dir = module.SCRIPTS_DIR
+        module.BASE_DIR = str(self.repo)
+        module.SCRIPTS_DIR = str(self.repo / "docs/database/scripts")
+        try:
+            self._write(
+                "docs/database/scripts/domain_b/update.sql",
+                "-- simple-deploy: kind=update\n"
+                "-- simple-deploy: order=20\n"
+                "-- simple-deploy: group=domain.b\n"
+                "select 1;\n",
+            )
+            self._write(
+                "docs/database/scripts/domain_a/default.sql",
+                "-- simple-deploy: kind=set_default\n"
+                "-- simple-deploy: order=10\n"
+                "-- simple-deploy: group=domain.a\n"
+                "select 1;\n",
+            )
+            self._write(
+                "docs/database/scripts/domain_a/insert.sql",
+                "-- simple-deploy: kind=insert\n"
+                "-- simple-deploy: order=1\n"
+                "-- simple-deploy: group=domain.a\n"
+                "select 1;\n",
+            )
+            self._write(
+                "docs/database/scripts/insert_new_objects/manual_update.sql",
+                "-- simple-deploy: kind=update\n"
+                "-- simple-deploy: order=1\n"
+                "-- simple-deploy: group=manual\n"
+                "select 1;\n",
+            )
+
+            self.assertEqual(
+                module.find_metadata_sql_files(module.UPDATE_SEQUENTIAL_KINDS),
+                [
+                    str(Path("docs/database/scripts/domain_a/default.sql")),
+                    str(Path("docs/database/scripts/domain_b/update.sql")),
+                ],
+            )
+        finally:
+            module.BASE_DIR = old_base_dir
+            module.SCRIPTS_DIR = old_scripts_dir
 
     def test_missing_backend_build_venv_is_created_in_source_repo(self):
         source_repo = self.root / "source"
@@ -319,6 +405,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertFalse(manifest["db_data_sql_enabled"])
         self.assertNotIn("db_insert_archive", manifest)
         self.assertNotIn("db_update_archive", manifest)
+        self.assertNotIn("db_update_sequential_archive", manifest)
         self.assertEqual(set(manifest["db_schema_archives"]), {"dev", "test", "prod"})
 
     def test_db_migrations_archives_include_data_sql_when_enabled(self):
@@ -356,6 +443,10 @@ class BuildBackendArtifactTests(unittest.TestCase):
                     "\\set ON_ERROR_STOP 0\n",
                     encoding="utf-8",
                 )
+                (build_scripts_dir / "run_all_update_sequential_abc123.sql").write_text(
+                    "\\set ON_ERROR_STOP 1\n",
+                    encoding="utf-8",
+                )
 
         env = {
             "RELEASE_ROOT_WINDOWS": str(self.release_dir),
@@ -379,6 +470,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertTrue(manifest["db_data_sql_enabled"])
         self.assertIn("db_insert_archive", manifest)
         self.assertIn("db_update_archive", manifest)
+        self.assertIn("db_update_sequential_archive", manifest)
 
     def test_backend_build_requirements_path_can_be_configured(self):
         source_repo = self.root / "source"

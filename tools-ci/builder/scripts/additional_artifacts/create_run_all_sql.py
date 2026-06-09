@@ -12,8 +12,9 @@
 
 ================================================================================
 НАЗНАЧЕНИЕ:
-    Автоматически собирает все SQL скрипты из директорий миграций в два итоговых
-    файла: run_all_insert.sql и run_all_update.sql с хэшем коммита в имени.
+    Автоматически собирает SQL скрипты из директорий миграций в итоговые
+    файлы run_all_insert.sql, run_all_update.sql и run_all_update_sequential.sql
+    с хэшем коммита в имени.
     INSERT скрипты проверяются на идемпотентность.
 
 ================================================================================
@@ -30,7 +31,8 @@
     │   ├── app_ip_subcompany_lti/          # всё -> UPDATE
     │   └── app_ip_subcompany_pnca/         # всё -> UPDATE
     │   ├── run_all_insert_<hash>.sql       # генерируется
-    │   └── run_all_update_<hash>.sql       # генерируется
+    │   ├── run_all_update_<hash>.sql       # генерируется
+    │   └── run_all_update_sequential_<hash>.sql # генерируется
 
 ================================================================================
 ПРАВИЛА РАСПРЕДЕЛЕНИЯ СКРИПТОВ:
@@ -60,6 +62,10 @@
         - ON_ERROR_STOP = 0  (ошибки логируются, выполнение продолжается)
         - Все UPDATE/DELETE/прочие скрипты
 
+    run_all_update_sequential_<hash>.sql:
+        - ON_ERROR_STOP = 1  (аварийный строгий fallback)
+        - Только kind=update и kind=set_default по simple-deploy metadata
+
 ================================================================================
 ВЫПОЛНЕНИЕ МИГРАЦИЙ:
     # 1. Сначала INSERT миграции (критично, падать при ошибке)
@@ -67,6 +73,9 @@
 
     # 2. Потом UPDATE миграции (некритично, продолжать при ошибках)
     psql -U username -d database_name -1 -c "SET synchronous_commit = OFF;" -f run_all_update_<hash>.sql -c "SET synchronous_commit = ON;"
+
+    # Аварийный fallback для одной DB-сессии/одного ядра
+    psql -U username -d database_name -1 -c "SET synchronous_commit = OFF;" -f run_all_update_sequential_<hash>.sql -c "SET synchronous_commit = ON;"
 
 ================================================================================
 ПРИМЕР ИДЕМПОТЕНТНОГО INSERT:
@@ -87,6 +96,7 @@
     
     ✅ Generated: run_all_insert_a1b2c3d.sql (ON_ERROR_STOP=1)
     ✅ Generated: run_all_update_a1b2c3d.sql (ON_ERROR_STOP=0)
+    ✅ Generated: run_all_update_sequential_a1b2c3d.sql (ON_ERROR_STOP=1)
     
     ✅ All INSERT scripts are idempotent. Ready to run.
 
@@ -98,6 +108,7 @@
 import os
 import sys
 import subprocess
+import re
 
 # ============================================================================
 # КОНФИГУРАЦИЯ
@@ -126,6 +137,7 @@ COMMIT_HASH = get_commit_hash()
 
 OUTPUT_INSERT = os.path.join(SCRIPT_DIR, f"run_all_insert_{COMMIT_HASH}.sql")
 OUTPUT_UPDATE = os.path.join(SCRIPT_DIR, f"run_all_update_{COMMIT_HASH}.sql")
+OUTPUT_UPDATE_SEQUENTIAL = os.path.join(SCRIPT_DIR, f"run_all_update_sequential_{COMMIT_HASH}.sql")
 
 PSQL_SESSION_SETTINGS = [
     "SET synchronous_commit = OFF;",
@@ -143,6 +155,16 @@ PSQL_SESSION_SETTINGS = [
     "SET temp_buffers = '512MB';",
     "SET max_parallel_workers = 16;",
 ]
+
+PSQL_SEQUENTIAL_SESSION_SETTINGS = [
+    "SET synchronous_commit = OFF;",
+    "SET work_mem = '256MB';",
+    "SET maintenance_work_mem = '3GB';",
+    "SET temp_buffers = '512MB';",
+]
+
+SIMPLE_DEPLOY_METADATA_RE = re.compile(r"^\s*--\s*simple-deploy:\s*([^=]+?)\s*=\s*(.*?)\s*$")
+UPDATE_SEQUENTIAL_KINDS = {"update", "set_default"}
 
 # Директории, где ВСЕ скрипты идут в INSERT
 INSERT_DIRS = ["app_ip_subcompany_catalogs"]
@@ -229,12 +251,69 @@ def find_sql_files(path, include_insert_only=False, check_inserts=False, errors_
     files.sort()
     return files
 
-def write_run_all_preamble(out, on_error_stop):
+def parse_simple_deploy_metadata(filepath):
+    metadata = {}
+    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            match = SIMPLE_DEPLOY_METADATA_RE.match(line)
+            if not match:
+                continue
+            key = match.group(1).strip().lower()
+            value = match.group(2).strip()
+            metadata[key] = value
+    return metadata
+
+def is_insert_new_objects_path(filepath):
+    try:
+        relative_path = os.path.relpath(filepath, SCRIPTS_DIR)
+    except ValueError:
+        relative_path = filepath
+    return "insert_new_objects" in relative_path.replace("\\", "/").split("/")
+
+def _metadata_order(metadata, rel):
+    order_text = metadata.get("order")
+    if order_text is None:
+        raise RuntimeError(f"Missing simple-deploy order in {rel}")
+    try:
+        return int(order_text)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid simple-deploy order in {rel}: {order_text}") from exc
+
+def find_metadata_sql_files(kinds):
+    expected_kinds = {kind.lower() for kind in kinds}
+    files = []
+
+    for root, dirs, files_in_dir in os.walk(SCRIPTS_DIR):
+        dirs[:] = [d for d in dirs if d != "insert_new_objects"]
+
+        for f in files_in_dir:
+            if not f.endswith(".sql"):
+                continue
+
+            full = os.path.join(root, f)
+            if is_insert_new_objects_path(full):
+                continue
+
+            metadata = parse_simple_deploy_metadata(full)
+            kind = metadata.get("kind", "").lower()
+            if kind not in expected_kinds:
+                continue
+
+            rel = os.path.relpath(full, BASE_DIR)
+            group = metadata.get("group")
+            if not group:
+                raise RuntimeError(f"Missing simple-deploy group in {rel}")
+
+            files.append((_metadata_order(metadata, rel), group, rel))
+
+    return [rel for _, _, rel in sorted(files)]
+
+def write_run_all_preamble(out, on_error_stop, session_settings=None):
     out.write(f"-- Commit: {COMMIT_HASH}\n")
     out.write(f"\\set ON_ERROR_STOP {on_error_stop}\n")
     out.write("\\set ECHO all\n")
     out.write("\\timing on\n")
-    for setting in PSQL_SESSION_SETTINGS:
+    for setting in session_settings or PSQL_SESSION_SETTINGS:
         out.write(f"{setting}\n")
     out.write("\n")
 
@@ -316,6 +395,23 @@ def main():
         write_run_all_epilogue(out)
 
     print(f"✅ Generated: {os.path.basename(OUTPUT_UPDATE)} (ON_ERROR_STOP=0)")
+
+    # Генерация аварийного последовательного UPDATE скрипта
+    with open(OUTPUT_UPDATE_SEQUENTIAL, "w") as out:
+        write_run_all_preamble(out, 1, PSQL_SEQUENTIAL_SESSION_SETTINGS)
+        out.write("-- ============================================\n")
+        out.write("-- STRICT SEQUENTIAL UPDATES (emergency fallback, one DB session)\n")
+        out.write("-- ============================================\n\n")
+        out.write("-- Ordered by simple-deploy metadata: order, group, path\n")
+        out.write("-- Includes kind=update and kind=set_default. Excludes inserts and insert_new_objects.\n\n")
+
+        for sql in find_metadata_sql_files(UPDATE_SEQUENTIAL_KINDS):
+            out.write(f"\\i '{sql}'\n")
+
+        out.write("\n")
+        write_run_all_epilogue(out)
+
+    print(f"✅ Generated: {os.path.basename(OUTPUT_UPDATE_SEQUENTIAL)} (ON_ERROR_STOP=1)")
 
     # Вывод результата проверки идемпотентности
     if errors:

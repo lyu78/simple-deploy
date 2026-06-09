@@ -290,6 +290,7 @@ Schema SQL генерируется offline через Django schema editor в �
 
 - `db_insert_r_<release>-c_<commit>.tar.gz` с `run_all_insert_<commit>.sql`;
 - `db_update_r_<release>-c_<commit>.tar.gz` с `run_all_update_<commit>.sql`.
+- `db_update_sequential_r_<release>-c_<commit>.tar.gz` с `run_all_update_sequential_<commit>.sql`.
 
 Data SQL-архивы остаются артефактами отдельного DB migration flow. Windows
 runner deploy применяет только schema SQL-архив выбранного контура.
