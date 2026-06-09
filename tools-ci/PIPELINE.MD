@@ -7,7 +7,7 @@
 Python, Git, Node/npm, Git Bash и Windows OpenSSH.
 
 Общий продуктовый процесс описан в `../PIPELINE.MD`. Legacy-вариант через
-Ansible/WSL описан в `../ansible-ci/PIPELINE.MD`.
+Ansible/WSL описан в `../legacy/ansible-ci/PIPELINE.MD`.
 
 ## Конфигурация
 
@@ -25,6 +25,10 @@ Ansible/WSL описан в `../ansible-ci/PIPELINE.MD`.
 attempts и deploy attempts: успешные build попадают в `releases`, упавшие build
 фиксируются в `build_attempts`, упавшие deploy - в `deployment_attempts` без
 сдвига baseline.
+
+В этой же SQLite-базе есть таблицы `local_jobs` и `external_requests`.
+Они предназначены для web/API v1: локальные jobs будут отражать долгие операции,
+а external requests - заявки TEST/PROD и ручную фиксацию внешнего процесса.
 
 ## Команды оператора
 

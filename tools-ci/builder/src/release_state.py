@@ -24,6 +24,8 @@ from typing import Iterable
 
 
 CONTOURS = ("dev", "test", "prod")
+JOB_STATUSES = ("queued", "running", "success", "failed", "cancelled")
+REQUEST_STATUSES = ("draft", "submitted", "approved", "applied", "failed", "cancelled")
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,39 @@ class ContourState:
     contour: str
     last_success_release: str
     last_success_backend_commit: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class JobRecord:
+    """Snapshot of a local long-running operation."""
+
+    id: int
+    kind: str
+    contour: str
+    build_version: str
+    status: str
+    payload_json: str
+    log_path: str
+    error: str
+    created_at: str
+    started_at: str
+    finished_at: str
+
+
+@dataclass(frozen=True)
+class ExternalRequest:
+    """Snapshot of a TEST/PROD external release request."""
+
+    id: int
+    contour: str
+    build_version: str
+    request_type: str
+    status: str
+    external_id: str
+    payload_json: str
+    error: str
+    created_at: str
     updated_at: str
 
 
@@ -107,6 +142,45 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             started_at text not null,
             finished_at text not null
         );
+
+        create table if not exists local_jobs (
+            id integer primary key autoincrement,
+            kind text not null,
+            contour text not null,
+            build_version text not null,
+            status text not null,
+            payload_json text not null,
+            log_path text not null,
+            error text not null,
+            created_at text not null,
+            started_at text not null,
+            finished_at text not null
+        );
+
+        create index if not exists idx_local_jobs_status_created
+            on local_jobs(status, created_at);
+
+        create index if not exists idx_local_jobs_contour_build
+            on local_jobs(contour, build_version);
+
+        create table if not exists external_requests (
+            id integer primary key autoincrement,
+            contour text not null,
+            build_version text not null,
+            request_type text not null,
+            status text not null,
+            external_id text not null,
+            payload_json text not null,
+            error text not null,
+            created_at text not null,
+            updated_at text not null
+        );
+
+        create index if not exists idx_external_requests_contour_build
+            on external_requests(contour, build_version);
+
+        create index if not exists idx_external_requests_status_updated
+            on external_requests(status, updated_at);
         """
     )
     connection.commit()
@@ -297,3 +371,304 @@ def missing_baselines(connection: sqlite3.Connection, contours: Iterable[str] = 
         if get_contour_state(connection, contour) is None:
             missing.append(contour)
     return missing
+
+
+def _json_payload(payload: dict | None) -> str:
+    return json.dumps(payload or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _job_from_row(row: sqlite3.Row) -> JobRecord:
+    return JobRecord(
+        id=int(row["id"]),
+        kind=row["kind"],
+        contour=row["contour"],
+        build_version=row["build_version"],
+        status=row["status"],
+        payload_json=row["payload_json"],
+        log_path=row["log_path"],
+        error=row["error"],
+        created_at=row["created_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+    )
+
+
+def _external_request_from_row(row: sqlite3.Row) -> ExternalRequest:
+    return ExternalRequest(
+        id=int(row["id"]),
+        contour=row["contour"],
+        build_version=row["build_version"],
+        request_type=row["request_type"],
+        status=row["status"],
+        external_id=row["external_id"],
+        payload_json=row["payload_json"],
+        error=row["error"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _dict_from_row(row: sqlite3.Row) -> dict:
+    return {key: row[key] for key in row.keys()}
+
+
+def list_releases(connection: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    """Return recent successful release records."""
+    rows = connection.execute(
+        """
+        select *
+        from releases
+        order by created_at desc, build_version desc
+        limit ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [_dict_from_row(row) for row in rows]
+
+
+def list_build_attempts(connection: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    """Return recent build attempts."""
+    rows = connection.execute(
+        """
+        select *
+        from build_attempts
+        order by id desc
+        limit ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [_dict_from_row(row) for row in rows]
+
+
+def list_deployment_attempts(
+    connection: sqlite3.Connection,
+    contour: str = "",
+    limit: int = 50,
+) -> list[dict]:
+    """Return recent deployment attempts."""
+    if contour:
+        contour = validate_contour(contour)
+        rows = connection.execute(
+            """
+            select *
+            from deployment_attempts
+            where contour = ?
+            order by id desc
+            limit ?
+            """,
+            (contour, limit),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            select *
+            from deployment_attempts
+            order by id desc
+            limit ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [_dict_from_row(row) for row in rows]
+
+
+def create_job(
+    connection: sqlite3.Connection,
+    kind: str,
+    contour: str = "",
+    build_version: str = "",
+    payload: dict | None = None,
+    log_path: str = "",
+) -> int:
+    """Create a queued local job for a long-running CLI/web operation."""
+    kind = kind.strip()
+    if not kind:
+        raise ValueError("Job kind must be non-empty")
+    normalized_contour = validate_contour(contour) if contour else ""
+    now = utc_now()
+    cursor = connection.execute(
+        """
+        insert into local_jobs (
+            kind,
+            contour,
+            build_version,
+            status,
+            payload_json,
+            log_path,
+            error,
+            created_at,
+            started_at,
+            finished_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (kind, normalized_contour, build_version, "queued", _json_payload(payload), log_path, "", now, "", ""),
+    )
+    connection.commit()
+    return int(cursor.lastrowid)
+
+
+def mark_job_started(connection: sqlite3.Connection, job_id: int, log_path: str = "") -> None:
+    """Mark a local job as running."""
+    connection.execute(
+        """
+        update local_jobs
+        set status = ?, log_path = coalesce(nullif(?, ''), log_path), started_at = ?
+        where id = ?
+        """,
+        ("running", log_path, utc_now(), job_id),
+    )
+    connection.commit()
+
+
+def mark_job_finished(connection: sqlite3.Connection, job_id: int, status: str, error: str = "") -> None:
+    """Mark a local job as terminal."""
+    status = validate_status(status, {"success", "failed", "cancelled"})
+    connection.execute(
+        """
+        update local_jobs
+        set status = ?, error = ?, finished_at = ?
+        where id = ?
+        """,
+        (status, error, utc_now(), job_id),
+    )
+    connection.commit()
+
+
+def get_job(connection: sqlite3.Connection, job_id: int) -> JobRecord | None:
+    """Return a local job by id."""
+    row = connection.execute(
+        """
+        select *
+        from local_jobs
+        where id = ?
+        """,
+        (job_id,),
+    ).fetchone()
+    return _job_from_row(row) if row else None
+
+
+def list_jobs(connection: sqlite3.Connection, limit: int = 50) -> list[JobRecord]:
+    """Return recent local jobs."""
+    rows = connection.execute(
+        """
+        select *
+        from local_jobs
+        order by id desc
+        limit ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [_job_from_row(row) for row in rows]
+
+
+def create_external_request(
+    connection: sqlite3.Connection,
+    contour: str,
+    build_version: str,
+    request_type: str,
+    external_id: str = "",
+    payload: dict | None = None,
+    status: str = "draft",
+) -> int:
+    """Create a TEST/PROD external release request record."""
+    contour = validate_contour(contour)
+    if contour == "dev":
+        raise ValueError("External release requests are only supported for test/prod contours")
+    request_type = request_type.strip()
+    if not request_type:
+        raise ValueError("External request type must be non-empty")
+    status = validate_status(status, REQUEST_STATUSES)
+    now = utc_now()
+    cursor = connection.execute(
+        """
+        insert into external_requests (
+            contour,
+            build_version,
+            request_type,
+            status,
+            external_id,
+            payload_json,
+            error,
+            created_at,
+            updated_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (contour, build_version, request_type, status, external_id, _json_payload(payload), "", now, now),
+    )
+    connection.commit()
+    return int(cursor.lastrowid)
+
+
+def update_external_request_status(
+    connection: sqlite3.Connection,
+    request_id: int,
+    status: str,
+    error: str = "",
+    external_id: str | None = None,
+) -> None:
+    """Update TEST/PROD external release request status."""
+    status = validate_status(status, REQUEST_STATUSES)
+    if external_id is None:
+        connection.execute(
+            """
+            update external_requests
+            set status = ?, error = ?, updated_at = ?
+            where id = ?
+            """,
+            (status, error, utc_now(), request_id),
+        )
+    else:
+        connection.execute(
+            """
+            update external_requests
+            set status = ?, external_id = ?, error = ?, updated_at = ?
+            where id = ?
+            """,
+            (status, external_id, error, utc_now(), request_id),
+        )
+    connection.commit()
+
+
+def get_external_request(connection: sqlite3.Connection, request_id: int) -> ExternalRequest | None:
+    """Return a TEST/PROD external request by id."""
+    row = connection.execute(
+        """
+        select *
+        from external_requests
+        where id = ?
+        """,
+        (request_id,),
+    ).fetchone()
+    return _external_request_from_row(row) if row else None
+
+
+def list_external_requests(
+    connection: sqlite3.Connection,
+    contour: str = "",
+    limit: int = 50,
+) -> list[ExternalRequest]:
+    """Return recent TEST/PROD external requests."""
+    if contour:
+        contour = validate_contour(contour)
+        rows = connection.execute(
+            """
+            select *
+            from external_requests
+            where contour = ?
+            order by id desc
+            limit ?
+            """,
+            (contour, limit),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            select *
+            from external_requests
+            order by id desc
+            limit ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [_external_request_from_row(row) for row in rows]

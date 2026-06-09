@@ -10,7 +10,7 @@
 Технические реализации описаны отдельно:
 
 - `tools-ci/PIPELINE.MD` - основной Windows/Python процесс через локальные tools.
-- `ansible-ci/PIPELINE.MD` - legacy-процесс через Ansible/WSL control node.
+- `legacy/ansible-ci/PIPELINE.MD` - legacy-процесс через Ansible/WSL control node.
 
 ## Участники
 

@@ -234,8 +234,8 @@ COM. Доступные переменные шаблонов: `{build_version}`
   как основа BPMN.
 - `tools-ci/PIPELINE.MD` - основной Windows/Python E2E процесс через
   `tools-ci/tools/windows_pipeline.py`.
-- `ansible-ci/PIPELINE.MD` - legacy Ansible/WSL E2E процесс через
-  `ansible-ci/playbooks/pipeline.yml`.
+- `legacy/ansible-ci/PIPELINE.MD` - legacy Ansible/WSL E2E процесс через
+  `legacy/ansible-ci/playbooks/pipeline.yml`.
 
 ## Структура
 
@@ -243,14 +243,14 @@ COM. Доступные переменные шаблонов: `{build_version}`
   shell-архиваторы и настройки frontend-сборки.
 - `tools-ci/tools/windows_pipeline.py` - основной Windows/Python runner.
 - `tools-ci/requirements.dev.txt` - Python-зависимости сборщика из `tools-ci/builder/`.
-- `ansible-ci/requirements.ansible.txt` - Python-зависимости Ansible-слоя.
-- `ansible-ci/playbooks/` - legacy Ansible pipeline, dry run и внутренние этапы.
-- `ansible-ci/roles/` - Ansible-роли доставки артефактов, DB-работ, сервисных команд,
+- `legacy/ansible-ci/requirements.ansible.txt` - Python-зависимости Ansible-слоя.
+- `legacy/ansible-ci/playbooks/` - legacy Ansible pipeline, dry run и внутренние этапы.
+- `legacy/ansible-ci/roles/` - Ansible-роли доставки артефактов, DB-работ, сервисных команд,
   миграций, healthcheck и отчета.
-- `ansible-ci/group_vars/dev.yml` - схема DEV-контура и производные значения.
+- `legacy/ansible-ci/group_vars/dev.yml` - схема DEV-контура и производные значения.
 - `.env` - локальная конфигурация рабочей машины, не хранится в репозитории.
 - `.env.example` - пример `.env` с нереальными, но похожими на боевые значениями.
-- `ansible-ci/group_vars/vault.yml` - секреты Ansible Vault, не хранится в репозитории.
+- `legacy/ansible-ci/group_vars/vault.yml` - секреты Ansible Vault, не хранится в репозитории.
 - `tools-ci/builder/settings/*/.env.template` - шаблоны frontend `.env`; реальные
   `tools-ci/builder/settings/*/.env` генерируются локально перед сборкой и игнорируются Git.
 
@@ -316,8 +316,8 @@ Legacy Ansible:
 Безопасная диагностика:
 
 ```bash
-cd ansible-ci
-ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
+cd legacy/ansible-ci
+ANSIBLE_CONFIG="$PWD/ansible.cfg" ../../.venv-ansible/bin/ansible-playbook \
   -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml
 ```
 
@@ -354,8 +354,8 @@ runtime-команды, PostgreSQL через `psql` на DB VM и HTTP endpoint
 По умолчанию dry run не требует `build_version` и не проверяет конкретные архивы:
 
 ```bash
-cd ansible-ci
-ANSIBLE_CONFIG="$PWD/ansible.cfg" ../.venv-ansible/bin/ansible-playbook \
+cd legacy/ansible-ci
+ANSIBLE_CONFIG="$PWD/ansible.cfg" ../../.venv-ansible/bin/ansible-playbook \
   -i inventories/dev/hosts.yml playbooks/dry_run_local_contour.yml
 ```
 
@@ -426,7 +426,7 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 В репозитории не должны храниться локальные значения рабочей машины:
 
 - корневой `.env` игнорируется;
-- `ansible-ci/group_vars/vault.yml` и `.vault-pass` игнорируются;
+- `legacy/ansible-ci/group_vars/vault.yml` и `.vault-pass` игнорируются;
 - реальные `tools-ci/builder/settings/*/.env` игнорируются, потому что Ansible записывает
   туда домены из локального `.env`;
 - в Git хранятся только `tools-ci/builder/settings/*/.env.template` с плейсхолдерами
@@ -519,3 +519,18 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - `parallel=true` допустим только для реально независимых скриптов: параллельно нельзя писать в одну и ту же ячейку данных; одинаковый `group` допустим, если фильтры разводят строки/колонки;
 - baseline по текущим комментариям времени выполнения: `insert` без `insert_new_objects/**` - `26.724 сек`; `update` - `57` файлов, все с распознанным временем, последовательно `4 ч 34 мин 20 сек`; `set_default` - минимум `1 мин 12 сек`, 3 файла имеют `X msec`;
 - текущая самая долгая update-задача - `app_ip_subcompany_prw/update/update_app_ip_subcompany_stagecostprw_first_stage.sql`, около `40 мин`; ранее проблемный `app_ip_subcompany_cc/update/update_stagecommissioningcc_for_cc_objects_commissioning.sql` по текущему комментарию около `1 мин 14 сек`.
+
+## Рефакторинг release/deploy toolkit
+
+План рефакторинга зафиксирован в `REFACTORING_PLAN.MD`. Репозиторий развивается как release/deploy toolkit вокруг продуктового release artifact, контуров `dev`/`test`/`prod`, CLI и web/API поверх общей SQLite-базы.
+
+Текущий безопасный срез:
+
+- старая точка запуска `tools-ci/tools/windows_pipeline.py` сохранена как compatibility wrapper;
+- фактическая реализация Windows runner перенесена в `tools-ci/simple_deploy/windows_pipeline.py`;
+- новый пакет `tools-ci/simple_deploy/` содержит начальный каркас `cli`, `config`, `core`, `release`, `contours`, `processes`, `jobs`, `web`;
+- state facade доступен через `simple_deploy.release.state`, старый builder state пока остается источником реализации;
+- SQLite schema расширена таблицами `local_jobs` и `external_requests` для будущего запуска долгих операций из web/API и учета заявок TEST/PROD;
+- read-only web/API v1 доступен как `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000`;
+- Ansible перенесен из корня в `legacy/ansible-ci`, дефолтные пути legacy Ansible поправлены на новую глубину каталога;
+- текущий CLI-контракт не менялся.

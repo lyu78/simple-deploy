@@ -406,7 +406,7 @@ tools-ci/builder/settings/*/.env
 # *.tar.gz
 
 # Локальные секреты Ansible
-ansible-ci/group_vars/vault.yml
+legacy/ansible-ci/group_vars/vault.yml
 .vault-pass
 .venv-ansible/
 

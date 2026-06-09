@@ -1,0 +1,210 @@
+---
+# Продуктовый контекст:
+# Конфигурация обновления DEV-контура. Это основной продуктовый контракт Ansible-этапа:
+# где лежат локальные артефакты сборки, куда их распаковывать на VM приложения,
+# какие технические SQL-команды разрешены, какие Django management-команды завершают
+# миграцию и какими сервисными командами приложение перезапускается в нужном порядке.
+#
+# Текущие сборочные скрипты по-прежнему отвечают за создание архивов в local_release_root.
+# Ansible начинается после этого: выбирает готовый релиз, копирует артефакты на VM,
+# распаковывает их, выполняет технические и миграционные команды, перезапускает сервисы
+# и проверяет локальный стенд.
+#
+# Большинство значений ниже намеренно являются дефолтами/заглушками. Перед реальным
+# запуском нужно указать VM-специфичные пути и упорядоченный service_steps для фактической
+# раскладки сервера ППО/app.
+
+# Машинно-специфичные значения задаются в локальном .env в корне проекта.
+# Файл .env не хранится в репозитории; пример структуры лежит в .env.example.
+default_local_env_file: "{{ ((inventory_dir | default(playbook_dir ~ '/../inventories/dev')) ~ '/../../../../.env') | realpath }}"
+local_env_file: "{{ lookup('ansible.builtin.env', 'SIMPLE_DEPLOY_ENV_FILE') | default(default_local_env_file, true) }}"
+
+# Корень проекта и директория релизов по умолчанию вычисляются от playbook.
+# Эти параметры можно переопределить в .env только для нестандартной раскладки.
+default_project_root_wsl: "{{ ((inventory_dir | default(playbook_dir ~ '/../inventories/dev')) ~ '/../../../..') | realpath }}"
+project_root_wsl: "{{ lookup('ansible.builtin.ini', 'PROJECT_ROOT_WSL type=properties file=' ~ local_env_file ~ ' default=') | default(default_project_root_wsl, true) }}"
+builder_dir_wsl: "{{ project_root_wsl }}/tools-ci/builder"
+default_release_root_wsl: "{{ project_root_wsl }}/releases"
+release_root_wsl: "{{ lookup('ansible.builtin.ini', 'RELEASE_ROOT_WSL type=properties file=' ~ local_env_file ~ ' default=') | default(default_release_root_wsl, true) }}"
+default_release_root_windows: "{{ release_root_wsl | regex_replace('^/mnt/([A-Za-z])/(.*)$', '\\1:/\\2') }}"
+release_root_windows: "{{ lookup('ansible.builtin.ini', 'RELEASE_ROOT_WINDOWS type=properties file=' ~ local_env_file ~ ' default=') | default(default_release_root_windows, true) }}"
+default_release_root_bash: "{{ release_root_wsl | regex_replace('^/mnt/([A-Za-z])/', '/\\1/') }}"
+release_root_bash: "{{ lookup('ansible.builtin.ini', 'RELEASE_ROOT_BASH type=properties file=' ~ local_env_file ~ ' default=') | default(default_release_root_bash, true) }}"
+local_release_root: "{{ release_root_wsl }}"
+use_latest_release: false
+build_version: ""
+
+# Команда сборочного этапа. При запуске Ansible из WSL вызываем Windows Python,
+# потому что текущие Python-скрипты используют Windows-пути и Git Bash.
+build_command: 'cmd.exe /C "cd /D $(wslpath -w {{ builder_dir_wsl | quote }}) && python create_release.py"'
+build_version_base: "{{ lookup('ansible.builtin.ini', 'BUILD_VERSION_BASE type=properties file=' ~ local_env_file) }}"
+
+git_bash_path: "{{ lookup('ansible.builtin.ini', 'GIT_BASH_PATH type=properties file=' ~ local_env_file) }}"
+
+backend_source_repo_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_SOURCE_REPO_PATH type=properties file=' ~ local_env_file) }}"
+backend_target_repo_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_TARGET_REPO_PATH type=properties file=' ~ local_env_file) }}"
+backend_app_root_dir: "{{ lookup('ansible.builtin.ini', 'BACKEND_APP_ROOT_DIR type=properties file=' ~ local_env_file ~ ' default=') | default('example_backend_app', true) }}"
+backend_django_settings_module: "{{ lookup('ansible.builtin.ini', 'BACKEND_DJANGO_SETTINGS_MODULE type=properties file=' ~ local_env_file ~ ' default=') | default(backend_app_root_dir ~ '.settings.base', true) }}"
+backend_build_venv_relative_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_BUILD_VENV_RELATIVE_PATH type=properties file=' ~ local_env_file ~ ' default=') | default('.venv/Scripts/activate.bat', true) }}"
+backend_build_requirements_relative_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH type=properties file=' ~ local_env_file ~ ' default=') | default('requirements.txt', true) }}"
+frontend_source_repo_path: "{{ lookup('ansible.builtin.ini', 'FRONTEND_SOURCE_REPO_PATH type=properties file=' ~ local_env_file) }}"
+frontend_target_repo_path: "{{ lookup('ansible.builtin.ini', 'FRONTEND_TARGET_REPO_PATH type=properties file=' ~ local_env_file) }}"
+
+app_vm_host: "{{ lookup('ansible.builtin.ini', 'APP_VM_HOST type=properties file=' ~ local_env_file) }}"
+app_vm_user: "{{ lookup('ansible.builtin.ini', 'APP_VM_USER type=properties file=' ~ local_env_file) }}"
+db_vm_host: "{{ lookup('ansible.builtin.ini', 'DB_VM_HOST type=properties file=' ~ local_env_file) }}"
+db_vm_user: "{{ lookup('ansible.builtin.ini', 'DB_VM_USER type=properties file=' ~ local_env_file) }}"
+
+dev_domain: "{{ lookup('ansible.builtin.ini', 'DEV_DOMAIN type=properties file=' ~ local_env_file) }}"
+test_domain: "{{ lookup('ansible.builtin.ini', 'TEST_DOMAIN type=properties file=' ~ local_env_file) }}"
+prod_domain: "{{ lookup('ansible.builtin.ini', 'PROD_DOMAIN type=properties file=' ~ local_env_file) }}"
+frontend_test_server_name: "{{ lookup('ansible.builtin.ini', 'FRONTEND_TEST_SERVER_NAME type=properties file=' ~ local_env_file) }}"
+frontend_prod_server_name: "{{ lookup('ansible.builtin.ini', 'FRONTEND_PROD_SERVER_NAME type=properties file=' ~ local_env_file) }}"
+
+frontend_server_names:
+  dev: "{{ dev_domain }}"
+  test: "{{ frontend_test_server_name }}"
+  prod: "{{ frontend_prod_server_name }}"
+
+frontend_env_files:
+  - name: dev
+    path: "{{ builder_dir_wsl }}/settings/frontend_dev/.env"
+    template_path: "{{ builder_dir_wsl }}/settings/frontend_dev/.env.template"
+    base_url: "https://{{ dev_domain }}"
+    file_proxy_url: "https://{{ dev_domain }}/file/"
+    filters_url: "https://{{ dev_domain }}/filters/"
+  - name: test
+    path: "{{ builder_dir_wsl }}/settings/frontend_test/.env"
+    template_path: "{{ builder_dir_wsl }}/settings/frontend_test/.env.template"
+    base_url: "https://{{ test_domain }}"
+    file_proxy_url: "https://{{ test_domain }}/file/"
+    filters_url: "https://{{ test_domain }}/filters/"
+  - name: prod
+    path: "{{ builder_dir_wsl }}/settings/frontend_prod/.env"
+    template_path: "{{ builder_dir_wsl }}/settings/frontend_prod/.env.template"
+    base_url: "https://{{ prod_domain }}"
+    file_proxy_url: "https://{{ prod_domain }}/file/"
+    filters_url: "https://{{ prod_domain }}/filters/"
+
+build_environment:
+  BUILD_VERSION_BASE: "{{ build_version_base }}"
+  GIT_BASH_PATH: "{{ git_bash_path }}"
+  RELEASE_ROOT_WINDOWS: "{{ release_root_windows }}"
+  RELEASE_ROOT_BASH: "{{ release_root_bash }}"
+  BACKEND_SOURCE_REPO_PATH: "{{ backend_source_repo_path }}"
+  BACKEND_TARGET_REPO_PATH: "{{ backend_target_repo_path }}"
+  BACKEND_APP_ROOT_DIR: "{{ backend_app_root_dir }}"
+  BACKEND_DJANGO_SETTINGS_MODULE: "{{ backend_django_settings_module }}"
+  BACKEND_BUILD_VENV_RELATIVE_PATH: "{{ backend_build_venv_relative_path }}"
+  BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH: "{{ backend_build_requirements_relative_path }}"
+  FRONTEND_SOURCE_REPO_PATH: "{{ frontend_source_repo_path }}"
+  FRONTEND_TARGET_REPO_PATH: "{{ frontend_target_repo_path }}"
+  FRONTEND_DEV_SERVER_NAME: "{{ frontend_server_names.dev }}"
+  FRONTEND_TEST_SERVER_NAME: "{{ frontend_server_names.test }}"
+  FRONTEND_PROD_SERVER_NAME: "{{ frontend_server_names.prod }}"
+
+remote_tmp_root: "{{ lookup('ansible.builtin.ini', 'REMOTE_TMP_ROOT type=properties file=' ~ local_env_file) }}"
+remote_release_dir: "{{ remote_tmp_root }}/{{ effective_build_version }}"
+
+# Дефолтные пути деплоя являются заглушками. Переопределите их под реальную раскладку app VM.
+backend_release_path: "{{ lookup('ansible.builtin.ini', 'BACKEND_RELEASE_PATH type=properties file=' ~ local_env_file) }}"
+frontend_release_path: "{{ lookup('ansible.builtin.ini', 'FRONTEND_RELEASE_PATH type=properties file=' ~ local_env_file) }}"
+app_workdir: "{{ lookup('ansible.builtin.ini', 'APP_WORKDIR type=properties file=' ~ local_env_file) }}"
+app_venv_activate_path: "{{ lookup('ansible.builtin.ini', 'APP_VENV_ACTIVATE_PATH type=properties file=' ~ local_env_file) }}"
+app_manage_py_path: "{{ lookup('ansible.builtin.ini', 'APP_MANAGE_PY_PATH type=properties file=' ~ local_env_file) }}"
+
+stand_url: "https://{{ dev_domain }}/"
+
+# Имена архивов, которые создаются tools-ci/builder/scripts/archive_script_*.sh.
+artifact_items:
+  - name: backend
+    pattern: "backend_r_{{ effective_build_version }}*.tar.gz"
+    remote_archive: "{{ remote_release_dir }}/backend.tar.gz"
+    extract_path: "{{ backend_release_path }}"
+    extra_opts:
+      - "--strip-components=1"
+  - name: frontend
+    pattern: "frontend_r_{{ effective_build_version }}-bf_dev-env_{{ frontend_server_names.dev }}.tar.gz"
+    remote_archive: "{{ remote_release_dir }}/frontend.tar.gz"
+    extract_path: "{{ frontend_release_path }}"
+    extra_opts:
+      - "--strip-components=1"
+
+db_migration_artifacts:
+  - name: db_schema
+    sql_kind: schema
+    pattern: "db_schema_dev_r_{{ effective_build_version }}-c_*.tar.gz"
+    remote_archive: "{{ remote_release_dir }}/db_schema.tar.gz"
+    remote_extract_path: "{{ remote_release_dir }}/db_schema"
+    entrypoint_pattern: "summary_sql_dev_*.sql"
+    entrypoint_dir: "."
+  - name: db_insert
+    sql_kind: insert
+    pattern: "db_insert_r_{{ effective_build_version }}-c_*.tar.gz"
+    remote_archive: "{{ remote_release_dir }}/db_insert.tar.gz"
+    remote_extract_path: "{{ remote_release_dir }}/db_insert"
+    entrypoint_pattern: "run_all_insert_*.sql"
+    entrypoint_dir: "."
+  - name: db_update_sequential
+    sql_kind: update
+    pattern: "db_update_sequential_r_{{ effective_build_version }}-c_*.tar.gz"
+    remote_archive: "{{ remote_release_dir }}/db_update_sequential.tar.gz"
+    remote_extract_path: "{{ remote_release_dir }}/db_update_sequential"
+    entrypoint_pattern: "run_all_update_sequential_*.sql"
+    entrypoint_dir: "."
+
+# Опциональная резервная копия текущей раскладки перед распаковкой. Пока целевая раскладка не подтверждена,
+# оставляем выключенным.
+backup_enabled: false
+backup_root_base: "{{ lookup('ansible.builtin.ini', 'BACKUP_ROOT_BASE type=properties file=' ~ local_env_file) }}"
+backup_root: "{{ backup_root_base }}/{{ effective_build_version }}"
+backup_items:
+  - name: backend
+    path: "{{ backend_release_path }}"
+  - name: frontend
+    path: "{{ frontend_release_path }}"
+
+# Технические работы PostgreSQL выполняются через psql на DB VM по SSH.
+db_host: "{{ db_vm_host }}"
+db_psql_host: localhost
+db_port: "{{ lookup('ansible.builtin.ini', 'DB_PORT type=properties file=' ~ local_env_file) }}"
+db_name: "{{ lookup('ansible.builtin.ini', 'DB_NAME type=properties file=' ~ local_env_file) }}"
+db_login_user: "{{ vault_db_login_user | default('postgres') }}"
+db_login_password: "{{ vault_db_login_password | default('') }}"
+db_psql_bin: psql
+db_maintenance_enabled: true
+db_maintenance_sql_phase: before_unpack
+db_maintenance_sql:
+  - "VACUUM ANALYZE;"
+
+# SQL-скрипты можно добавить позже без изменения playbook.
+sql_scripts: []
+# Пример:
+# sql_scripts:
+#   - path: "{{ project_root_wsl }}/sql/before_migrate.sql"
+#     phase: before_migrate
+
+management_commands:
+  - "python {{ app_manage_py_path }} migrate --fake"
+  - "python {{ app_manage_py_path }} sync_action_role"
+
+# Упорядоченные команды для сложной последовательности systemd/supervisor/service.
+# Поддерживаемые фазы: before_unpack, after_unpack, after_migrate.
+service_steps: []
+# Пример:
+# service_steps:
+#   - name: stop celery
+#     phase: before_unpack
+#     command: sudo systemctl stop example-worker
+#   - name: restart backend
+#     phase: after_migrate
+#     command: sudo systemctl restart example-backend
+#   - name: start celery
+#     phase: after_migrate
+#     command: sudo systemctl start example-worker
+
+healthcheck_enabled: true
+healthcheck_validate_certs: false
+healthcheck_retries: 30
+healthcheck_delay: 5
+healthcheck_commands: []

@@ -7,12 +7,25 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools-ci"))
 
-from builder.src.release_state import (
+from simple_deploy.release.state import (
     connect_state_db,
+    create_external_request,
+    create_job,
+    get_external_request,
     get_contour_state,
+    get_job,
+    list_build_attempts,
+    list_deployment_attempts,
+    list_external_requests,
+    list_jobs,
+    list_releases,
+    mark_job_finished,
+    mark_job_started,
     record_build_attempt_finished,
     record_build_attempt_started,
     record_attempt,
+    record_release,
+    update_external_request_status,
     upsert_contour_state,
 )
 
@@ -99,6 +112,71 @@ class ReleaseStateTests(unittest.TestCase):
 
         self.assertEqual(state.last_success_release, "1.2.3")
         self.assertEqual(state.last_success_backend_commit, "abc123")
+
+    def test_recent_release_and_attempt_lists_are_returned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            with closing(connect_state_db(db_path)) as connection:
+                record_release(connection, "1.2.4", "abc123", "def456", {"backend": "backend.tar.gz"})
+                build_attempt_id = record_build_attempt_started(connection, "1.2.4")
+                record_build_attempt_finished(connection, build_attempt_id, "success")
+                record_attempt(connection, "dev", "1.2.4", "abc123", "success")
+                releases = list_releases(connection)
+                build_attempts = list_build_attempts(connection)
+                deployment_attempts = list_deployment_attempts(connection, contour="dev")
+
+        self.assertEqual(releases[0]["build_version"], "1.2.4")
+        self.assertEqual(build_attempts[0]["status"], "success")
+        self.assertEqual(deployment_attempts[0]["contour"], "dev")
+
+    def test_local_job_lifecycle_is_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            with closing(connect_state_db(db_path)) as connection:
+                job_id = create_job(
+                    connection,
+                    "deploy",
+                    contour="dev",
+                    build_version="1.2.4",
+                    payload={"latest": True},
+                )
+                mark_job_started(connection, job_id, log_path="logs/deploy.log")
+                mark_job_finished(connection, job_id, "success")
+                job = get_job(connection, job_id)
+                jobs = list_jobs(connection)
+
+        self.assertEqual(job.status, "success")
+        self.assertEqual(job.contour, "dev")
+        self.assertEqual(job.build_version, "1.2.4")
+        self.assertEqual(job.log_path, "logs/deploy.log")
+        self.assertEqual(jobs[0].id, job_id)
+
+    def test_external_request_lifecycle_is_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            with closing(connect_state_db(db_path)) as connection:
+                request_id = create_external_request(
+                    connection,
+                    contour="test",
+                    build_version="1.2.4",
+                    request_type="deploy",
+                    payload={"package": "release.tar.gz"},
+                )
+                update_external_request_status(connection, request_id, "submitted", external_id="REQ-123")
+                request = get_external_request(connection, request_id)
+                requests = list_external_requests(connection, contour="test")
+
+        self.assertEqual(request.status, "submitted")
+        self.assertEqual(request.external_id, "REQ-123")
+        self.assertEqual(request.contour, "test")
+        self.assertEqual(requests[0].id, request_id)
+
+    def test_external_request_rejects_dev_contour(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            with closing(connect_state_db(db_path)) as connection:
+                with self.assertRaisesRegex(ValueError, "test/prod"):
+                    create_external_request(connection, "dev", "1.2.4", "deploy")
 
 
 if __name__ == "__main__":

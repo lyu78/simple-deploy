@@ -641,7 +641,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertNotIn("backup_enabled", defaulted_keys)
 
     def test_ansible_schema_migration_uses_single_transaction(self):
-        role_path = ROOT / "ansible-ci" / "roles" / "db_migrations" / "tasks" / "main.yml"
+        role_path = ROOT / "legacy" / "ansible-ci" / "roles" / "db_migrations" / "tasks" / "main.yml"
         content = role_path.read_text(encoding="utf-8")
 
         self.assertIn("--set=ON_ERROR_STOP=1 --single-transaction", content)

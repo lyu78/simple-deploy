@@ -35,6 +35,15 @@ cp local.secrets.env.example local.secrets.env
 cp tools-ci/windows_pipeline.example.json windows_pipeline.local.json
 ```
 
+Read-only web/API v1 запускается поверх той же SQLite-базы:
+
+```bash
+.venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
+```
+
+UI: `http://127.0.0.1:8000/`.
+API: `http://127.0.0.1:8000/api/state`.
+
 Заполните `.env` путями к backend/frontend репозиториям, VM-хостами, доменами,
 директориями деплоя и build settings. Для Windows-only режима можно оставить
 `PROJECT_ROOT_WSL` и `RELEASE_ROOT_WSL` пустыми; при необходимости задайте

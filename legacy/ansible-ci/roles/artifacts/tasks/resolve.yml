@@ -1,0 +1,82 @@
+---
+# Продуктовый контекст:
+# Роль выбора артефактов. Она превращает выбор релиза оператором в конкретные локальные
+# файлы. Релиз можно выбрать явно через build_version или неявно как новейшую директорию
+# внутри local_release_root.
+#
+# Шаблоны архивов соответствуют текущим shell-скриптам архивации. Если схема именования
+# сборки изменится, нужно обновить artifact_items в legacy/ansible-ci/group_vars/dev.yml, а не flow деплоя.
+
+- name: Найти директории релизов
+  ansible.builtin.find:
+    paths: "{{ local_release_root }}"
+    file_type: directory
+    recurse: false
+  delegate_to: localhost
+  register: release_dirs
+  when: use_latest_release | bool
+
+- name: Завершить выполнение, если локальные релизы не найдены
+  ansible.builtin.fail:
+    msg: "В {{ local_release_root }} не найдены директории релизов."
+  when:
+    - use_latest_release | bool
+    - release_dirs.files | length == 0
+
+- name: Выбрать релиз по новейшей директории
+  ansible.builtin.set_fact:
+    selected_release_dir: "{{ (release_dirs.files | sort(attribute='mtime') | last).path }}"
+    effective_build_version: "{{ (release_dirs.files | sort(attribute='mtime') | last).path | basename }}"
+  when: use_latest_release | bool
+
+- name: Выбрать релиз по build_version
+  ansible.builtin.set_fact:
+    selected_release_dir: "{{ local_release_root }}/{{ build_version }}"
+    effective_build_version: "{{ build_version }}"
+  when: not (use_latest_release | bool)
+
+- name: Проверить выбранную директорию релиза
+  ansible.builtin.stat:
+    path: "{{ selected_release_dir }}"
+  delegate_to: localhost
+  register: selected_release_dir_stat
+
+- name: Завершить выполнение, если выбранная директория релиза отсутствует
+  ansible.builtin.fail:
+    msg: "Директория релиза не существует: {{ selected_release_dir }}"
+  when: (selected_release_dir_stat.stat.isdir | default(false)) == false
+
+- name: Найти файлы артефактов
+  ansible.builtin.find:
+    paths: "{{ selected_release_dir }}"
+    patterns: "{{ item.pattern }}"
+    file_type: file
+    recurse: false
+  delegate_to: localhost
+  loop: "{{ artifact_items }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: artifact_find_results
+
+- name: Завершить выполнение, если какой-либо артефакт отсутствует
+  ansible.builtin.fail:
+    msg: "В {{ selected_release_dir }} не найден артефакт по шаблону {{ item.item.pattern }}."
+  loop: "{{ artifact_find_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.files | length == 0
+
+- name: Собрать список найденных артефактов
+  ansible.builtin.set_fact:
+    resolved_artifacts: "{{ resolved_artifacts | default([]) + [resolved_artifact] }}"
+  vars:
+    newest_file: "{{ item.files | sort(attribute='mtime') | last }}"
+    resolved_artifact:
+      name: "{{ item.item.name }}"
+      local_path: "{{ newest_file.path }}"
+      remote_archive: "{{ item.item.remote_archive }}"
+      extract_path: "{{ item.item.extract_path }}"
+      extra_opts: "{{ item.item.extra_opts | default([]) }}"
+  loop: "{{ artifact_find_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"

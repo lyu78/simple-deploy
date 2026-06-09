@@ -26,11 +26,22 @@
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
 ```
 
+Web/API v1 для просмотра локального состояния запускается отдельно и не заменяет CLI:
+
+```bash
+.venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
+```
+
+Панель доступна на `http://127.0.0.1:8000/`, API состояния - на
+`http://127.0.0.1:8000/api/state`. В текущем срезе это read-only dashboard:
+он показывает контуры, релизы, build/deploy attempts, локальные jobs и внешние
+заявки TEST/PROD.
+
 Практическая настройка рабочей машины, `.env`, `local.secrets.env`,
 `windows_pipeline.local.json`, service steps, Outlook email и запуск по
 расписанию описаны в `tools-ci/README.MD`.
 
-Legacy-вариант через Ansible/WSL сохранен в `ansible-ci/PIPELINE.MD`, но не
+Legacy-вариант через Ansible/WSL сохранен в `legacy/ansible-ci/PIPELINE.MD`, но не
 является основным путем для новых запусков.
 
 ## Как устроен релиз
@@ -86,9 +97,11 @@ SQL-диапазон.
 
 - `PIPELINE.MD` - продуктовая схема release flow без привязки к runtime; подходит
   как основа для BPMN.
+- `REFACTORING_PLAN.MD` - зафиксированный план перехода к release/deploy toolkit,
+  web/API и масштабированию по контурам.
 - `tools-ci/README.MD` - установка и запуск основного Windows/Python runner.
 - `tools-ci/PIPELINE.MD` - технический E2E-процесс Windows/Python runner.
-- `ansible-ci/PIPELINE.MD` - legacy E2E-процесс через Ansible/WSL.
+- `legacy/ansible-ci/PIPELINE.MD` - legacy E2E-процесс через Ansible/WSL.
 - `instructions/manual-schema-sql-deploy.md` - ручное применение schema SQL на
   TEST/PROD.
 - `instructions/data-sql-script-markup.md` - правила разметки data SQL-скриптов
@@ -114,7 +127,7 @@ SQL-диапазон.
 
 - `tools-ci/` - основной Windows/Python runner, builder, настройки и
   вспомогательные tools.
-- `ansible-ci/` - legacy Ansible/WSL flow.
+- `legacy/ansible-ci/` - legacy Ansible/WSL flow.
 - `instructions/` - ручные операционные процедуры и правила подготовки SQL.
 - `docs/` - диаграммы и дополнительные описания.
 - `tests/` - тесты builder, runner и вспомогательной логики.
