@@ -120,25 +120,29 @@ repo. Если baseline хотя бы одного контура не зада�
 `deploy` выбирает релиз по `--latest` или `--build-version`, выбирает schema
 SQL-архив по `--contour` и выполняет порядок:
 
-1. DB maintenance SQL фазы `before_unpack`.
-2. Service steps фазы `before_unpack`.
-3. Создание remote staging-директории на app VM.
-4. Загрузка backend/frontend архивов через `scp`.
-5. Backup текущих директорий, если `backup_enabled: true`.
-6. Очистка первого уровня target-директорий с сохранением корневого `.env`.
-7. Распаковка backend/frontend с `--strip-components=1`.
-8. Service steps фазы `after_unpack`.
-9. DB maintenance SQL фазы `before_migrate`.
-10. Загрузка и применение `summary_sql_<contour>_*.sql` на DB VM через `psql`
+1. Создание remote staging-директории на app VM.
+2. Загрузка backend/frontend/maintenance-stub архивов через `scp`.
+3. Backup текущих директорий, если `backup_enabled: true`.
+4. Service steps фазы `before_unpack`: обычно остановка backend/worker-сервисов,
+   но не nginx, чтобы он отдавал maintenance-заглушку.
+5. Распаковка maintenance-заглушки в `FRONTEND_RELEASE_PATH`.
+6. Загрузка и применение `summary_sql_<contour>_*.sql` на DB VM через `psql`
     с `ON_ERROR_STOP` и одной транзакцией.
+7. Применение `run_all_insert_*.sql` и `run_all_update_parallel_*.sh`, если
+   `data_sql_enabled=true`.
+8. DB maintenance SQL/scripts фаз `before_unpack`, `before_migrate` и
+   `after_migrate`, включая информационные SQL-отчеты в порядке `sql_scripts`.
+9. Распаковка backend с `--strip-components=1`.
+10. Service steps фазы `after_unpack`.
 11. Django management-команды из `windows_pipeline.local.json` или дефолт:
     `migrate --fake`, затем `sync_action_role`.
-12. DB maintenance SQL/scripts фазы `after_migrate`, включая информационные
-    SQL-отчеты в порядке `sql_scripts`, затем service steps фазы
-    `after_migrate`.
-13. HTTP healthcheck и проверка `build_version` в портале.
-14. Фиксация успешного применения контура в локальной SQLite-базе.
-15. Outlook email об успешном deploy, если включен.
+12. Service steps фазы `after_migrate`.
+13. Распаковка финального frontend поверх заглушки.
+14. Service steps фазы `after_frontend_unpack`, например
+    `sudo /bin/systemctl reload nginx`.
+15. HTTP healthcheck и проверка `build_version` в портале.
+16. Фиксация успешного применения контура в локальной SQLite-базе.
+17. Outlook email об успешном deploy, если включен.
 
 Если любой обязательный шаг завершается ошибкой, команда падает. Успешный
 baseline двигается только после завершенного deploy или явной команды

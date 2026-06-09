@@ -359,13 +359,29 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertFalse(check_runtime_config(reporter, runtime))
         self.assertTrue(any("systemctl service commands except status must use sudo" in issue for issue in reporter.issues))
 
+    def test_runtime_config_rejects_stop_nginx_service_step(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        runtime["service_steps"] = [
+            {
+                "name": "stop nginx",
+                "phase": "before_unpack",
+                "command": "sudo /bin/systemctl stop nginx",
+                "permission_check_command": "sudo /bin/systemctl stop nginx",
+            }
+        ]
+        reporter = Reporter()
+
+        self.assertFalse(check_runtime_config(reporter, runtime))
+        self.assertTrue(any("nginx must stay running for maintenance stub" in issue for issue in reporter.issues))
+
     def test_runtime_config_accepts_bare_systemctl_status_service_step(self):
         runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
         runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
         runtime["service_steps"] = [
             {
                 "name": "status celerybeat",
-                "phase": "after_migrate",
+                "phase": "after_frontend_unpack",
                 "command": "systemctl status celerybeat_local.service",
                 "permission_check_command": "systemctl status celerybeat_local.service",
             }
@@ -766,6 +782,8 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertLess(events.index("service:after_unpack"), events.index("management"))
         self.assertLess(events.index("management"), events.index("service:after_migrate"))
         self.assertLess(events.index("service:after_migrate"), events.index("unpack:frontend"))
+        self.assertLess(events.index("unpack:frontend"), events.index("service:after_frontend_unpack"))
+        self.assertLess(events.index("service:after_frontend_unpack"), events.index("healthcheck"))
         self.assertLess(events.index("unpack:frontend"), events.index("healthcheck"))
 
     def test_deploy_failure_record_error_preserves_original_error(self):

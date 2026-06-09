@@ -131,10 +131,13 @@ Runner выполняет `sql_scripts` последовательно в пор
 ```
 
 Поддерживаемые фазы service steps: `before_unpack`, `after_unpack`,
-`after_migrate`. Шаги без `phase` выполняются как `after_migrate`. Если
+`after_migrate`, `after_frontend_unpack`. Шаги без `phase` выполняются как `after_migrate`. Если
 `manage.py` требует поднятый Redis/KeyDB, добавьте идемпотентный `start/status`
 KeyDB в `after_unpack`, а явный restart `stop/start/status` KeyDB задавайте в
-`after_migrate`.
+`after_migrate`. Для nginx в штатном deploy не задавайте `stop`: он должен
+оставаться запущенным и отдавать maintenance-заглушку, поэтому runtime validation
+считает `systemctl stop nginx` ошибкой. Если нужен reload после замены заглушки
+на финальный frontend, задавайте его в `after_frontend_unpack`.
 
 Во время `dry-run` runner получает список доступных sudo-команд через
 `sudo -n -l`, затем проверяет каждую sudo service step без выполнения самой
@@ -148,11 +151,10 @@ KeyDB в `after_unpack`, а явный restart `stop/start/status` KeyDB зад�
 даже при `Active: inactive (dead)` и rc=3: это означает, что статус читается,
 а не что unit уже запущен.
 
-Пример `/etc/sudoers.d/simple-deploy` для текущего DEV-порядка stop/start:
+Пример `/etc/sudoers.d/simple-deploy` для текущего DEV-порядка stop/start/reload:
 
 ```sudoers
 Cmnd_Alias SIMPLE_DEPLOY_SYSTEMD = \
-    /bin/systemctl stop nginx, \
     /bin/systemctl stop gunicorn_local.service, \
     /bin/systemctl stop celery_local.service, \
     /bin/systemctl stop celerybeat_local.service, \
@@ -165,7 +167,7 @@ Cmnd_Alias SIMPLE_DEPLOY_SYSTEMD = \
     /bin/systemctl start celerybeat_local.service, \
     /bin/systemctl start celery_local.service, \
     /bin/systemctl start gunicorn_local.service, \
-    /bin/systemctl start nginx
+    /bin/systemctl reload nginx
 
 deploy-simple ALL=(root) NOPASSWD: SIMPLE_DEPLOY_SYSTEMD
 ```
@@ -181,6 +183,7 @@ sudo -n -l /bin/systemctl stop celerybeat_local.service
 sudo -n -l /bin/systemctl stop keydb_local.service
 sudo -n -l /bin/systemctl start keydb_local.service
 sudo -n -l /bin/systemctl start celerybeat_local.service
+sudo -n -l /bin/systemctl reload nginx
 systemctl status celerybeat_local.service
 ```
 
@@ -335,7 +338,9 @@ Runner заранее загружает app-артефакты, останав�
 `run_all_update_parallel_*.sh` и DB maintenance. После DB-части runner
 распаковывает backend, выполняет `after_unpack`, Django management-команды и
 `after_migrate` service steps. Настоящий frontend распаковывается последним,
-после успешного старта backend, заменяя заглушку перед healthcheck.
+после успешного старта backend, заменяя заглушку; затем выполняются
+`after_frontend_unpack` service steps, например `sudo /bin/systemctl reload nginx`,
+и только потом healthcheck.
 
 Если `deploy` или `pipeline` падает после выбора релиза, runner
 автоматически пишет failed attempt в `deployment_attempts` без сдвига baseline.

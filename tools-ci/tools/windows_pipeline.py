@@ -141,7 +141,7 @@ DEFAULT_RUNTIME_CONFIG = {
 }
 
 DB_MAINTENANCE_PHASES = {"before_unpack", "before_migrate", "after_migrate"}
-SERVICE_PHASES = {"before_unpack", "after_unpack", "after_migrate"}
+SERVICE_PHASES = {"before_unpack", "after_unpack", "after_migrate", "after_frontend_unpack"}
 RUNTIME_BOOL_FIELDS = (
     "backup_enabled",
     "maintenance_stub_enabled",
@@ -435,6 +435,47 @@ def is_disallowed_bare_systemctl_command(command: object) -> bool:
     return is_bare_systemctl_command(command) and not is_bare_systemctl_status_command(command)
 
 
+def systemctl_action(command: object) -> tuple[str, list[str]] | None:
+    if not isinstance(command, str):
+        return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    if tokens[0] == "sudo":
+        tokens = tokens[1:]
+        while tokens and tokens[0].startswith("-"):
+            option = tokens.pop(0)
+            if option in {"-u", "-g", "-h", "-p"} and tokens:
+                tokens.pop(0)
+    if not tokens or Path(tokens[0]).name != "systemctl":
+        return None
+    verbs = {
+        "start",
+        "stop",
+        "restart",
+        "reload",
+        "try-restart",
+        "reload-or-restart",
+        "reload-or-try-restart",
+        "status",
+    }
+    for index, token in enumerate(tokens[1:], start=1):
+        if token in verbs:
+            return token, tokens[index + 1 :]
+    return None
+
+
+def is_nginx_stop_command(command: object) -> bool:
+    action = systemctl_action(command)
+    if not action:
+        return False
+    verb, targets = action
+    return verb == "stop" and any(target in {"nginx", "nginx.service"} for target in targets)
+
+
 def is_readable_systemctl_status_result(command: str, result: CommandResult) -> bool:
     return is_bare_systemctl_status_command(command) and result.rc in {0, 3}
 
@@ -553,6 +594,9 @@ def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
             if not isinstance(command, str) or not command.strip():
                 reporter.fail(label, "command must be a non-empty string")
                 ok = False
+            elif is_nginx_stop_command(command):
+                reporter.fail(label, "nginx must stay running for maintenance stub; use reload nginx in after_frontend_unpack")
+                ok = False
             elif is_disallowed_bare_systemctl_command(command):
                 reporter.fail(label, "systemctl service commands except status must use sudo")
                 ok = False
@@ -563,6 +607,12 @@ def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
             for optional_field in ("name", "permission_check_command"):
                 if optional_field in step and not isinstance(step[optional_field], str):
                     reporter.fail(label, f"{optional_field} must be a string when set")
+                    ok = False
+                elif is_nginx_stop_command(step.get(optional_field)):
+                    reporter.fail(
+                        label,
+                        f"{optional_field} must not stop nginx; use reload nginx in after_frontend_unpack",
+                    )
                     ok = False
                 elif is_disallowed_bare_systemctl_command(step.get(optional_field)):
                     reporter.fail(label, f"{optional_field} must use sudo for systemctl commands except status")
@@ -2637,6 +2687,7 @@ def deploy(args: argparse.Namespace) -> int:
 
         if not app_only:
             unpack_app_artifact(env, frontend_artifact)
+            run_service_steps(env, runtime, "after_frontend_unpack")
 
         if runtime.get("healthcheck_enabled", True):
             healthcheck(env, runtime, build_version)
