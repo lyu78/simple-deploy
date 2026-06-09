@@ -85,8 +85,10 @@ DB-сессия/одно ядро и update/set_default нужно выполн�
 `parallel` в этом fallback игнорируется.
 
 Для основного параллельного update-сценария генерируется
-`run_all_update_parallel_<commit>.sh`. Он использует тот же набор
-`kind=update`/`kind=set_default`, но выполняет `order` как барьерные wave:
+`run_all_update_parallel_<commit>.sh`. Он содержит тот же набор
+`kind=update`/`kind=set_default`, но штатный deploy по умолчанию пропускает
+`set_default`; для запуска нужен явный флаг `--include-set-default-sql`.
+Runner выполняет `order` как барьерные wave:
 следующая wave стартует только после завершения предыдущей. `parallel=true`
 запускается в background с лимитом `SIMPLE_DEPLOY_UPDATE_MAX_WORKERS` (default
 `8`), а `parallel=false` выполняется эксклюзивно внутри wave. Runner печатает в

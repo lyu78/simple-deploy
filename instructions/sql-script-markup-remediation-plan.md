@@ -247,7 +247,9 @@ insert-скрипты занимают меньше минуты на фоне u
 `db_update_parallel_r_<release>-c_<commit>.tar.gz`. Runner проходит `order` как
 барьерные wave, запускает `parallel=true` с лимитом
 `SIMPLE_DEPLOY_UPDATE_MAX_WORKERS=8` по умолчанию, выполняет `parallel=false`
-эксклюзивно и использует fail-fast. В терминале видны `[START]`, периодический
+эксклюзивно и использует fail-fast. `kind=set_default` в штатном deploy
+пропускается по умолчанию и включается только флагом
+`--include-set-default-sql`. В терминале видны `[START]`, периодический
 `[RUNNING]` со списком активных скриптов, `[OK]`/`[FAIL]`, длительность каждого
 скрипта, wave и общий итог; полный psql output лежит в
 `logs/update_parallel/<timestamp>/scripts/*.log`.

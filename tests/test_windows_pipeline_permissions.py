@@ -222,13 +222,24 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         runtime = {"db_data_sql_timeout_seconds": 21600}
 
         with patch("tools.windows_pipeline.upload_unpack_db_sql_artifact"):
-            with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
-                run_db_data_insert(env, runtime, artifact)
+            with patch(
+                "tools.windows_pipeline.ssh_command",
+                return_value=CommandResult(0, "DB data insert SQL completed in 26s\n", ""),
+            ) as ssh_mock:
+                with patch("builtins.print") as print_mock:
+                    run_db_data_insert(env, runtime, artifact)
 
         final_command = ssh_mock.call_args.args[3]
         self.assertIn("run_all_insert_*.sql", final_command)
         self.assertIn('-f "$sql_file"', final_command)
+        self.assertIn('log_dir="logs/insert"', final_command)
+        self.assertIn('> "$log_file" 2>&1', final_command)
+        self.assertIn("tail -n 80", final_command)
+        self.assertIn("DB data insert SQL completed in %ss", final_command)
         self.assertEqual(ssh_mock.call_args.kwargs["timeout"], 21600)
+        printed = "\n".join(str(call.args[0]) for call in print_mock.call_args_list if call.args)
+        self.assertIn("PASS DB data insert SQL completed in 26s", printed)
+        self.assertNotIn("STDOUT DB data insert SQL", printed)
 
     def test_run_db_data_update_parallel_streams_bash_runner_with_pg_env(self):
         artifact = DbSqlArtifact(
@@ -268,9 +279,35 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertIn("PSQL_BIN='psql'", command)
         self.assertIn("SIMPLE_DEPLOY_UPDATE_MAX_WORKERS='4'", command)
         self.assertIn("SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS='15'", command)
+        self.assertIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT='0'", command)
         self.assertIn('bash "$runner"', command)
         self.assertEqual(stream_mock.call_args.kwargs["timeout"], 12345)
         self.assertEqual(stream_mock.call_args.kwargs["mask"], ["secret"])
+
+    def test_run_db_data_update_parallel_can_include_set_default_with_explicit_flag(self):
+        artifact = DbSqlArtifact(
+            name="db_update_parallel",
+            local_path=Path("db_update_parallel.tar.gz"),
+            remote_archive="/tmp/simple-deploy/1.2.3/db_update_parallel.tar.gz",
+            remote_extract_path="/tmp/simple-deploy/1.2.3/db_update_parallel",
+            entrypoint_dir=".",
+            entrypoint_pattern="run_all_update_parallel_*.sh",
+        )
+        env = {
+            "DB_VM_USER": "db-user",
+            "DB_VM_HOST": "db.example.local",
+            "DB_PORT": "5432",
+            "DB_NAME": "appdb",
+            "DB_LOGIN_USER": "postgres",
+            "DB_LOGIN_PASSWORD": "secret",
+        }
+
+        with patch("tools.windows_pipeline.upload_unpack_db_sql_artifact"):
+            with patch("tools.windows_pipeline.stream_ssh_command", return_value=CommandResult(0, "", "")) as stream_mock:
+                run_db_data_update_parallel(env, {}, artifact, include_set_default_sql=True)
+
+        command = stream_mock.call_args.args[3]
+        self.assertIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT='1'", command)
 
     def test_run_db_maintenance_uses_configured_timeout(self):
         env = {
@@ -756,7 +793,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             stack.enter_context(
                 patch(
                     "tools.windows_pipeline.run_db_data_update_parallel",
-                    side_effect=lambda *_args: events.append("db:update_parallel"),
+                    side_effect=lambda *_args, **_kwargs: events.append("db:update_parallel"),
                 )
             )
             stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance", side_effect=maintenance_side_effect))

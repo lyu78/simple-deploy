@@ -242,6 +242,14 @@ backend/frontend, Django management, healthcheck и фиксацию baseline.
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev
 ```
 
+По умолчанию full deploy применяет data insert и update, но пропускает
+`kind=set_default`. Запуск `set_default` требует явного флага:
+
+```bash
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest --include-set-default-sql
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --include-set-default-sql
+```
+
 `dry-run` проверяет data SQL по умолчанию, а `build` и `pipeline` генерируют
 data SQL-артефакты по умолчанию. Явный schema-only режим для аварийных случаев:
 
@@ -319,8 +327,11 @@ Schema SQL генерируется offline через Django schema editor в �
 - `db_update_parallel_r_<release>-c_<commit>.tar.gz` с `run_all_update_parallel_<commit>.sh`.
 
 В штатном full deploy Windows runner применяет `db_insert` и
-`db_update_parallel` после schema SQL. `db_update_sequential` остается
-аварийным ручным вариантом для последовательного запуска на одной DB-сессии.
+`db_update_parallel` после schema SQL. `db_update_parallel` по умолчанию
+пропускает `kind=set_default`; чтобы включить эти скрипты, запускайте
+`deploy` или `pipeline` с `--include-set-default-sql`. `db_update_sequential`
+остается аварийным ручным вариантом для последовательного запуска на одной
+DB-сессии.
 
 ## Deploy
 
@@ -335,7 +346,11 @@ psql --set=ON_ERROR_STOP=1 --single-transaction
 Runner заранее загружает app-артефакты, останавливает сервисы, распаковывает
 `tools-ci/maintenance_stub/maintenance_stub.tar.gz` в `FRONTEND_RELEASE_PATH`,
 затем при остановленном backend выполняет schema SQL, `run_all_insert_*.sql`,
-`run_all_update_parallel_*.sh` и DB maintenance. После DB-части runner
+`run_all_update_parallel_*.sh` и DB maintenance. Update runner по умолчанию
+пропускает `set_default` и печатает `SKIP set_default ...`; явное включение -
+через `--include-set-default-sql`. Insert выполняется тихо:
+полный `psql` output пишется на DB VM в `logs/insert/`, а в терминал выводится
+только итоговая длительность. После DB-части runner
 распаковывает backend, выполняет `after_unpack`, Django management-команды и
 `after_migrate` service steps. Настоящий frontend распаковывается последним,
 после успешного старта backend, заменяя заглушку; затем выполняются

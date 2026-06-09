@@ -2203,14 +2203,38 @@ def run_db_data_insert(env: dict[str, str], runtime: dict, artifact: DbSqlArtifa
         f"sql_file=$(find {sh_quote(artifact.entrypoint_dir)} -maxdepth 1 -type f "
         f"-name {sh_quote(artifact.entrypoint_pattern)} | sort | tail -n 1); "
         'test -n "$sql_file"; '
-        f"{psql_base} -f \"$sql_file\""
+        'log_dir="logs/insert"; '
+        'mkdir -p "$log_dir"; '
+        'log_file="$log_dir/$(date +%Y%m%d_%H%M%S)_$(basename "$sql_file").log"; '
+        'start_ts=$(date +%s); '
+        f"if {psql_base} -f \"$sql_file\" > \"$log_file\" 2>&1; then "
+        'end_ts=$(date +%s); '
+        'duration=$((end_ts-start_ts)); '
+        'printf "DB data insert SQL completed in %ss\\n" "$duration"; '
+        "else "
+        'rc=$?; '
+        'end_ts=$(date +%s); '
+        'duration=$((end_ts-start_ts)); '
+        'printf "DB data insert SQL failed after %ss; log: %s/%s\\n" "$duration" "$PWD" "$log_file"; '
+        'tail -n 80 "$log_file"; '
+        'exit "$rc"; '
+        "fi"
     )
     print(f"RUN DB data insert SQL: {artifact.remote_extract_path}/{artifact.entrypoint_dir}", flush=True)
     result = ssh_command(env, db_user, db_host, command, "DB", timeout=timeout, mask=mask)
+    if result.rc == 0:
+        detail = (result.stdout or result.stderr).strip()
+        print(f"PASS {detail or 'DB data insert SQL completed'}", flush=True)
+        return
     run_or_raise("DB data insert SQL", result, mask=mask)
 
 
-def run_db_data_update_parallel(env: dict[str, str], runtime: dict, artifact: DbSqlArtifact) -> None:
+def run_db_data_update_parallel(
+    env: dict[str, str],
+    runtime: dict,
+    artifact: DbSqlArtifact,
+    include_set_default_sql: bool = False,
+) -> None:
     db_user = require_value(env, "DB_VM_USER")
     db_host = require_value(env, "DB_VM_HOST")
     password = env.get("DB_LOGIN_PASSWORD", "")
@@ -2229,6 +2253,7 @@ def run_db_data_update_parallel(env: dict[str, str], runtime: dict, artifact: Db
         "SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS": str(
             runtime.get("db_update_parallel_status_interval_seconds", 30)
         ),
+        "SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT": "1" if include_set_default_sql else "0",
     }
     env_prefix = " ".join(f"{name}={sh_quote(value)}" for name, value in runner_env.items())
     command = (
@@ -2663,7 +2688,12 @@ def deploy(args: argparse.Namespace) -> int:
             if db_insert_artifact is not None:
                 run_db_data_insert(env, runtime, db_insert_artifact)
             if db_update_parallel_artifact is not None:
-                run_db_data_update_parallel(env, runtime, db_update_parallel_artifact)
+                run_db_data_update_parallel(
+                    env,
+                    runtime,
+                    db_update_parallel_artifact,
+                    include_set_default_sql=getattr(args, "include_set_default_sql", False),
+                )
             for phase in ("before_unpack", "before_migrate", "after_migrate"):
                 run_db_maintenance(env, runtime, phase)
 
@@ -2837,12 +2867,22 @@ def parse_args() -> argparse.Namespace:
     deploy_parser.add_argument("--build-version", default="")
     deploy_parser.add_argument("--latest", action="store_true")
     deploy_parser.add_argument("--contour", choices=CONTOURS, default="dev")
+    deploy_parser.add_argument(
+        "--include-set-default-sql",
+        action="store_true",
+        help="Include kind=set_default data SQL in the update runner. Disabled by default.",
+    )
     deploy_parser.add_argument("--app-only", action="store_true")
 
     pipeline_parser = subparsers.add_parser("pipeline")
     pipeline_parser.add_argument("--build-version", default="")
     pipeline_parser.add_argument("--latest", action="store_true")
     pipeline_parser.add_argument("--contour", choices=CONTOURS, default="dev")
+    pipeline_parser.add_argument(
+        "--include-set-default-sql",
+        action="store_true",
+        help="Include kind=set_default data SQL in the update runner. Disabled by default.",
+    )
     pipeline_parser.add_argument(
         "--include-data-sql",
         action="store_true",

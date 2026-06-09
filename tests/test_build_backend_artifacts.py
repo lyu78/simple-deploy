@@ -322,6 +322,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         module = load_create_run_all_sql_module()
         entries = [
             {
+                "kind": "update",
                 "order": 10,
                 "group": "domain.a",
                 "parallel": "true",
@@ -329,6 +330,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
                 "archive_path": "docs/database/scripts/domain_a/update.sql",
             },
             {
+                "kind": "set_default",
                 "order": 10,
                 "group": "domain.b",
                 "parallel": "false",
@@ -346,6 +348,9 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertIn("# simple-deploy-include: docs/database/scripts/domain_b/default.sql\n", content)
         self.assertIn("DEFAULT_MAX_WORKERS=8", content)
         self.assertIn("DEFAULT_STATUS_INTERVAL_SECONDS=30", content)
+        self.assertIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT", content)
+        self.assertIn("TASK_KINDS=(", content)
+        self.assertIn("SKIP set_default scripts=", content)
         self.assertIn("[START]", content)
         self.assertIn("[RUNNING]", content)
         self.assertIn("[$status]", content)

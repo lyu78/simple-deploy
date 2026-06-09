@@ -37,7 +37,8 @@
 ================================================================================
 ПРАВИЛА РАСПРЕДЕЛЕНИЯ СКРИПТОВ:
     - INSERT: скрипты из insert_* директорий + все скрипты из INSERT_DIRS
-    - UPDATE: только kind=update и kind=set_default по simple-deploy metadata
+    - UPDATE: kind=update и kind=set_default по simple-deploy metadata; set_default
+      пропускается runner-ом без явного SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT=1
 
 ================================================================================
 ПРОВЕРКА ИДЕМПОТЕНТНОСТИ (только для INSERT):
@@ -61,10 +62,10 @@
         
     run_all_update_sequential_<hash>.sql:
         - ON_ERROR_STOP = 1  (аварийный строгий fallback)
-        - Только kind=update и kind=set_default по simple-deploy metadata
+        - kind=update и kind=set_default по simple-deploy metadata
 
     run_all_update_parallel_<hash>.sh:
-        - Волновый runner для kind=update и kind=set_default
+        - Волновый runner для kind=update и kind=set_default; set_default off by default
         - Печатает live-status и timing в терминал, psql output пишет в logs/
 
 ================================================================================
@@ -75,7 +76,7 @@
     # Аварийный fallback для одной DB-сессии/одного ядра
     psql -U username -d database_name -1 -c "SET synchronous_commit = OFF;" -f run_all_update_sequential_<hash>.sql -c "SET synchronous_commit = ON;"
 
-    # Целевой параллельный runner для update/set_default
+    # Целевой параллельный runner для update; set_default включается явно
     PGHOST=host PGPORT=5432 PGUSER=username PGDATABASE=database_name PGPASSWORD=password ./run_all_update_parallel_<hash>.sh
 
 ================================================================================
@@ -314,6 +315,7 @@ def find_metadata_sql_entries(kinds):
             archive_path = to_archive_path(rel)
             entries.append(
                 {
+                    "kind": kind,
                     "order": _metadata_order(metadata, rel),
                     "group": group,
                     "parallel": _metadata_parallel(metadata, rel),
@@ -354,6 +356,7 @@ PSQL_BIN="${PSQL_BIN:-psql}"
 MAX_WORKERS="${SIMPLE_DEPLOY_UPDATE_MAX_WORKERS:-$DEFAULT_MAX_WORKERS}"
 STATUS_INTERVAL="${SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS:-$DEFAULT_STATUS_INTERVAL_SECONDS}"
 VERBOSE="${SIMPLE_DEPLOY_UPDATE_VERBOSE:-0}"
+INCLUDE_SET_DEFAULT="${SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT:-0}"
 
 RUNNING_PIDS=()
 RUNNING_TASK_IDS=()
@@ -386,6 +389,22 @@ die() {
   exit 2
 }
 
+is_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+task_enabled() {
+  local idx="$1"
+  local kind="${TASK_KINDS[$idx]:-update}"
+  if [[ "$kind" == "set_default" ]] && ! is_truthy "$INCLUDE_SET_DEFAULT"; then
+    return 1
+  fi
+  return 0
+}
+
 log_msg() {
   local message="[$(timestamp)] $*"
   echo "$message"
@@ -401,8 +420,10 @@ safe_name() {
 count_wave_scripts() {
   local target_order="$1"
   local count=0
-  local order
-  for order in "${TASK_ORDERS[@]}"; do
+  local idx order
+  for idx in "${!TASK_ORDERS[@]}"; do
+    task_enabled "$idx" || continue
+    order="${TASK_ORDERS[$idx]}"
     if [[ "$order" == "$target_order" ]]; then
       count=$((count + 1))
     fi
@@ -413,11 +434,35 @@ count_wave_scripts() {
 count_waves() {
   local count=0
   local previous=""
-  local order
-  for order in "${TASK_ORDERS[@]}"; do
+  local idx order
+  for idx in "${!TASK_ORDERS[@]}"; do
+    task_enabled "$idx" || continue
+    order="${TASK_ORDERS[$idx]}"
     if [[ "$order" != "$previous" ]]; then
       count=$((count + 1))
       previous="$order"
+    fi
+  done
+  echo "$count"
+}
+
+count_enabled_scripts() {
+  local count=0
+  local idx
+  for idx in "${!TASK_PATHS[@]}"; do
+    if task_enabled "$idx"; then
+      count=$((count + 1))
+    fi
+  done
+  echo "$count"
+}
+
+count_skipped_set_default_scripts() {
+  local count=0
+  local idx
+  for idx in "${!TASK_KINDS[@]}"; do
+    if [[ "${TASK_KINDS[$idx]}" == "set_default" ]] && ! task_enabled "$idx"; then
+      count=$((count + 1))
     fi
   done
   echo "$count"
@@ -600,13 +645,16 @@ main() {
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   cd "$script_dir" || exit 2
 
-  local total_scripts="${#TASK_PATHS[@]}"
+  local total_scripts
+  total_scripts="$(count_enabled_scripts)"
   if [[ "$total_scripts" -eq 0 ]]; then
-    die "No update scripts were generated for this runner"
+    die "No update scripts are enabled for this runner"
   fi
 
-  local script
-  for script in "${TASK_PATHS[@]}"; do
+  local idx script
+  for idx in "${!TASK_PATHS[@]}"; do
+    task_enabled "$idx" || continue
+    script="${TASK_PATHS[$idx]}"
     [[ -f "$script" ]] || die "Missing SQL file: $script"
   done
 
@@ -623,13 +671,18 @@ main() {
 
   local wave_count
   wave_count="$(count_waves)"
+  local skipped_set_default
+  skipped_set_default="$(count_skipped_set_default_scripts)"
   local run_start
   run_start="$(now_epoch)"
-  log_msg "run_all_update_parallel commit=$COMMIT_HASH max_workers=$MAX_WORKERS status_interval=${STATUS_INTERVAL}s scripts=$total_scripts waves=$wave_count log_root=$LOG_ROOT"
+  log_msg "run_all_update_parallel commit=$COMMIT_HASH max_workers=$MAX_WORKERS status_interval=${STATUS_INTERVAL}s scripts=$total_scripts waves=$wave_count include_set_default=$INCLUDE_SET_DEFAULT log_root=$LOG_ROOT"
+  if [[ "$skipped_set_default" -gt 0 ]]; then
+    log_msg "SKIP set_default scripts=$skipped_set_default; rerun deploy with --include-set-default-sql to include them"
+  fi
 
-  local idx
   local order
   for idx in "${!TASK_PATHS[@]}"; do
+    task_enabled "$idx" || continue
     order="${TASK_ORDERS[$idx]}"
     if [[ "$order" != "$CURRENT_WAVE" ]]; then
       if [[ -n "$CURRENT_WAVE" ]]; then
@@ -708,6 +761,7 @@ def write_update_parallel_runner(out, entries):
     task_arrays = "\n".join(
         [
             _shell_array("TASK_ORDERS", [entry["order"] for entry in entries]),
+            _shell_array("TASK_KINDS", [entry["kind"] for entry in entries]),
             _shell_array("TASK_GROUPS", [entry["group"] for entry in entries]),
             _shell_array("TASK_PARALLEL", [entry["parallel"] for entry in entries]),
             _shell_array("TASK_PATHS", [entry["archive_path"] for entry in entries]),
@@ -768,7 +822,8 @@ def main():
         out.write("-- STRICT SEQUENTIAL UPDATES (emergency fallback, one DB session)\n")
         out.write("-- ============================================\n\n")
         out.write("-- Ordered by simple-deploy metadata: order, group, path\n")
-        out.write("-- Includes kind=update and kind=set_default. Excludes inserts and insert_new_objects.\n\n")
+        out.write("-- Includes kind=update and kind=set_default. set_default runs only with explicit deploy flag.\n")
+        out.write("-- Excludes inserts and insert_new_objects.\n\n")
 
         for sql in find_metadata_sql_files(UPDATE_SEQUENTIAL_KINDS):
             out.write(f"\\i '{sql}'\n")
