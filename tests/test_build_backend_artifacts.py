@@ -396,7 +396,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(schema_kwargs["cwd"], source_repo)
         self.assertEqual(run_all_kwargs["cwd"], source_repo)
 
-    def test_artifact_generators_skip_data_sql_by_default(self):
+    def test_artifact_generators_skip_data_sql_when_explicitly_disabled(self):
         source_repo = self.root / "source"
         source_repo.mkdir()
         activate_path = source_repo / ".venv/Scripts/activate.bat"
@@ -411,6 +411,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         env = {
             "BACKEND_BUILD_VENV_RELATIVE_PATH": ".venv/Scripts/activate.bat",
             "GIT_BASH_PATH": "bash",
+            "SIMPLE_DEPLOY_INCLUDE_DATA_SQL": "0",
         }
         with patch.dict("os.environ", env, clear=True):
             with patch("src.build_backend._run_logged_command") as run_mock:
@@ -444,7 +445,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         run_mock.assert_called_once()
         self.assertEqual(run_mock.call_args.args[2], "create_sql_migrations.py")
 
-    def test_db_migrations_archives_skip_data_sql_by_default(self):
+    def test_db_migrations_archives_skip_data_sql_when_explicitly_disabled(self):
         source_repo = self.root / "source"
         source_repo.mkdir()
         build_scripts_dir = source_repo / "build_scripts"
@@ -471,7 +472,11 @@ class BuildBackendArtifactTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-        with patch.dict("os.environ", {"RELEASE_ROOT_WINDOWS": str(self.release_dir)}, clear=True):
+        env = {
+            "RELEASE_ROOT_WINDOWS": str(self.release_dir),
+            "SIMPLE_DEPLOY_INCLUDE_DATA_SQL": "0",
+        }
+        with patch.dict("os.environ", env, clear=True):
             with patch("src.build_backend.git_output", return_value="abc123"):
                 with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
                     with patch("src.build_backend._schema_baselines_json", return_value="{}"):
@@ -489,7 +494,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertNotIn("db_update_parallel_archive", manifest)
         self.assertEqual(set(manifest["db_schema_archives"]), {"dev", "test", "prod"})
 
-    def test_db_migrations_archives_include_data_sql_when_enabled(self):
+    def test_db_migrations_archives_include_data_sql_by_default(self):
         source_repo = self.root / "source"
         source_repo.mkdir()
         build_scripts_dir = source_repo / "build_scripts"
@@ -533,11 +538,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-        env = {
-            "RELEASE_ROOT_WINDOWS": str(self.release_dir),
-            "SIMPLE_DEPLOY_INCLUDE_DATA_SQL": "1",
-        }
-        with patch.dict("os.environ", env, clear=True):
+        with patch.dict("os.environ", {"RELEASE_ROOT_WINDOWS": str(self.release_dir)}, clear=True):
             with patch("src.build_backend.git_output", return_value="abc123"):
                 with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
                     with patch("src.build_backend._schema_baselines_json", return_value="{}"):

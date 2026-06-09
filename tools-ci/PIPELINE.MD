@@ -46,9 +46,7 @@ attempts и deploy attempts: успешные build попадают в `release
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --include-data-sql
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build --include-data-sql
 ```
 
 Деплой уже собранного релиза:
@@ -62,7 +60,14 @@ attempts и deploy attempts: успешные build попадают в `release
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --include-data-sql
+```
+
+`dry-run` проверяет data SQL по умолчанию, а `build` и `pipeline` генерируют
+data SQL-артефакты по умолчанию. Явный schema-only режим для аварийных случаев:
+
+```bash
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build --skip-data-sql-artifacts
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --skip-data-sql-artifacts
 ```
 
 Фиксация внешнего TEST/PROD результата:
@@ -81,7 +86,7 @@ attempts и deploy attempts: успешные build попадают в `release
 - `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
 - идемпотентность data INSERT SQL, которые попадут в `run_all_insert`, если
-  передан `--include-data-sql`;
+  не передан `--skip-data-sql-artifacts`;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
 - SSH-доступ к app VM и DB VM;

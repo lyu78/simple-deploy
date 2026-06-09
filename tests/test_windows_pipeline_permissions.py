@@ -477,31 +477,13 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             "pypi.org files.pythonhosted.org pypi.python.org",
         )
 
-    def test_build_disables_data_sql_by_default(self):
+    def test_build_enables_data_sql_by_default(self):
         args = Namespace(
             env_file=Path(".env"),
             secrets_file=Path("local.secrets.env"),
             timeout=3600,
             include_data_sql=False,
-        )
-        env = {
-            "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
-            "DEV_DOMAIN": "dev.example.local",
-        }
-        with patch("tools.windows_pipeline.load_env", return_value=env):
-            with patch("tools.windows_pipeline.prepare_frontend_env_files"):
-                with patch("tools.windows_pipeline.stream_command", return_value=0) as stream_mock:
-                    self.assertEqual(build(args), 0)
-
-        build_env = stream_mock.call_args.kwargs["env"]
-        self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "0")
-
-    def test_build_enables_data_sql_with_flag(self):
-        args = Namespace(
-            env_file=Path(".env"),
-            secrets_file=Path("local.secrets.env"),
-            timeout=3600,
-            include_data_sql=True,
+            skip_data_sql_artifacts=False,
         )
         env = {
             "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
@@ -515,6 +497,26 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         build_env = stream_mock.call_args.kwargs["env"]
         self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "1")
 
+    def test_build_skips_data_sql_with_explicit_flag(self):
+        args = Namespace(
+            env_file=Path(".env"),
+            secrets_file=Path("local.secrets.env"),
+            timeout=3600,
+            include_data_sql=False,
+            skip_data_sql_artifacts=True,
+        )
+        env = {
+            "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
+            "DEV_DOMAIN": "dev.example.local",
+        }
+        with patch("tools.windows_pipeline.load_env", return_value=env):
+            with patch("tools.windows_pipeline.prepare_frontend_env_files"):
+                with patch("tools.windows_pipeline.stream_command", return_value=0) as stream_mock:
+                    self.assertEqual(build(args), 0)
+
+        build_env = stream_mock.call_args.kwargs["env"]
+        self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "0")
+
     def test_pipeline_preserves_app_only_for_deploy(self):
         args = Namespace(
             env_file=Path(".env"),
@@ -525,6 +527,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             latest=False,
             contour="dev",
             include_data_sql=False,
+            skip_data_sql_artifacts=False,
             app_only=True,
         )
 
@@ -538,7 +541,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertTrue(deploy_args.latest)
         self.assertEqual(deploy_args.build_version, "")
 
-    def test_pipeline_enables_data_sql_build_when_deploy_uses_data_sql(self):
+    def test_pipeline_uses_data_sql_artifacts_by_default_without_runtime_mutation(self):
         args = Namespace(
             env_file=Path(".env"),
             secrets_file=Path("local.secrets.env"),
@@ -548,18 +551,22 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             latest=False,
             contour="dev",
             include_data_sql=False,
+            skip_data_sql_artifacts=False,
             app_only=False,
         )
 
-        with patch("tools.windows_pipeline.load_runtime_config", return_value=({"data_sql_enabled": True}, [])):
+        with patch("tools.windows_pipeline.load_runtime_config") as load_runtime_mock:
             with patch("tools.windows_pipeline.dry_run", return_value=True) as dry_run_mock:
                 with patch("tools.windows_pipeline.build", return_value=0) as build_mock:
                     with patch("tools.windows_pipeline.deploy", return_value=0):
                         self.assertEqual(pipeline(args), 0)
 
-        self.assertTrue(args.include_data_sql)
-        self.assertTrue(dry_run_mock.call_args.args[0].include_data_sql)
-        self.assertTrue(build_mock.call_args.args[0].include_data_sql)
+        load_runtime_mock.assert_not_called()
+        self.assertFalse(args.include_data_sql)
+        self.assertFalse(dry_run_mock.call_args.args[0].include_data_sql)
+        self.assertFalse(build_mock.call_args.args[0].include_data_sql)
+        self.assertFalse(dry_run_mock.call_args.args[0].skip_data_sql_artifacts)
+        self.assertFalse(build_mock.call_args.args[0].skip_data_sql_artifacts)
 
     def test_deploy_failure_records_failed_attempt(self):
         args = Namespace(

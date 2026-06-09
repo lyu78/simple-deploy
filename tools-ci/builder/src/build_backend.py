@@ -211,7 +211,8 @@ def _backend_app_root_dir() -> str:
 
 
 def _include_data_sql_artifacts() -> bool:
-    return os.environ.get(INCLUDE_DATA_SQL_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+    value = os.environ.get(INCLUDE_DATA_SQL_ENV, "").strip().lower()
+    return value not in {"0", "false", "no", "off"}
 
 
 def _pip_trusted_host_args() -> list[str]:
@@ -269,7 +270,7 @@ def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_di
     if _include_data_sql_artifacts():
         _run_artifact_generator(source_repo_path, python_path, "create_run_all_sql.py")
     else:
-        _log_build_step("skip data SQL artifacts: use --include-data-sql to build run_all insert/update archives")
+        _log_build_step("skip data SQL artifacts: disabled by --skip-data-sql-artifacts")
 
 
 def _require_schema_metadata_after_generator(build_scripts_dir: Path) -> Path:
@@ -371,7 +372,7 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
         if include_data_sql:
             _run_artifact_generator(source_repo, python_path, "create_run_all_sql.py")
         else:
-            _log_build_step("skip data SQL artifacts: use --include-data-sql to build run_all insert/update archives")
+            _log_build_step("skip data SQL artifacts: disabled by --skip-data-sql-artifacts")
 
         _log_matching_files(
             build_scripts_dir,

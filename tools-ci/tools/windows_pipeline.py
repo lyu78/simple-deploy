@@ -1727,10 +1727,10 @@ def dry_run(args: argparse.Namespace) -> bool:
         check_origin_network(reporter, f"{name} origin network", origin_url)
 
     check_backend_build_inputs(reporter, env)
-    if getattr(args, "include_data_sql", False):
+    if data_sql_artifacts_enabled(args):
         check_backend_data_insert_idempotency(reporter, env)
     else:
-        reporter.skip("backend data INSERT idempotency", "data SQL artifacts disabled; use --include-data-sql")
+        reporter.skip("backend data INSERT idempotency", "data SQL artifacts disabled by --skip-data-sql-artifacts")
     if runtime_config_ok:
         check_outlook_email_config(reporter, runtime)
     else:
@@ -1804,12 +1804,16 @@ def required_env_keys(app_only: bool = False) -> list[str]:
     return keys
 
 
+def data_sql_artifacts_enabled(args: argparse.Namespace) -> bool:
+    return not getattr(args, "skip_data_sql_artifacts", False)
+
+
 def build(args: argparse.Namespace) -> int:
     env = load_env(args.env_file, args.secrets_file, require_secrets=False)
     print("BUILD prepare frontend env files", flush=True)
     prepare_frontend_env_files(env)
     build_env = prepare_build_env(env)
-    build_env[INCLUDE_DATA_SQL_ENV] = "1" if getattr(args, "include_data_sql", False) else "0"
+    build_env[INCLUDE_DATA_SQL_ENV] = "1" if data_sql_artifacts_enabled(args) else "0"
     return stream_command(
         [sys.executable, "-u", "create_release.py"],
         cwd=BUILDER_ROOT,
@@ -2735,14 +2739,6 @@ def healthcheck(env: dict[str, str], runtime: dict, expected_version: str = "") 
 
 
 def pipeline(args: argparse.Namespace) -> int:
-    if not getattr(args, "app_only", False) and not getattr(args, "include_data_sql", False):
-        try:
-            runtime, _defaulted_runtime_keys = load_runtime_config(args.config_file)
-        except Exception:
-            runtime = {}
-        if runtime.get("data_sql_enabled", True):
-            print("PIPELINE enable data SQL build: data_sql_enabled=true", flush=True)
-            args.include_data_sql = True
     if not dry_run(args):
         return 1
     build_rc = build(args)
@@ -2762,11 +2758,29 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     dry_run_parser = subparsers.add_parser("dry-run")
-    dry_run_parser.add_argument("--include-data-sql", action="store_true")
+    dry_run_parser.add_argument(
+        "--include-data-sql",
+        action="store_true",
+        help="Deprecated no-op: data SQL artifacts are checked and built by default.",
+    )
+    dry_run_parser.add_argument(
+        "--skip-data-sql-artifacts",
+        action="store_true",
+        help="Skip data SQL artifact validation for an explicit schema-only run.",
+    )
     dry_run_parser.add_argument("--app-only", action="store_true")
 
     build_parser = subparsers.add_parser("build")
-    build_parser.add_argument("--include-data-sql", action="store_true")
+    build_parser.add_argument(
+        "--include-data-sql",
+        action="store_true",
+        help="Deprecated no-op: data SQL artifacts are built by default.",
+    )
+    build_parser.add_argument(
+        "--skip-data-sql-artifacts",
+        action="store_true",
+        help="Skip data SQL artifact generation for an explicit schema-only build.",
+    )
 
     deploy_parser = subparsers.add_parser("deploy")
     deploy_parser.add_argument("--build-version", default="")
@@ -2778,7 +2792,16 @@ def parse_args() -> argparse.Namespace:
     pipeline_parser.add_argument("--build-version", default="")
     pipeline_parser.add_argument("--latest", action="store_true")
     pipeline_parser.add_argument("--contour", choices=CONTOURS, default="dev")
-    pipeline_parser.add_argument("--include-data-sql", action="store_true")
+    pipeline_parser.add_argument(
+        "--include-data-sql",
+        action="store_true",
+        help="Deprecated no-op: data SQL artifacts are checked and built by default.",
+    )
+    pipeline_parser.add_argument(
+        "--skip-data-sql-artifacts",
+        action="store_true",
+        help="Skip data SQL artifact validation/generation for an explicit schema-only run.",
+    )
     pipeline_parser.add_argument("--app-only", action="store_true")
 
     baseline_parser = subparsers.add_parser("set-baseline")

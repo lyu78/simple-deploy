@@ -206,7 +206,6 @@ systemctl status celerybeat_local.service
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --include-data-sql
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --app-only
 ```
 
@@ -214,7 +213,6 @@ systemctl status celerybeat_local.service
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build --include-data-sql
 ```
 
 Деплой уже собранного релиза:
@@ -239,11 +237,19 @@ backend/frontend, Django management, healthcheck и фиксацию baseline.
 
 ```bash
 .venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --include-data-sql
 ```
 
-Если в runtime config `data_sql_enabled=true`, команда `pipeline` включает
-data SQL build автоматически, даже если `--include-data-sql` не передан явно.
+`dry-run` проверяет data SQL по умолчанию, а `build` и `pipeline` генерируют
+data SQL-артефакты по умолчанию. Явный schema-only режим для аварийных случаев:
+
+```bash
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build --skip-data-sql-artifacts
+.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --skip-data-sql-artifacts
+```
+
+Старый `--include-data-sql` оставлен только для совместимости и больше ничего
+не включает. Runtime config `data_sql_enabled` управляет только применением
+готовых data SQL-архивов на deploy.
 
 Фиксация внешнего TEST/PROD результата:
 
@@ -261,7 +267,7 @@ data SQL build автоматически, даже если `--include-data-sql
 - `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
 - идемпотентность data INSERT SQL, которые попадут в `run_all_insert`, если
-  передан `--include-data-sql`;
+  не передан `--skip-data-sql-artifacts`;
 - наличие default maintenance stub archive, если `maintenance_stub_enabled=true`;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
@@ -303,8 +309,7 @@ Schema SQL генерируется offline через Django schema editor в �
 - `db_schema_prod_r_<release>-c_<commit>.tar.gz`.
 
 Внутри schema-архива лежит единственный entrypoint
-`summary_sql_<contour>_*.sql`. Build создает data SQL-архивы только при
-`--include-data-sql`:
+`summary_sql_<contour>_*.sql`. Build по умолчанию создает data SQL-архивы:
 
 - `db_insert_r_<release>-c_<commit>.tar.gz` с `run_all_insert_<commit>.sql`;
 - `db_update_sequential_r_<release>-c_<commit>.tar.gz` с `run_all_update_sequential_<commit>.sql`;
