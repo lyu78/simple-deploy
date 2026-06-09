@@ -22,5 +22,16 @@ build/assets/...
 The runner unpacks it with `--strip-components=1`, so the deployed
 `FRONTEND_RELEASE_PATH` receives `index.html` and `assets/` directly.
 
+After unpacking the stub, full deploy requests `https://DEV_DOMAIN/` and checks
+that the returned HTML contains the configured
+`maintenance_stub_verify_marker`. The default archive contains the marker:
+
+```text
+Плановые технические работы
+```
+
+If this archive is replaced with another universal stub, update
+`maintenance_stub_verify_marker` in `windows_pipeline.local.json`.
+
 The deploy runner validates the archive before stopping app services when
 `maintenance_stub_enabled` is `true`.

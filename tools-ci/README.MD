@@ -72,6 +72,9 @@ DB_LOGIN_PASSWORD=<password>
 - `db_maintenance_sql` и `sql_scripts` - дополнительные SQL-шаги;
 - `maintenance_stub_enabled` и `maintenance_stub_archive_path` - универсальная
   статическая заглушка для full deploy;
+- `maintenance_stub_verify_enabled`, `maintenance_stub_verify_marker`,
+  `maintenance_stub_verify_retries`, `maintenance_stub_verify_delay` - HTTP-проверка,
+  что после распаковки действительно отдается maintenance-заглушка;
 - `data_sql_enabled`, `db_data_sql_timeout_seconds`,
   `db_update_parallel_max_workers` и
   `db_update_parallel_status_interval_seconds` - запуск data SQL в full deploy;
@@ -86,7 +89,12 @@ Default maintenance-заглушка лежит в
 раскрываться через `tar -xzf ... --strip-components=1`, поэтому текущий default
 имеет верхний каталог `build/`, внутри которого лежат `index.html` и `assets/`.
 Если `maintenance_stub_enabled=true`, `dry-run` проверяет наличие этого файла
-до остановки сервисов.
+до остановки сервисов. После распаковки заглушки full deploy делает HTTP-запрос
+на `https://DEV_DOMAIN/` с cache-busting query и ищет
+`maintenance_stub_verify_marker` в HTML. Для default stub маркер -
+`Плановые технические работы`. Если маркер не найден, deploy падает до запуска
+schema/data SQL: это защищает от ситуации, когда nginx все еще отдает основной
+frontend вместо заглушки.
 
 Пример информационных SQL-отчетов после DB-части deploy:
 
@@ -355,7 +363,8 @@ Full deploy сначала выполняет DB data update preflight cleanup, 
 backend-и с `application_name=simple-deploy-data-update`.
 Затем runner загружает app-артефакты, останавливает сервисы, распаковывает
 `tools-ci/maintenance_stub/maintenance_stub.tar.gz` в `FRONTEND_RELEASE_PATH`,
-и при остановленном backend выполняет schema SQL, `run_all_insert_*.sql`,
+проверяет по HTTP, что `https://DEV_DOMAIN/` отдает именно заглушку, а не
+основной frontend, и при остановленном backend выполняет schema SQL, `run_all_insert_*.sql`,
 `run_all_update_parallel_*.sh` и DB maintenance. Update runner по умолчанию
 пропускает `set_default` и печатает `SKIP set_default ...`; явное включение -
 через `--include-set-default-sql`. Insert выполняется тихо:

@@ -130,25 +130,27 @@ SQL-архив по `--contour` и выполняет порядок:
 5. Service steps фазы `before_unpack`: обычно остановка backend/worker-сервисов,
    но не nginx, чтобы он отдавал maintenance-заглушку.
 6. Распаковка maintenance-заглушки в `FRONTEND_RELEASE_PATH`.
-7. Загрузка и применение `summary_sql_<contour>_*.sql` на DB VM через `psql`
+7. HTTP-проверка `https://DEV_DOMAIN/`: страница должна содержать
+   `maintenance_stub_verify_marker`, иначе DB-часть не стартует.
+8. Загрузка и применение `summary_sql_<contour>_*.sql` на DB VM через `psql`
     с `ON_ERROR_STOP` и одной транзакцией.
-8. Применение `run_all_insert_*.sql` и `run_all_update_parallel_*.sh`, если
+9. Применение `run_all_insert_*.sql` и `run_all_update_parallel_*.sh`, если
    `data_sql_enabled=true`. `kind=set_default` внутри update runner-а
    пропускается по умолчанию и включается только флагом
    `--include-set-default-sql`.
-9. DB maintenance SQL/scripts фаз `before_unpack`, `before_migrate` и
+10. DB maintenance SQL/scripts фаз `before_unpack`, `before_migrate` и
    `after_migrate`, включая информационные SQL-отчеты в порядке `sql_scripts`.
-10. Распаковка backend с `--strip-components=1`.
-11. Service steps фазы `after_unpack`.
-12. Django management-команды из `windows_pipeline.local.json` или дефолт:
+11. Распаковка backend с `--strip-components=1`.
+12. Service steps фазы `after_unpack`.
+13. Django management-команды из `windows_pipeline.local.json` или дефолт:
     `migrate --fake`, затем `sync_action_role`.
-13. Service steps фазы `after_migrate`.
-14. Распаковка финального frontend поверх заглушки.
-15. Service steps фазы `after_frontend_unpack`, например
+14. Service steps фазы `after_migrate`.
+15. Распаковка финального frontend поверх заглушки.
+16. Service steps фазы `after_frontend_unpack`, например
     `sudo /bin/systemctl stop nginx`, затем `sudo /bin/systemctl start nginx`.
-16. HTTP healthcheck и проверка `build_version` в портале.
-17. Фиксация успешного применения контура в локальной SQLite-базе.
-18. Outlook email об успешном deploy, если включен.
+17. HTTP healthcheck и проверка `build_version` в портале.
+18. Фиксация успешного применения контура в локальной SQLite-базе.
+19. Outlook email об успешном deploy, если включен.
 
 Если любой обязательный шаг завершается ошибкой, команда падает. Успешный
 baseline двигается только после завершенного deploy или явной команды

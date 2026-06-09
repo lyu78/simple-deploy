@@ -40,6 +40,7 @@ from tools.windows_pipeline import (
     scp_file,
     send_outlook_success_email,
     sudo_list_command,
+    verify_maintenance_stub_http,
 )
 
 
@@ -158,6 +159,38 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         )
 
         self.assertTrue(any("maintenance stub archive" in issue for issue in reporter.issues))
+
+    def test_verify_maintenance_stub_http_accepts_marker(self):
+        env = {"DEV_DOMAIN": "dev.example.local"}
+        runtime = {
+            "maintenance_stub_verify_enabled": True,
+            "maintenance_stub_verify_marker": "Плановые технические работы",
+            "maintenance_stub_verify_retries": 1,
+            "maintenance_stub_verify_delay": 1,
+            "healthcheck_validate_certs": False,
+        }
+
+        with patch(
+            "tools.windows_pipeline.read_http_text",
+            return_value="<html><h1>Плановые технические работы</h1></html>",
+        ) as read_mock:
+            verify_maintenance_stub_http(env, runtime)
+
+        self.assertIn("https://dev.example.local/?simple_deploy_maintenance_check=", read_mock.call_args.args[0])
+
+    def test_verify_maintenance_stub_http_rejects_main_content(self):
+        env = {"DEV_DOMAIN": "dev.example.local"}
+        runtime = {
+            "maintenance_stub_verify_enabled": True,
+            "maintenance_stub_verify_marker": "Плановые технические работы",
+            "maintenance_stub_verify_retries": 1,
+            "maintenance_stub_verify_delay": 1,
+            "healthcheck_validate_certs": False,
+        }
+
+        with patch("tools.windows_pipeline.read_http_text", return_value="<html><h1>Основной портал</h1></html>"):
+            with self.assertRaisesRegex(RuntimeError, "maintenance stub HTTP check failed"):
+                verify_maintenance_stub_http(env, runtime)
 
     def test_scp_file_uses_requested_scope(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -905,6 +938,9 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             stack.enter_context(patch("tools.windows_pipeline.run_service_steps", side_effect=service_side_effect))
             stack.enter_context(patch("tools.windows_pipeline.unpack_app_artifact", side_effect=unpack_side_effect))
             stack.enter_context(
+                patch("tools.windows_pipeline.verify_maintenance_stub_http", side_effect=lambda *_args: events.append("stub:http"))
+            )
+            stack.enter_context(
                 patch("tools.windows_pipeline.run_db_schema_summary", side_effect=lambda *_args: events.append("db:schema"))
             )
             stack.enter_context(
@@ -933,6 +969,8 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertLess(events.index("cleanup:update"), events.index("upload"))
         self.assertLess(events.index("service:before_unpack"), events.index("unpack:maintenance_stub"))
         self.assertLess(events.index("unpack:maintenance_stub"), events.index("db:schema"))
+        self.assertLess(events.index("unpack:maintenance_stub"), events.index("stub:http"))
+        self.assertLess(events.index("stub:http"), events.index("db:schema"))
         self.assertLess(events.index("db:schema"), events.index("db:insert"))
         self.assertLess(events.index("db:insert"), events.index("db:update_parallel"))
         self.assertLess(events.index("db:update_parallel"), events.index("unpack:backend"))

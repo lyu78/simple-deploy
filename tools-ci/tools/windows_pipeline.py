@@ -105,6 +105,10 @@ DEFAULT_RUNTIME_CONFIG = {
     "backup_enabled": False,
     "maintenance_stub_enabled": True,
     "maintenance_stub_archive_path": DEFAULT_MAINTENANCE_STUB_ARCHIVE,
+    "maintenance_stub_verify_enabled": True,
+    "maintenance_stub_verify_marker": "Плановые технические работы",
+    "maintenance_stub_verify_retries": 10,
+    "maintenance_stub_verify_delay": 2,
     "data_sql_enabled": True,
     "db_maintenance_enabled": True,
     "db_psql_bin": "psql",
@@ -155,6 +159,7 @@ NGINX_UNSUPPORTED_ACTIONS = {
 RUNTIME_BOOL_FIELDS = (
     "backup_enabled",
     "maintenance_stub_enabled",
+    "maintenance_stub_verify_enabled",
     "data_sql_enabled",
     "db_maintenance_enabled",
     "service_permission_checks_enabled",
@@ -169,6 +174,8 @@ RUNTIME_POSITIVE_INT_FIELDS = (
     "db_data_sql_timeout_seconds",
     "db_update_parallel_max_workers",
     "db_update_parallel_status_interval_seconds",
+    "maintenance_stub_verify_retries",
+    "maintenance_stub_verify_delay",
     "healthcheck_retries",
     "healthcheck_delay",
     "portal_version_asset_limit",
@@ -522,7 +529,12 @@ def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
         reporter.fail(f"runtime {field}", "expected positive integer")
         ok = False
 
-    for field in ("db_psql_bin", "db_psql_host", "maintenance_stub_archive_path"):
+    for field in (
+        "db_psql_bin",
+        "db_psql_host",
+        "maintenance_stub_archive_path",
+        "maintenance_stub_verify_marker",
+    ):
         value = runtime.get(field)
         if isinstance(value, str) and value.strip():
             continue
@@ -1857,6 +1869,47 @@ def check_portal_release_version(env: dict[str, str], runtime: dict, expected_ve
     raise RuntimeError(f"portal version check failed: {expected_version} not found in HTML or React assets")
 
 
+def verify_maintenance_stub_http(env: dict[str, str], runtime: dict) -> None:
+    if not runtime.get("maintenance_stub_verify_enabled", True):
+        print("SKIP maintenance stub HTTP check: disabled")
+        return
+
+    marker = str(runtime.get("maintenance_stub_verify_marker", "")).strip()
+    if not marker:
+        raise RuntimeError("maintenance stub HTTP check marker is empty")
+
+    retries = int(runtime.get("maintenance_stub_verify_retries", 10))
+    delay = int(runtime.get("maintenance_stub_verify_delay", 2))
+    validate = bool(runtime.get("healthcheck_validate_certs", False))
+    context = None if validate else ssl._create_unverified_context()
+    base_url = f"https://{require_value(env, 'DEV_DOMAIN')}/"
+    last_error = ""
+
+    print(
+        f"RUN maintenance stub HTTP check: {base_url} marker={marker!r} "
+        f"(retries={retries}, delay={delay}s)",
+        flush=True,
+    )
+    for attempt in range(1, retries + 1):
+        url = base_url + f"?simple_deploy_maintenance_check={int(time.time())}_{attempt}"
+        print(f"RUN maintenance stub HTTP check attempt {attempt}/{retries}", flush=True)
+        try:
+            html = read_http_text(url, context)
+            if marker in html:
+                print("PASS maintenance stub HTTP check: marker found")
+                return
+            preview = re.sub(r"\s+", " ", html).strip()[:300]
+            last_error = f"marker not found; response preview: {preview}"
+        except error.HTTPError as exc:
+            last_error = f"HTTP {exc.code}"
+        except Exception as exc:
+            last_error = str(exc)
+        if attempt < retries:
+            time.sleep(delay)
+
+    raise RuntimeError(f"maintenance stub HTTP check failed: {last_error}")
+
+
 def dry_run(args: argparse.Namespace) -> bool:
     reporter = Reporter()
     app_only = bool(getattr(args, "app_only", False))
@@ -2822,6 +2875,7 @@ def deploy(args: argparse.Namespace) -> int:
         else:
             if maintenance_stub_artifact is not None:
                 unpack_app_artifact(env, maintenance_stub_artifact)
+                verify_maintenance_stub_http(env, runtime)
             else:
                 print("SKIP maintenance stub unpack: disabled", flush=True)
 
