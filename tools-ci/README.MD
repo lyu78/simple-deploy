@@ -348,9 +348,14 @@ SQL-архив по `--contour`, загружает его на DB VM и при�
 psql --set=ON_ERROR_STOP=1 --single-transaction
 ```
 
-Runner заранее загружает app-артефакты, останавливает сервисы, распаковывает
+Full deploy сначала выполняет DB data update preflight cleanup, чтобы повторный
+запуск после `KeyboardInterrupt` или падения не накатывал новый релиз поверх
+еще работающего update. На DB VM runner останавливает хвосты
+`run_all_update_parallel_*.sh`/их `psql` процессов и завершает PostgreSQL
+backend-и с `application_name=simple-deploy-data-update`.
+Затем runner загружает app-артефакты, останавливает сервисы, распаковывает
 `tools-ci/maintenance_stub/maintenance_stub.tar.gz` в `FRONTEND_RELEASE_PATH`,
-затем при остановленном backend выполняет schema SQL, `run_all_insert_*.sql`,
+и при остановленном backend выполняет schema SQL, `run_all_insert_*.sql`,
 `run_all_update_parallel_*.sh` и DB maintenance. Update runner по умолчанию
 пропускает `set_default` и печатает `SKIP set_default ...`; явное включение -
 через `--include-set-default-sql`. Insert выполняется тихо:

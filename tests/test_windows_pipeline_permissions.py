@@ -22,6 +22,7 @@ from tools.windows_pipeline import (
     check_runtime_config,
     check_service_permissions,
     check_ssh_runtime,
+    cleanup_db_data_update_leftovers,
     deploy,
     derive_service_permission_check,
     is_sudo_command,
@@ -241,6 +242,38 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertIn("PASS DB data insert SQL completed in 26s", printed)
         self.assertNotIn("STDOUT DB data insert SQL", printed)
 
+    def test_cleanup_db_data_update_leftovers_stops_processes_and_tagged_backends(self):
+        env = {
+            "DB_VM_USER": "db-user",
+            "DB_VM_HOST": "db.example.local",
+            "DB_PORT": "5432",
+            "DB_NAME": "appdb",
+            "DB_LOGIN_USER": "postgres",
+            "DB_LOGIN_PASSWORD": "secret",
+        }
+        runtime = {"db_psql_bin": "psql", "db_psql_host": "localhost"}
+
+        with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "ok\n", "")) as ssh_mock:
+            cleanup_db_data_update_leftovers(env, runtime)
+
+        process_call = ssh_mock.call_args_list[0]
+        self.assertEqual(process_call.args[3], "bash -s")
+        self.assertIn("command -v pgrep", process_call.kwargs["input_text"])
+        self.assertIn("run_all_update_parallel_", process_call.kwargs["input_text"])
+        self.assertIn("kill -TERM", process_call.kwargs["input_text"])
+        self.assertIn("kill -KILL", process_call.kwargs["input_text"])
+        self.assertEqual(process_call.kwargs["timeout"], 90)
+        self.assertEqual(process_call.kwargs["mask"], ["secret"])
+
+        backend_call = ssh_mock.call_args_list[1]
+        backend_command = backend_call.args[3]
+        self.assertIn("pg_terminate_backend", backend_command)
+        self.assertIn("application_name =", backend_command)
+        self.assertIn("simple-deploy-data-update", backend_command)
+        self.assertIn("--tuples-only --no-align", backend_command)
+        self.assertEqual(backend_call.kwargs["timeout"], 60)
+        self.assertEqual(backend_call.kwargs["mask"], ["secret"])
+
     def test_run_db_data_update_parallel_streams_bash_runner_with_pg_env(self):
         artifact = DbSqlArtifact(
             name="db_update_parallel",
@@ -276,6 +309,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertIn("PGPORT='5432'", command)
         self.assertIn("PGUSER='postgres'", command)
         self.assertIn("PGDATABASE='appdb'", command)
+        self.assertIn("PGAPPNAME='simple-deploy-data-update'", command)
         self.assertIn("PSQL_BIN='psql'", command)
         self.assertIn("SIMPLE_DEPLOY_UPDATE_MAX_WORKERS='4'", command)
         self.assertIn("SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS='15'", command)
@@ -756,6 +790,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
             stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=("1.2.3", release_dir)))
             stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[artifact]))
+            cleanup_mock = stack.enter_context(patch("tools.windows_pipeline.cleanup_db_data_update_leftovers"))
             resolve_db_mock = stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact"))
             db_maintenance_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance"))
             db_schema_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_schema_summary"))
@@ -772,6 +807,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             self.assertEqual(deploy(args), 0)
 
         load_env_mock.assert_called_once_with(args.env_file, args.secrets_file, require_secrets=False)
+        cleanup_mock.assert_not_called()
         resolve_db_mock.assert_not_called()
         db_maintenance_mock.assert_not_called()
         db_schema_mock.assert_not_called()
@@ -855,6 +891,12 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             )
             stack.enter_context(patch("tools.windows_pipeline.resolve_maintenance_stub_artifact", return_value=stub))
             stack.enter_context(
+                patch(
+                    "tools.windows_pipeline.cleanup_db_data_update_leftovers",
+                    side_effect=lambda *_args: events.append("cleanup:update"),
+                )
+            )
+            stack.enter_context(
                 patch("tools.windows_pipeline.upload_app_artifacts", side_effect=lambda *_args: events.append("upload"))
             )
             stack.enter_context(
@@ -888,6 +930,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
             self.assertEqual(deploy(args), 0)
 
+        self.assertLess(events.index("cleanup:update"), events.index("upload"))
         self.assertLess(events.index("service:before_unpack"), events.index("unpack:maintenance_stub"))
         self.assertLess(events.index("unpack:maintenance_stub"), events.index("db:schema"))
         self.assertLess(events.index("db:schema"), events.index("db:insert"))

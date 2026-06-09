@@ -60,6 +60,7 @@ DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
 DEFAULT_MAINTENANCE_STUB_ARCHIVE = "tools-ci/maintenance_stub/maintenance_stub.tar.gz"
 PIP_TRUSTED_HOSTS = "pypi.org files.pythonhosted.org pypi.python.org"
 INCLUDE_DATA_SQL_ENV = "SIMPLE_DEPLOY_INCLUDE_DATA_SQL"
+DB_DATA_UPDATE_APP_NAME = "simple-deploy-data-update"
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 DATA_SQL_INSERT_DIRS = ("app_ip_subcompany_catalogs",)
 DATA_SQL_MIXED_DIRS = (
@@ -1375,7 +1376,7 @@ def check_ssh_runtime(reporter: Reporter, env: dict[str, str], app_only: bool = 
         env,
         db_user,
         db_host,
-        "echo ok && command -v psql bash tar find rm chmod >/dev/null",
+        "echo ok && command -v psql bash tar find rm chmod pgrep >/dev/null",
         "DB",
     )
     if db.rc == 0:
@@ -1413,6 +1414,97 @@ def check_db_psql_login(reporter: Reporter, env: dict[str, str], runtime: dict) 
             if secret:
                 output = output.replace(secret, "***")
         reporter.fail("DB psql login", output or f"rc={result.rc}")
+
+
+DB_DATA_UPDATE_PROCESS_CLEANUP_SCRIPT = r"""set -uo pipefail
+
+command -v pgrep >/dev/null 2>&1 || {
+  echo "pgrep executable not found"
+  exit 2
+}
+
+PATTERN='run_all_update_parallel_.*[.]sh|psql .*docs/database/scripts'
+
+print_matches() {
+  pgrep -af "$PATTERN" || true
+}
+
+read_pids() {
+  pgrep -f "$PATTERN" || true
+}
+
+matches="$(print_matches)"
+if [[ -z "$matches" ]]; then
+  echo "No leftover DB data update OS processes"
+  exit 0
+fi
+
+echo "Found leftover DB data update OS processes:"
+printf '%s\n' "$matches"
+
+mapfile -t pids < <(read_pids)
+if [[ "${#pids[@]}" -gt 0 ]]; then
+  echo "Sending TERM to ${#pids[@]} process(es)"
+  kill -TERM "${pids[@]}" 2>/dev/null || true
+  sleep 5
+fi
+
+mapfile -t remaining < <(read_pids)
+if [[ "${#remaining[@]}" -gt 0 ]]; then
+  echo "Sending KILL to ${#remaining[@]} process(es)"
+  kill -KILL "${remaining[@]}" 2>/dev/null || true
+  sleep 1
+fi
+
+remaining_matches="$(print_matches)"
+if [[ -n "$remaining_matches" ]]; then
+  echo "Failed to stop DB data update OS processes:"
+  printf '%s\n' "$remaining_matches"
+  exit 1
+fi
+
+echo "Stopped leftover DB data update OS processes"
+"""
+
+
+def cleanup_db_data_update_leftovers(env: dict[str, str], runtime: dict) -> None:
+    db_user = require_value(env, "DB_VM_USER")
+    db_host = require_value(env, "DB_VM_HOST")
+    password = env.get("DB_LOGIN_PASSWORD", "")
+
+    print("RUN DB data update preflight cleanup: OS processes", flush=True)
+    process_result = ssh_command(
+        env,
+        db_user,
+        db_host,
+        "bash -s",
+        "DB",
+        input_text=DB_DATA_UPDATE_PROCESS_CLEANUP_SCRIPT,
+        timeout=90,
+        mask=[password],
+    )
+    run_or_raise("DB data update OS process cleanup", process_result, mask=[password])
+
+    psql_base, mask = db_psql_base_command(env, runtime)
+    sql = f"""
+WITH targets AS (
+    SELECT pid
+    FROM pg_stat_activity
+    WHERE datname = current_database()
+      AND application_name = '{DB_DATA_UPDATE_APP_NAME}'
+      AND pid <> pg_backend_pid()
+),
+terminated AS (
+    SELECT pid, pg_terminate_backend(pid) AS terminated
+    FROM targets
+)
+SELECT 'terminated_backend_count=' || count(*) FILTER (WHERE terminated)
+FROM terminated;
+"""
+    command = f"{psql_base} --tuples-only --no-align --command={sh_quote(sql)}"
+    print("RUN DB data update preflight cleanup: PostgreSQL backends", flush=True)
+    backend_result = ssh_command(env, db_user, db_host, command, "DB", timeout=60, mask=mask)
+    run_or_raise("DB data update PostgreSQL backend cleanup", backend_result, mask=mask)
 
 
 def check_outlook_email_config(reporter: Reporter, runtime: dict) -> None:
@@ -2293,6 +2385,7 @@ def run_db_data_update_parallel(
         "PGUSER": env.get("DB_LOGIN_USER", "postgres"),
         "PGDATABASE": require_value(env, "DB_NAME"),
         "PGPASSWORD": password,
+        "PGAPPNAME": DB_DATA_UPDATE_APP_NAME,
         "PSQL_BIN": str(runtime.get("db_psql_bin", "psql")),
         "SIMPLE_DEPLOY_UPDATE_MAX_WORKERS": str(runtime.get("db_update_parallel_max_workers", 8)),
         "SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS": str(
@@ -2678,6 +2771,9 @@ def deploy(args: argparse.Namespace) -> int:
         app_user = require_value(env, "APP_VM_USER")
         app_host = require_value(env, "APP_VM_HOST")
         remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+
+        if not app_only:
+            cleanup_db_data_update_leftovers(env, runtime)
 
         if app_only:
             print("SKIP DB steps: app-only mode", flush=True)
