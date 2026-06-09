@@ -142,6 +142,15 @@ DEFAULT_RUNTIME_CONFIG = {
 
 DB_MAINTENANCE_PHASES = {"before_unpack", "before_migrate", "after_migrate"}
 SERVICE_PHASES = {"before_unpack", "after_unpack", "after_migrate", "after_frontend_unpack"}
+NGINX_SERVICE_TARGETS = {"nginx", "nginx.service"}
+NGINX_STOP_START_ACTIONS = {"stop", "start"}
+NGINX_UNSUPPORTED_ACTIONS = {
+    "restart",
+    "reload",
+    "try-restart",
+    "reload-or-restart",
+    "reload-or-try-restart",
+}
 RUNTIME_BOOL_FIELDS = (
     "backup_enabled",
     "maintenance_stub_enabled",
@@ -468,12 +477,22 @@ def systemctl_action(command: object) -> tuple[str, list[str]] | None:
     return None
 
 
-def is_nginx_stop_command(command: object) -> bool:
+def is_nginx_stop_start_command(command: object) -> bool:
+    return nginx_systemctl_action(command) in NGINX_STOP_START_ACTIONS
+
+
+def is_unsupported_nginx_command(command: object) -> bool:
+    return nginx_systemctl_action(command) in NGINX_UNSUPPORTED_ACTIONS
+
+
+def nginx_systemctl_action(command: object) -> str | None:
     action = systemctl_action(command)
     if not action:
-        return False
+        return None
     verb, targets = action
-    return verb == "stop" and any(target in {"nginx", "nginx.service"} for target in targets)
+    if any(target in NGINX_SERVICE_TARGETS for target in targets):
+        return verb
+    return None
 
 
 def is_readable_systemctl_status_result(command: str, result: CommandResult) -> bool:
@@ -584,39 +603,65 @@ def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
         reporter.fail("runtime service_steps", "expected list")
         ok = False
     else:
+        nginx_service_actions: list[tuple[int, str, str, str]] = []
         for index, step in enumerate(service_steps, start=1):
             label = f"runtime service_steps #{index}"
             if not isinstance(step, dict):
                 reporter.fail(label, "expected object with command and optional phase")
                 ok = False
                 continue
-            command = step.get("command")
-            if not isinstance(command, str) or not command.strip():
-                reporter.fail(label, "command must be a non-empty string")
-                ok = False
-            elif is_nginx_stop_command(command):
-                reporter.fail(label, "nginx must stay running for maintenance stub; use reload nginx in after_frontend_unpack")
-                ok = False
-            elif is_disallowed_bare_systemctl_command(command):
-                reporter.fail(label, "systemctl service commands except status must use sudo")
-                ok = False
             step_phase = step.get("phase", "after_migrate")
             if step_phase not in SERVICE_PHASES:
                 reporter.fail(label, "phase must be one of: " + ", ".join(sorted(SERVICE_PHASES)))
+                ok = False
+            command = step.get("command")
+            nginx_command_action = nginx_systemctl_action(command)
+            if nginx_command_action in NGINX_STOP_START_ACTIONS:
+                nginx_service_actions.append((index, label, str(step_phase), nginx_command_action))
+            if not isinstance(command, str) or not command.strip():
+                reporter.fail(label, "command must be a non-empty string")
+                ok = False
+            elif is_unsupported_nginx_command(command):
+                reporter.fail(label, "nginx restart/reload commands are not supported; use stop nginx then start nginx")
+                ok = False
+            elif is_nginx_stop_start_command(command) and step_phase != "after_frontend_unpack":
+                reporter.fail(
+                    label,
+                    "nginx stop/start commands must run in after_frontend_unpack after final frontend unpack",
+                )
+                ok = False
+            elif is_disallowed_bare_systemctl_command(command):
+                reporter.fail(label, "systemctl service commands except status must use sudo")
                 ok = False
             for optional_field in ("name", "permission_check_command"):
                 if optional_field in step and not isinstance(step[optional_field], str):
                     reporter.fail(label, f"{optional_field} must be a string when set")
                     ok = False
-                elif is_nginx_stop_command(step.get(optional_field)):
+                elif is_unsupported_nginx_command(step.get(optional_field)):
                     reporter.fail(
                         label,
-                        f"{optional_field} must not stop nginx; use reload nginx in after_frontend_unpack",
+                        f"{optional_field} must not use nginx restart/reload; use stop nginx then start nginx",
+                    )
+                    ok = False
+                elif is_nginx_stop_start_command(step.get(optional_field)) and step_phase != "after_frontend_unpack":
+                    reporter.fail(
+                        label,
+                        f"{optional_field} must run nginx stop/start in after_frontend_unpack",
                     )
                     ok = False
                 elif is_disallowed_bare_systemctl_command(step.get(optional_field)):
                     reporter.fail(label, f"{optional_field} must use sudo for systemctl commands except status")
                     ok = False
+        for position, (_index, label, step_phase, verb) in enumerate(nginx_service_actions):
+            if verb != "stop" or step_phase != "after_frontend_unpack":
+                continue
+            has_later_start = any(
+                later_phase == "after_frontend_unpack" and later_verb == "start"
+                for _later_index, _later_label, later_phase, later_verb in nginx_service_actions[position + 1 :]
+            )
+            if not has_later_start:
+                reporter.fail(label, "nginx stop in after_frontend_unpack must be followed by nginx start before healthcheck")
+                ok = False
 
     if ok:
         reporter.pass_("runtime config values", "types and ranges are valid")

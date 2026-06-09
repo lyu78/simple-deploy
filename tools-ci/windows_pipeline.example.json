@@ -52,16 +52,22 @@
       "permission_check_command": "systemctl status example-backend.service"
     },
     {
-      "name": "reload nginx after frontend",
-      "phase": "after_frontend_unpack",
-      "command": "sudo /bin/systemctl reload nginx",
-      "permission_check_command": "sudo /bin/systemctl reload nginx"
-    },
-    {
       "name": "restart custom app",
       "phase": "after_migrate",
       "command": "/opt/example/bin/restart-example-app",
       "permission_check_command": "test -x /opt/example/bin/restart-example-app"
+    },
+    {
+      "name": "stop nginx after frontend",
+      "phase": "after_frontend_unpack",
+      "command": "sudo /bin/systemctl stop nginx",
+      "permission_check_command": "sudo /bin/systemctl stop nginx"
+    },
+    {
+      "name": "start nginx after frontend",
+      "phase": "after_frontend_unpack",
+      "command": "sudo /bin/systemctl start nginx",
+      "permission_check_command": "sudo /bin/systemctl start nginx"
     }
   ],
   "healthcheck_enabled": true,

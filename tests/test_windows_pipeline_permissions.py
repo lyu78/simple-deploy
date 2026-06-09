@@ -396,7 +396,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertFalse(check_runtime_config(reporter, runtime))
         self.assertTrue(any("systemctl service commands except status must use sudo" in issue for issue in reporter.issues))
 
-    def test_runtime_config_rejects_stop_nginx_service_step(self):
+    def test_runtime_config_rejects_stop_nginx_before_frontend_unpack(self):
         runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
         runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
         runtime["service_steps"] = [
@@ -410,7 +410,85 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         reporter = Reporter()
 
         self.assertFalse(check_runtime_config(reporter, runtime))
-        self.assertTrue(any("nginx must stay running for maintenance stub" in issue for issue in reporter.issues))
+        self.assertTrue(any("after_frontend_unpack" in issue for issue in reporter.issues))
+
+    def test_runtime_config_rejects_nginx_stop_start_before_frontend_unpack(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        for verb in ("stop", "start"):
+            with self.subTest(verb=verb):
+                runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+                runtime["service_steps"] = [
+                    {
+                        "name": f"{verb} nginx early",
+                        "phase": "after_migrate",
+                        "command": f"sudo /bin/systemctl {verb} nginx.service",
+                    }
+                ]
+                reporter = Reporter()
+
+                self.assertFalse(check_runtime_config(reporter, runtime))
+                self.assertTrue(any("after_frontend_unpack" in issue for issue in reporter.issues))
+
+    def test_runtime_config_rejects_nginx_restart_reload(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        for verb in ("restart", "reload", "try-restart", "reload-or-restart", "reload-or-try-restart"):
+            with self.subTest(verb=verb):
+                runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+                runtime["service_steps"] = [
+                    {
+                        "name": f"{verb} nginx after frontend",
+                        "phase": "after_frontend_unpack",
+                        "command": f"sudo /bin/systemctl {verb} nginx.service",
+                    }
+                ]
+                reporter = Reporter()
+
+                self.assertFalse(check_runtime_config(reporter, runtime))
+                self.assertTrue(any("restart/reload" in issue for issue in reporter.issues))
+
+    def test_runtime_config_rejects_nginx_stop_without_later_start(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        runtime["service_steps"] = [
+            {
+                "name": "stop nginx after frontend",
+                "phase": "after_frontend_unpack",
+                "command": "sudo /bin/systemctl stop nginx",
+                "permission_check_command": "sudo /bin/systemctl stop nginx",
+            }
+        ]
+        reporter = Reporter()
+
+        self.assertFalse(check_runtime_config(reporter, runtime))
+        self.assertTrue(any("must be followed by nginx start" in issue for issue in reporter.issues))
+
+    def test_runtime_config_accepts_nginx_stop_start_after_frontend_unpack(self):
+        runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        runtime["service_steps"] = [
+            {
+                "name": "stop nginx after frontend",
+                "phase": "after_frontend_unpack",
+                "command": "sudo /bin/systemctl stop nginx",
+                "permission_check_command": "sudo /bin/systemctl stop nginx",
+            },
+            {
+                "name": "start nginx after frontend",
+                "phase": "after_frontend_unpack",
+                "command": "sudo /bin/systemctl start nginx",
+                "permission_check_command": "sudo /bin/systemctl start nginx",
+            },
+            {
+                "name": "status nginx after frontend",
+                "phase": "after_frontend_unpack",
+                "command": "systemctl status nginx",
+                "permission_check_command": "systemctl status nginx",
+            },
+        ]
+        reporter = Reporter()
+
+        self.assertTrue(check_runtime_config(reporter, runtime))
+        self.assertEqual(reporter.issues, [])
 
     def test_runtime_config_accepts_bare_systemctl_status_service_step(self):
         runtime_path = ROOT / "tools-ci" / "windows_pipeline.example.json"
