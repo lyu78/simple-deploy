@@ -79,6 +79,7 @@ from simple_deploy.processes.mark import (  # noqa: E402
     set_baseline,
 )
 from simple_deploy.processes.build import build  # noqa: E402
+from simple_deploy.processes.dry_run import dry_run, required_env_keys  # noqa: E402
 
 DEFAULT_ENV_FILE = ROOT / ".env"
 DEFAULT_SECRETS_FILE = ROOT / "local.secrets.env"
@@ -1827,140 +1828,6 @@ def verify_maintenance_stub_http(env: dict[str, str], runtime: dict) -> None:
             time.sleep(delay)
 
     raise RuntimeError(f"maintenance stub HTTP check failed: {last_error}")
-
-
-def dry_run(args: argparse.Namespace) -> bool:
-    reporter = Reporter()
-    app_only = bool(getattr(args, "app_only", False))
-    try:
-        env = load_env(args.env_file, args.secrets_file, require_secrets=not app_only)
-        runtime, defaulted_runtime_keys = load_runtime_config(args.config_file)
-        reporter.pass_("config files", f"{args.env_file}, {args.secrets_file}")
-    except Exception as exc:
-        reporter.fail("config files", str(exc))
-        return reporter.result()
-
-    for key in defaulted_runtime_keys:
-        reporter.warn(
-            f"runtime {key}",
-            f"missing in {args.config_file}; using default {runtime_default_preview(DEFAULT_RUNTIME_CONFIG[key])}",
-        )
-
-    for key in required_env_keys(app_only=app_only):
-        if env.get(key, "").strip():
-            reporter.pass_(f"env {key}")
-        else:
-            reporter.fail(f"env {key}", "значение не задано")
-
-    runtime_config_ok = check_runtime_config(reporter, runtime)
-    if app_only:
-        reporter.skip("maintenance stub archive", "app-only mode")
-    elif runtime_config_ok:
-        check_maintenance_stub_archive(reporter, runtime)
-    else:
-        reporter.skip("maintenance stub archive", "runtime config invalid")
-
-    check_command(reporter, "Python", [sys.executable, "--version"])
-    check_windows_command(reporter, "git", "git --version")
-    check_windows_command(reporter, "node", "node --version")
-    check_windows_command(reporter, "npm", "npm --version")
-    check_windows_command(reporter, "ssh", "ssh -V")
-    check_windows_command(reporter, "scp", "where scp")
-
-    git_bash = Path(env.get("GIT_BASH_PATH", ""))
-    if git_bash.exists():
-        reporter.pass_("Git Bash", str(git_bash))
-    else:
-        reporter.fail("Git Bash", f"не найден: {git_bash}")
-
-    check_ssh_key_files(reporter, env, app_only=app_only)
-
-    origins = [
-        ("backend source repo", env.get("BACKEND_SOURCE_REPO_PATH", "")),
-        ("backend target repo", env.get("BACKEND_TARGET_REPO_PATH", "")),
-        ("frontend source repo", env.get("FRONTEND_SOURCE_REPO_PATH", "")),
-        ("frontend target repo", env.get("FRONTEND_TARGET_REPO_PATH", "")),
-    ]
-    for name, path in origins:
-        origin_url = check_repo(reporter, name, path)
-        check_origin_network(reporter, f"{name} origin network", origin_url)
-
-    check_backend_build_inputs(reporter, env)
-    if data_sql_artifacts_enabled(args):
-        check_backend_data_insert_idempotency(reporter, env)
-    else:
-        reporter.skip("backend data INSERT idempotency", "data SQL artifacts disabled by --skip-data-sql-artifacts")
-    if runtime_config_ok:
-        check_outlook_email_config(reporter, runtime)
-    else:
-        reporter.skip("Outlook email", "runtime config invalid")
-
-    try:
-        ssh_state = check_ssh_runtime(reporter, env, app_only=app_only)
-    except Exception as exc:
-        reporter.fail("SSH runtime checks", str(exc))
-        ssh_state = {"app": False, "db": False}
-        reporter.skip("app VM deploy checks", "SSH runtime checks завершились ошибкой")
-        reporter.skip("DB SQL checks", "SSH runtime checks завершились ошибкой")
-
-    if not ssh_state["app"]:
-        reporter.skip("app VM directory checks", "app VM unavailable")
-        reporter.skip("service permission checks", "app VM unavailable")
-        reporter.skip("DEV HTTP endpoint", "app VM недоступна, healthcheck неинформативен")
-    elif not runtime_config_ok:
-        reporter.skip("app VM directory checks", "runtime config invalid")
-        reporter.skip("service permission checks", "runtime config invalid")
-        reporter.skip("DEV HTTP endpoint", "runtime config invalid")
-    else:
-        check_app_deploy_directories(reporter, env, runtime)
-        check_app_manage_py(reporter, env)
-        check_service_permissions(reporter, env, runtime)
-        if runtime.get("healthcheck_enabled", True):
-            check_http(reporter, env, bool(runtime.get("healthcheck_validate_certs", False)))
-        else:
-            reporter.skip("DEV HTTP endpoint", "healthcheck disabled")
-
-    if app_only:
-        reporter.skip("DB psql login", "app-only mode")
-    elif not runtime_config_ok:
-        reporter.skip("DB psql login", "runtime config invalid")
-    elif ssh_state["db"]:
-        check_db_psql_login(reporter, env, runtime)
-    else:
-        reporter.skip("DB psql login", "DB VM SSH/psql unavailable")
-
-    return reporter.result()
-
-
-def required_env_keys(app_only: bool = False) -> list[str]:
-    keys = [
-        "BUILD_VERSION_BASE",
-        "GIT_BASH_PATH",
-        "BACKEND_SOURCE_REPO_PATH",
-        "BACKEND_TARGET_REPO_PATH",
-        "FRONTEND_SOURCE_REPO_PATH",
-        "FRONTEND_TARGET_REPO_PATH",
-        "APP_VM_HOST",
-        "APP_VM_USER",
-        "DB_VM_HOST",
-        "DB_VM_USER",
-        "DB_PORT",
-        "DB_NAME",
-        "REMOTE_TMP_ROOT",
-        "BACKEND_RELEASE_PATH",
-        "FRONTEND_RELEASE_PATH",
-        "APP_WORKDIR",
-        "APP_VENV_ACTIVATE_PATH",
-        "APP_MANAGE_PY_PATH",
-        "DEV_DOMAIN",
-        "TEST_DOMAIN",
-        "PROD_DOMAIN",
-        "FRONTEND_TEST_SERVER_NAME",
-        "FRONTEND_PROD_SERVER_NAME",
-    ]
-    if app_only:
-        return [key for key in keys if key not in {"DB_VM_HOST", "DB_VM_USER", "DB_PORT", "DB_NAME"}]
-    return keys
 
 
 def data_sql_artifacts_enabled(args: argparse.Namespace) -> bool:

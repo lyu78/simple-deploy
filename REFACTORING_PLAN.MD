@@ -374,5 +374,14 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
   флаг `SIMPLE_DEPLOY_INCLUDE_DATA_SQL` сохранены через compatibility runner;
 - старый import/patch path `tools.windows_pipeline.build` остается рабочим.
 
-Шаг 5 еще не завершен. Следующие кандидаты на перенос: `dry_run`, и только
-после этого `deploy`.
+Четвертым безопасным срезом вынесен `dry_run`:
+
+- создан модуль `tools-ci/simple_deploy/processes/dry_run.py`;
+- из монолитного runner-а вынесены `dry_run(args)` и `required_env_keys`;
+- preflight helper-ы config/runtime/SSH/HTTP/SQL пока остаются в compatibility
+  runner-е и вызываются лениво, чтобы не смешивать process-split с переносом
+  core-слоя;
+- старые import/patch paths `tools.windows_pipeline.dry_run` и
+  `tools.windows_pipeline.required_env_keys` остаются рабочими.
+
+Шаг 5 еще не завершен. Следующий кандидат на перенос: `deploy`.
