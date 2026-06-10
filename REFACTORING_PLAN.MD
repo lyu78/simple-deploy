@@ -355,5 +355,16 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 - core/SSH helper-ы пока остаются в монолите и используются из `data_sql`
   лениво, чтобы не смешивать первый process-split с переносом core-слоя.
 
-Шаг 5 еще не завершен. Следующие кандидаты на перенос: `mark`, затем `build`,
-затем `dry_run`, и только после этого `deploy`.
+Вторым безопасным срезом вынесен `mark`:
+
+- создан модуль `tools-ci/simple_deploy/processes/mark.py`;
+- из монолитного runner-а вынесены `mark_contour_applied`,
+  `mark_contour_failed`, `mark_contour_failed_best_effort`, `set_baseline`,
+  `mark_applied`, `mark_failed`;
+- ручные команды продолжают работать через старые CLI entrypoints и старые patch
+  paths `tools.windows_pipeline.*`;
+- baseline по-прежнему двигается только для `set-baseline` и `mark-applied`,
+  а `mark-failed` пишет failed attempt без изменения baseline.
+
+Шаг 5 еще не завершен. Следующие кандидаты на перенос: `build`, затем
+`dry_run`, и только после этого `deploy`.

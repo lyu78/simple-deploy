@@ -42,9 +42,6 @@ BUILDER_ROOT = TOOLS_CI_ROOT / "builder"
 
 from simple_deploy.release.state import (  # noqa: E402
     CONTOURS,
-    connect_state_db,
-    record_attempt,
-    upsert_contour_state,
     validate_contour,
 )
 from simple_deploy.release.artifacts import (  # noqa: E402
@@ -61,7 +58,6 @@ from simple_deploy.release.manifest import (  # noqa: E402
     RELEASE_MANIFEST_NAME,
     find_previous_release_manifest,
     load_release_manifest,
-    release_backend_commit,
 )
 from simple_deploy.processes.data_sql import (  # noqa: E402
     DB_DATA_UPDATE_PROCESS_CLEANUP_SCRIPT,
@@ -73,6 +69,14 @@ from simple_deploy.processes.data_sql import (  # noqa: E402
     run_db_maintenance,
     run_db_schema_summary,
     upload_unpack_db_sql_artifact,
+)
+from simple_deploy.processes.mark import (  # noqa: E402
+    mark_applied,
+    mark_contour_applied,
+    mark_contour_failed,
+    mark_contour_failed_best_effort,
+    mark_failed,
+    set_baseline,
 )
 
 DEFAULT_ENV_FILE = ROOT / ".env"
@@ -2115,46 +2119,6 @@ def run_service_steps(env: dict[str, str], runtime: dict, phase: str) -> None:
         run_or_raise(f"service {phase}: {label}", result)
 
 
-def mark_contour_applied(contour: str, build_version: str, release_dir: Path) -> None:
-    """Фиксирует успешное применение релиза на контуре и двигает baseline."""
-    contour = validate_contour(contour)
-    backend_commit = release_backend_commit(release_dir)
-    with contextlib.closing(connect_state_db()) as connection:
-        upsert_contour_state(connection, contour, build_version, backend_commit)
-        record_attempt(connection, contour, build_version, backend_commit, "success")
-    print(
-        f"MARK applied: contour={contour} build_version={build_version} backend_commit={backend_commit}",
-        flush=True,
-    )
-
-
-def mark_contour_failed(contour: str, build_version: str, release_dir: Path, error_text: str) -> None:
-    """Записывает неуспешную попытку применения без изменения baseline."""
-    contour = validate_contour(contour)
-    try:
-        backend_commit = release_backend_commit(release_dir)
-    except Exception:
-        backend_commit = ""
-    with contextlib.closing(connect_state_db()) as connection:
-        record_attempt(connection, contour, build_version, backend_commit, "failed", error_text)
-    print(
-        f"MARK failed: contour={contour} build_version={build_version} backend_commit={backend_commit}",
-        flush=True,
-    )
-
-
-def mark_contour_failed_best_effort(contour: str, build_version: str, release_dir: Path, error: Exception) -> None:
-    """Пишет failed deploy attempt, не маскируя исходную ошибку deploy."""
-    try:
-        mark_contour_failed(contour, build_version, release_dir, str(error))
-    except Exception as record_error:
-        print(
-            f"WARN failed to record failed deploy attempt: "
-            f"contour={contour} build_version={build_version} error={record_error}",
-            flush=True,
-        )
-
-
 def git_log_merge_commits(repo_path: str, previous_sha: str, current_sha: str) -> list[dict[str, str]]:
     result = run_command(
         [
@@ -2498,44 +2462,6 @@ def deploy(args: argparse.Namespace) -> int:
                 flush=True,
             )
         raise
-    return 0
-
-
-def set_baseline(args: argparse.Namespace) -> int:
-    """Устанавливает начальный baseline контура по build version или commit."""
-    print("BASELINE load config", flush=True)
-    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
-    contour = validate_contour(args.contour)
-    if args.backend_commit:
-        build_version = args.build_version or "manual-baseline"
-        backend_commit = args.backend_commit.strip()
-    else:
-        build_version, release_dir = resolve_release_dir(env, args.build_version, latest=False)
-        backend_commit = release_backend_commit(release_dir)
-    with contextlib.closing(connect_state_db()) as connection:
-        upsert_contour_state(connection, contour, build_version, backend_commit)
-    print(
-        f"BASELINE set: contour={contour} build_version={build_version} backend_commit={backend_commit}",
-        flush=True,
-    )
-    return 0
-
-
-def mark_applied(args: argparse.Namespace) -> int:
-    """CLI-обертка для фиксации успешного применения релиза."""
-    print("MARK-APPLIED load config", flush=True)
-    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
-    build_version, release_dir = resolve_release_dir(env, args.build_version, latest=False)
-    mark_contour_applied(args.contour, build_version, release_dir)
-    return 0
-
-
-def mark_failed(args: argparse.Namespace) -> int:
-    """CLI-обертка для фиксации неуспешного применения релиза."""
-    print("MARK-FAILED load config", flush=True)
-    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
-    build_version, release_dir = resolve_release_dir(env, args.build_version, latest=False)
-    mark_contour_failed(args.contour, build_version, release_dir, args.error)
     return 0
 
 
