@@ -227,3 +227,17 @@ git diff --check
 - добавлен read-only FastAPI dashboard/API v1;
 - `ansible-ci/` перенесен в `legacy/ansible-ci/` с исправлением ссылок и default path вычислений;
 - тесты обновлены под новую структуру.
+
+## Статус шага 4
+
+Шаг 4 завершен отдельным срезом:
+
+- SQLite state implementation перенесена в `tools-ci/simple_deploy/release/state.py`;
+- `tools-ci/builder/src/release_state.py` оставлен compatibility shim-ом для старых импортов `src.release_state`;
+- release artifact primitives вынесены в `tools-ci/simple_deploy/release/artifacts.py`;
+- release manifest primitives вынесены в `tools-ci/simple_deploy/release/manifest.py`;
+- builder и Windows runner используют общие `simple_deploy.release.*` модули вместо собственной реализации state/artifact/manifest primitives;
+- совместимость текущего CLI wrapper-а сохранена.
+
+Следующий шаг рефакторинга - шаг 5: разложить текущие процессы по модулям
+`dry_run`, `build`, `deploy`, `mark`, `data_sql`.

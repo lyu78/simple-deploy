@@ -1,20 +1,28 @@
-from datetime import datetime
-import json
 from pathlib import Path
 import subprocess
 from contextlib import closing
+import sys
+
+
+TOOLS_CI_ROOT = Path(__file__).resolve().parents[1]
+if str(TOOLS_CI_ROOT) not in sys.path:
+    sys.path.insert(0, str(TOOLS_CI_ROOT))
 
 from src.infra import (
     get_new_branch_name,
     get_new_build_version,
 )
-from src.release_state import (
+from simple_deploy.release.state import (
     connect_state_db,
     record_build_attempt_finished,
     record_build_attempt_started,
     record_release,
 )
 from src.utils import get_required_env
+from simple_deploy.release.manifest import (
+    build_release_manifest,
+    write_release_manifest_file,
+)
 
 from src.build_backend import build_backend
 from src.build_frontend import build_frontend
@@ -49,23 +57,13 @@ def write_release_manifest(
 ) -> dict:
     release_root = Path(get_required_env("RELEASE_ROOT_WINDOWS"))
     release_dir = release_root / build_version
-    release_dir.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "build_version": build_version,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "repositories": {
-            "backend": repo_manifest(get_required_env("BACKEND_SOURCE_REPO_PATH")),
-            "frontend": repo_manifest(get_required_env("FRONTEND_SOURCE_REPO_PATH")),
-        },
-        "artifacts": {
-            "backend_db": backend_artifacts or {},
-        },
-    }
-    manifest_path = release_dir / "release_manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    manifest = build_release_manifest(
+        build_version=build_version,
+        backend_repo=repo_manifest(get_required_env("BACKEND_SOURCE_REPO_PATH")),
+        frontend_repo=repo_manifest(get_required_env("FRONTEND_SOURCE_REPO_PATH")),
+        backend_artifacts=backend_artifacts,
     )
+    manifest_path = write_release_manifest_file(release_dir, manifest)
     print(f"Release manifest created: {manifest_path}", flush=True)
     backend_repo = manifest["repositories"]["backend"]
     frontend_repo = manifest["repositories"]["frontend"]
