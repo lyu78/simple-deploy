@@ -403,3 +403,51 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 Оставшийся крупный рефакторинг относится уже к следующим архитектурным слоям:
 config/runtime, command execution, SSH/app/db helpers, service steps,
 healthcheck/email и более чистым process boundary тестам.
+
+## Следующий этап: шаг 6, DDD/Pydantic границы
+
+После завершения шага 5 не начинаем сразу глубокий распил оставшегося
+`tools-ci/simple_deploy/windows_pipeline.py`. В нем все еще лежат технические
+helper-слои config/runtime, command execution, SSH, app/db operations, service
+steps, healthcheck, email и summary. Механический перенос этих блоков без
+согласованных доменных границ даст много churn и мало архитектурной ясности.
+
+Рабочий словарь и целевая модель зафиксированы в `DDD_REFACTORING.MD`.
+Реализационные слои для постепенного перехода:
+
+- `types` - enum-ы, справочники и custom primitive types без бизнес-логики;
+- `entities` - чистые DDD entities/value objects и доменные инварианты;
+- `models` - внутренние application/read/storage-facing модели;
+- `dto` - внешние request/response контракты API/CLI/web/integrations;
+- `configs` - Pydantic-схемы и загрузчики runtime/env/json конфигурации.
+
+Оценка риска по слоям:
+
+- низкий риск: `types`, read-only `models`, response `dto`;
+- средний риск: `configs`, потому что они начнут разгребать env/runtime
+  конфигурацию и текущий хардкод;
+- высокий риск: `entities` и перенос правил build/deploy, потому что это уже
+  влияет на CLI flow, baseline, deploy attempts и SSH/VM операции.
+
+Порядок шага 6:
+
+1. Начать с `types` для контуров, статусов, artifact scope/kind, компонентов,
+   target roles, trigger types и базовых строковых идентификаторов.
+2. Добавить read-only `models` поверх текущего SQLite state/API без изменения
+   поведения.
+3. Добавить `dto` для внешнего read-only API/dashboard и держать response DTO
+   отдельно от внутренних models.
+4. Добавить `configs` для sources, origins, components, landscapes, machines и
+   execution environments, чтобы постепенно убирать конфигурационные свалки.
+5. Только после стабилизации read-only границ вводить `entities` с доменными
+   инвариантами: один release - один успешный bundle, PROD только после TEST,
+   contour-specific artifacts не применяются к чужому контуру, validation
+   pipeline не меняет baseline.
+6. После этого вернуться к оставшемуся `windows_pipeline.py` и переносить
+   helper-слои уже в понятные области: `configs`, `bundles`, `environments`,
+   `sources`, `registry`, command/SSH infrastructure и notifications.
+
+Исключение: если отдельный маленький блок монолита мешает внедрению DTO,
+models или configs, его можно вынести точечно с сохранением старых import/patch
+paths. Но уменьшение `windows_pipeline.py` само по себе не является целью
+следующего этапа.

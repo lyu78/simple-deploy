@@ -628,11 +628,19 @@ Jobs, logs, execution status, API/CLI orchestration, validation attempts и
 - `windows_pipeline.py` пока остается compatibility runner-ом и holder-ом
   helper-ов, которые еще не получили чистые доменные границы.
 
-Возможная будущая структура, не обязательная для немедленного переноса:
+Возможная будущая структура реализации, не обязательная для немедленного
+переноса:
 
 ```text
 simple_deploy/
-  domain/
+  types/
+    release.py
+    contour.py
+    artifacts.py
+    components.py
+    attempts.py
+    jobs.py
+  entities/
     release.py
     bundle.py
     source.py
@@ -643,6 +651,12 @@ simple_deploy/
     environment.py
     attempts.py
     jobs.py
+  models/
+    state.py
+    release.py
+    bundle.py
+    placement.py
+    validation.py
   dto/
     release.py
     bundle.py
@@ -653,6 +667,12 @@ simple_deploy/
     environment.py
     attempts.py
     state.py
+  configs/
+    runtime.py
+    sources.py
+    components.py
+    landscapes.py
+    machines.py
   environments/
     registry.py
     machines.py
@@ -674,9 +694,90 @@ simple_deploy/
     data_sql.py
 ```
 
-## Принцип перехода к Pydantic DTO
+В этой структуре слово "domain" остается архитектурным термином в
+документации, но не названием пакета реализации. Чистые доменные сущности
+лежат в `entities`, а общие типы и справочники - в `types`.
 
-Pydantic DTO стоит вводить на границах системы, а не вместо доменной модели.
+## Ответственность слоев данных
+
+### Types
+
+`types` содержит enum-ы, справочники, custom primitive types и простые
+ограниченные значения без бизнес-логики.
+
+Примеры:
+
+- `ContourCode`;
+- `ComponentId`;
+- `ArtifactKind`;
+- `ArtifactScope`;
+- `DeploymentTargetRole`;
+- `ReleaseTriggerType`;
+- `ReleaseStatus`;
+- `AttemptStatus`;
+- `JobStatus`;
+- `SourceOriginKind`;
+- `ReleaseVersionString`;
+- `CommitSha`;
+- `RepoId`;
+- `MachineId`.
+
+`types` может проверять формат или допустимый набор значений, но не должен знать
+про SQLite, FastAPI, SSH, файлы, порядок deploy или правила продвижения релиза.
+
+### Entities
+
+`entities` содержит чистые DDD entities и value objects: `Release`,
+`ReleaseBundle`, `SourceSnapshot`, `ReleasePlacement`, `DeploymentLandscape` и
+другие сущности, которые держат доменные инварианты.
+
+Entities не являются API response, SQLite row или Pydantic configs schema.
+
+### Models
+
+`models` содержит внутренние application/read/storage-facing модели. Это форма
+данных между registry/query/use case/presentation слоями: snapshot состояния,
+списки attempts, матрица размещения, validation results.
+
+Models могут быть Pydantic-моделями, но они не являются внешним контрактом API.
+
+### DTO
+
+`dto` содержит request/response DTO для внешних границ: HTTP API, CLI JSON,
+будущая web-морда и интеграции.
+
+DTO поддерживают внешний контракт и могут быть плоскими или удобными для
+клиента. Они не должны становиться доменными сущностями.
+
+### Configs
+
+`configs` содержит Pydantic-схемы конфигурации и загрузчики runtime/env/json.
+
+Configs отвечают за структурную валидацию конфигурации:
+
+- обязательные поля;
+- дефолты;
+- список source origins;
+- mapping component -> deployment target;
+- описание virtual machines;
+- описание execution environments;
+- корректность artifact scope в конфигурации;
+- связность runtime-настроек.
+
+Configs не принимают бизнес-решения: например, "можно ли продвигать PROD"
+проверяется в entities/application services, а не в configs schema.
+
+## Принцип перехода к Pydantic
+
+Pydantic стоит использовать в нескольких слоях, но с разными именами и
+ответственностью:
+
+- `types` - строгие enum-ы и primitive constrained types;
+- `configs` - схемы и валидация конфигурации;
+- `models` - внутренние read/application/storage-facing модели;
+- `dto` - внешние request/response контракты.
+
+DTO стоит вводить на внешних границах системы, а не вместо доменной модели.
 
 Хорошие первые DTO:
 
@@ -714,8 +815,8 @@ Pydantic DTO стоит вводить на границах системы, а 
 - данные для read-only dashboard;
 - переносимые manifest/read models.
 
-Доменные правила лучше держать не в DTO, а в domain services или application
-services:
+Доменные правила лучше держать не в DTO и не в configs, а в entities или
+application services:
 
 - назначение номера релиза;
 - разрешение source selection в immutable source snapshot;
@@ -739,12 +840,12 @@ services:
    бизнес-логики.
 3. Разделить в именах `release bundle` и `release registry/state`, не двигая
    файлы широким переносом.
-4. Ввести DTO/value objects для `SourceSelection`, `SourceSnapshot`,
+4. Ввести `types` и первые models/value objects для `SourceSelection`, `SourceSnapshot`,
    `ReleaseVersion` и `Contour`.
-5. Ввести read-only DTO для `SourceRepository`, `SourceOrigin`, `Component`,
+5. Ввести read-only models/configs для `SourceRepository`, `SourceOrigin`, `Component`,
    `DeploymentLandscape` и `DeploymentTarget` поверх текущей runtime
    конфигурации.
-6. Ввести read-only DTO для `VirtualMachine`, `ExecutionEnvironment` и
+6. Ввести read-only models/configs для `VirtualMachine`, `ExecutionEnvironment` и
    `BundleValidationAttempt`, чтобы тестовые pipeline-ы могли работать с
    bundle-ом без влияния на DEV contour state.
 7. Добавить read-only модель `ReleaseChangeSet` поверх Git/manifest данных без
@@ -752,8 +853,8 @@ services:
 8. Явно записывать artifact scope в manifest/read model: shared,
    contour-specific или target-specific.
 9. Вынести SQLite registry из `release/state.py` в более точную область.
-10. Постепенно заменить словари и произвольные строки на DTO/value objects на
-   границах процессов.
+10. Постепенно заменить словари и произвольные строки на `types`, `models`,
+    `dto` и `configs` на границах процессов.
 11. Только после стабилизации языка двигать директории и публичные module paths.
 
 ## Принятые решения по открытым вопросам
