@@ -310,7 +310,7 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 
 ### Шаг 4.7 - архитектурная пауза перед шагом 5
 
-Статус: запланирован после 4.6.
+Статус: выполнен.
 
 После 4.6 нельзя автоматически начинать шаг 5. Нужно отдельно остановиться и
 оценить, достаточно ли подготовлена база для переноса процессов. На этой паузе
@@ -327,3 +327,33 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 Следующий основной шаг рефакторинга остается шагом 5: разложить текущие
 процессы по модулям `dry_run`, `build`, `deploy`, `mark`, `data_sql`. Но
 начинать его можно только после завершения 4.6 и отдельного решения по 4.7.
+
+Решение по 4.7:
+
+- тесты пока не разносить по директориям, чтобы не смешивать перенос тестов и
+  перенос production-кода;
+- общие fixtures/support helpers вынести позже, когда появится второй процессный
+  модуль и станет видна повторяемая форма;
+- шаг 5 начинать с `data_sql`, потому что этот участок уже хорошо покрыт
+  characterization tests и меньше всего зависит от CLI dispatch;
+- первый срез шага 5 делать как перенос функций с сохранением старых import и
+  patch точек через `tools.windows_pipeline`.
+
+## Статус шага 5
+
+Шаг 5 начат первым безопасным срезом:
+
+- создан модуль `tools-ci/simple_deploy/processes/data_sql.py`;
+- из монолитного `tools-ci/simple_deploy/windows_pipeline.py` вынесены функции
+  доставки и запуска DB SQL артефактов:
+  `cleanup_db_data_update_leftovers`, `remote_db_sql_unpack_command`,
+  `remote_db_schema_unpack_command`, `upload_unpack_db_sql_artifact`,
+  `run_db_schema_summary`, `run_db_data_insert`, `run_db_data_update_parallel`,
+  `run_db_maintenance`;
+- `windows_pipeline` реэкспортирует эти имена, поэтому старые imports и patch
+  paths через `tools.windows_pipeline` остаются рабочими;
+- core/SSH helper-ы пока остаются в монолите и используются из `data_sql`
+  лениво, чтобы не смешивать первый process-split с переносом core-слоя.
+
+Шаг 5 еще не завершен. Следующие кандидаты на перенос: `mark`, затем `build`,
+затем `dry_run`, и только после этого `deploy`.
