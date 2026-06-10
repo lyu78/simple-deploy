@@ -1,7 +1,7 @@
-"""Пакет процессов build, deploy, dry-run, mark и data SQL.
+"""Пакет операторских процессов совместимого Windows runner-а.
 
-Модули этого пакета постепенно принимают операторские workflow из монолитного
-Windows runner. Первым срезом вынесен ``data_sql``: доставка и запуск DB
-schema/data SQL артефактов. Остальные процессы остаются в runner-е до
-следующих безопасных срезов шага 5.
+Здесь собраны process entrypoints шага 5: ``data_sql``, ``mark``, ``build``,
+``dry_run`` и ``deploy``. Низкоуровневые helper-слои config/runtime, SSH, app,
+DB, service steps, healthcheck и email пока могут оставаться в compatibility
+runner-е, чтобы процессный split не смешивался с переносом core-слоя.
 """

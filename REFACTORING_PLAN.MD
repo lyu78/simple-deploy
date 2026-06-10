@@ -384,4 +384,22 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 - старые import/patch paths `tools.windows_pipeline.dry_run` и
   `tools.windows_pipeline.required_env_keys` остаются рабочими.
 
-Шаг 5 еще не завершен. Следующий кандидат на перенос: `deploy`.
+Пятым безопасным срезом вынесен `deploy`:
+
+- создан модуль `tools-ci/simple_deploy/processes/deploy.py`;
+- из монолитного runner-а вынесен верхнеуровневый процесс `deploy(args)`;
+- порядок full deploy сохранен: resolve release, app/db artifacts, service
+  steps, maintenance stub, schema/data SQL, management commands, frontend,
+  healthcheck, state update и success email;
+- режим `--app-only` сохранен без DB-шагов и без обязательных secrets;
+- failed attempt по-прежнему пишется best-effort до успешной фиксации state,
+  а после успешного `mark_contour_applied` ошибка логируется без отката state;
+- helper-ы config/runtime, SSH, app/db/service, healthcheck и email пока
+  остаются в compatibility runner-е и вызываются лениво из process-модуля;
+- старый import/patch path `tools.windows_pipeline.deploy` остается рабочим.
+
+Шаг 5 завершен в текущем безопасном объеме: процессы `data_sql`, `mark`,
+`build`, `dry_run` и `deploy` разложены по модулям `simple_deploy.processes`.
+Оставшийся крупный рефакторинг относится уже к следующим архитектурным слоям:
+config/runtime, command execution, SSH/app/db helpers, service steps,
+healthcheck/email и более чистым process boundary тестам.
