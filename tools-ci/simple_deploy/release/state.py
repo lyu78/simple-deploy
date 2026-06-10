@@ -4,7 +4,7 @@
 какой backend commit считается последним успешно примененным на каждом контуре
 (``dev``, ``test``, ``prod``), и какие попытки применения завершились успехом
 или ошибкой. Упавшие сборки хранятся отдельно от ``releases``, чтобы таблица
-релизов оставалась журналом только успешно собранных manifest.
+    релизов оставалась журналом только успешно собранных manifest-файлов.
 
 SQLite используется как локальный журнал рабочей машины. Он не заменяет
 ``release_manifest.json``: manifest остается переносимым описанием конкретного
@@ -30,7 +30,13 @@ REQUEST_STATUSES = ("draft", "submitted", "approved", "applied", "failed", "canc
 
 @dataclass(frozen=True)
 class ContourState:
-    """Снимок последнего успешного состояния одного контура."""
+    """Снимок baseline одного deploy-контура.
+
+    Запись отражает последний релиз и backend commit, которые оператор или
+    deploy-процесс уже считает успешно примененными на контуре. Именно эта
+    запись используется builder-ом как baseline для следующего offline SQL
+    Git range.
+    """
 
     contour: str
     last_success_release: str
@@ -40,7 +46,13 @@ class ContourState:
 
 @dataclass(frozen=True)
 class JobRecord:
-    """Snapshot of a local long-running operation."""
+    """Снимок локальной долгой операции.
+
+    Запись хранится в таблице ``local_jobs`` и описывает состояние операции,
+    которую web/API или CLI может запускать асинхронно: тип, контур, версию
+    релиза, payload, путь к логу и итоговый статус. Сама запись не выполняет
+    процесс, а только фиксирует его жизненный цикл.
+    """
 
     id: int
     kind: str
@@ -57,7 +69,12 @@ class JobRecord:
 
 @dataclass(frozen=True)
 class ExternalRequest:
-    """Snapshot of a TEST/PROD external release request."""
+    """Снимок внешней заявки на продвижение релиза.
+
+    Запись предназначена для TEST/PROD, где применение релиза может проходить
+    через ручной или внешний процесс. Она хранит связь build version с внешним
+    идентификатором заявки и ее статусом, но не двигает baseline контура сама.
+    """
 
     id: int
     contour: str
@@ -72,7 +89,12 @@ class ExternalRequest:
 
 
 def default_state_db_path() -> Path:
-    """Возвращает путь к SQLite-базе состояния simple-deploy."""
+    """Возвращает путь к локальной SQLite-базе состояния релизов.
+
+    Переменная ``SIMPLE_DEPLOY_STATE_DB`` имеет приоритет для тестов и
+    операторских переопределений. Если она не задана, источником истины считается
+    стандартная база ``local_state/simple_deploy.sqlite3`` в корне репозитория.
+    """
     configured = os.environ.get("SIMPLE_DEPLOY_STATE_DB", "").strip()
     if configured:
         return Path(configured)
@@ -80,12 +102,22 @@ def default_state_db_path() -> Path:
 
 
 def utc_now() -> str:
-    """Возвращает текущий UTC timestamp в компактном ISO-формате."""
+    """Возвращает текущий UTC timestamp для записей локального журнала.
+
+    Формат одинаков для всех таблиц слоя состояния: ISO-временная метка с точностью до
+    секунд и суффиксом ``Z``. Функция не обращается к базе и нужна только для
+    единообразной сериализации времени.
+    """
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
 def validate_contour(contour: str) -> str:
-    """Нормализует и валидирует имя контура."""
+    """Нормализует и валидирует имя deploy-контура.
+
+    На вход принимается пользовательская или runtime-строка. Возвращаемое
+    значение всегда lower-case и входит в ``CONTOURS``; неизвестные контуры
+    считаются ошибкой конфигурации или API-запроса.
+    """
     normalized = contour.strip().lower()
     if normalized not in CONTOURS:
         raise ValueError(f"Unknown contour: {contour}. Expected one of: {', '.join(CONTOURS)}")
@@ -93,7 +125,12 @@ def validate_contour(contour: str) -> str:
 
 
 def connect_state_db(path: Path | None = None) -> sqlite3.Connection:
-    """Открывает SQLite-соединение и гарантирует наличие схемы таблиц."""
+    """Открывает SQLite-соединение и гарантирует наличие схемы.
+
+    Если путь не передан, используется ``default_state_db_path``. Функция
+    создает родительскую директорию, включает ``sqlite3.Row`` для доступа по
+    именам колонок и вызывает ``ensure_schema`` перед возвратом соединения.
+    """
     db_path = path or default_state_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(db_path)
@@ -103,7 +140,13 @@ def connect_state_db(path: Path | None = None) -> sqlite3.Connection:
 
 
 def ensure_schema(connection: sqlite3.Connection) -> None:
-    """Создает таблицы локального журнала, если их еще нет."""
+    """Создает или обновляет базовую схему локального журнала.
+
+    Функция идемпотентна: она создает таблицы и индексы через
+    ``create table/index if not exists`` и не удаляет существующие данные.
+    Здесь фиксируется формат SQLite как локального источника состояния
+    релизов, попыток, заданий и внешних заявок.
+    """
     connection.executescript(
         """
         create table if not exists contour_state (
@@ -187,7 +230,13 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
 
 
 def validate_status(status: str, allowed: Iterable[str]) -> str:
-    """Нормализует и валидирует статус записи локального журнала."""
+    """Нормализует и валидирует статус для конкретного набора значений.
+
+    Вызывающий код передает разрешенный набор статусов, потому что попытки
+    сборки, задания и внешние заявки имеют разные жизненные циклы. Функция
+    возвращает статус в нижнем регистре или падает до записи некорректного
+    значения в SQLite.
+    """
     normalized = status.strip().lower()
     if normalized not in allowed:
         raise ValueError(f"Unknown status: {status}. Expected one of: {', '.join(sorted(allowed))}")
@@ -195,7 +244,12 @@ def validate_status(status: str, allowed: Iterable[str]) -> str:
 
 
 def get_contour_state(connection: sqlite3.Connection, contour: str) -> ContourState | None:
-    """Возвращает последний успешный release/commit для контура или ``None``."""
+    """Читает baseline одного контура из SQLite.
+
+    Возвращает ``None``, если baseline еще не задан. Функция только читает
+    таблицу ``contour_state`` и не двигает baseline; изменение выполняется
+    через ``upsert_contour_state``.
+    """
     contour = validate_contour(contour)
     row = connection.execute(
         """
@@ -216,7 +270,12 @@ def get_contour_state(connection: sqlite3.Connection, contour: str) -> ContourSt
 
 
 def all_contour_states(connection: sqlite3.Connection) -> dict[str, ContourState | None]:
-    """Возвращает состояние всех поддерживаемых контуров."""
+    """Возвращает baseline-состояние всех поддерживаемых контуров.
+
+    Словарь всегда содержит ключи из ``CONTOURS``. Значение ``None`` означает,
+    что для конкретного контура baseline еще отсутствует в локальной SQLite
+    базе.
+    """
     return {contour: get_contour_state(connection, contour) for contour in CONTOURS}
 
 
@@ -226,7 +285,13 @@ def upsert_contour_state(
     build_version: str,
     backend_commit: str,
 ) -> None:
-    """Создает или обновляет последний успешный release/commit контура."""
+    """Создает или обновляет baseline успешного применения релиза.
+
+    Эта функция двигает baseline контура: после ее выполнения следующий build
+    будет считать указанный backend commit уже примененным на этом контуре.
+    Вызывать ее можно только после подтвержденного успешного deploy или явной
+    ручной фиксации оператором.
+    """
     contour = validate_contour(contour)
     connection.execute(
         """
@@ -254,7 +319,13 @@ def record_release(
     frontend_commit: str | None,
     artifacts: dict,
 ) -> None:
-    """Записывает metadata собранного релиза в локальный журнал."""
+    """Записывает метаданные успешно собранного релиза в SQLite.
+
+    Таблица ``releases`` является журналом артефактов сборки с manifest и не
+    означает, что релиз применен на каком-либо контуре. Функция не двигает
+    baseline; это делает только ``upsert_contour_state`` после успешного
+    применения.
+    """
     connection.execute(
         """
         insert into releases (
@@ -288,7 +359,12 @@ def record_build_attempt_started(
     backend_commit: str = "",
     frontend_commit: str = "",
 ) -> int:
-    """Добавляет запись о начале попытки сборки релиза."""
+    """Создает запись о начале попытки сборки релиза.
+
+    Функция пишет статус ``started`` в ``build_attempts`` и возвращает id
+    попытки для последующего завершения. Она не создает запись в ``releases``:
+    успешный релиз фиксируется отдельно после создания manifest.
+    """
     now = utc_now()
     cursor = connection.execute(
         """
@@ -317,7 +393,11 @@ def record_build_attempt_finished(
     frontend_commit: str = "",
     error: str = "",
 ) -> None:
-    """Обновляет итог попытки сборки релиза."""
+    """Фиксирует итог ранее начатой попытки сборки.
+
+    Допустимы только статусы ``success`` и ``failed``. Функция обновляет журнал
+    попыток сборки и не меняет таблицу ``releases`` или baseline контуров.
+    """
     status = validate_status(status, {"success", "failed"})
     connection.execute(
         """
@@ -343,7 +423,13 @@ def record_attempt(
     status: str,
     error: str = "",
 ) -> None:
-    """Добавляет запись о попытке применения релиза на контур."""
+    """Добавляет запись о попытке применения релиза на контур.
+
+    Это журнал результатов deploy/mark, а не источник baseline сам по себе.
+    Даже запись со статусом ``success`` не двигает baseline автоматически:
+    вызывающий процесс должен отдельно вызвать ``upsert_contour_state`` в
+    точке, где успешное применение считается подтвержденным.
+    """
     contour = validate_contour(contour)
     now = utc_now()
     connection.execute(
@@ -365,7 +451,12 @@ def record_attempt(
 
 
 def missing_baselines(connection: sqlite3.Connection, contours: Iterable[str] = CONTOURS) -> list[str]:
-    """Возвращает список контуров, для которых еще не задан baseline."""
+    """Возвращает список контуров без заданного baseline.
+
+    Builder использует такую проверку перед offline SQL generation, потому что
+    Git range для schema SQL невозможно построить без исходного commit по
+    каждому требуемому контуру.
+    """
     missing = []
     for contour in contours:
         if get_contour_state(connection, contour) is None:
@@ -374,10 +465,21 @@ def missing_baselines(connection: sqlite3.Connection, contours: Iterable[str] = 
 
 
 def _json_payload(payload: dict | None) -> str:
+    """Сериализует payload записи слоя состояния в JSON.
+
+    ``None`` трактуется как пустой объект, чтобы в SQLite не появлялись пустые
+    строки с неоднозначным смыслом. Сортировка ключей делает значение
+    стабильным для тестов и чтения.
+    """
     return json.dumps(payload or {}, ensure_ascii=False, sort_keys=True)
 
 
 def _job_from_row(row: sqlite3.Row) -> JobRecord:
+    """Преобразует строку ``local_jobs`` в ``JobRecord``.
+
+    Функция централизует маппинг колонок SQLite в dataclass-модель, чтобы API и тесты
+    получали один и тот же тип независимо от конкретного select-запроса.
+    """
     return JobRecord(
         id=int(row["id"]),
         kind=row["kind"],
@@ -394,6 +496,11 @@ def _job_from_row(row: sqlite3.Row) -> JobRecord:
 
 
 def _external_request_from_row(row: sqlite3.Row) -> ExternalRequest:
+    """Преобразует строку ``external_requests`` в ``ExternalRequest``.
+
+    Маппер не валидирует бизнес-правила повторно: предполагается, что данные
+    уже прошли через функции создания или обновления записи.
+    """
     return ExternalRequest(
         id=int(row["id"]),
         contour=row["contour"],
@@ -409,11 +516,22 @@ def _external_request_from_row(row: sqlite3.Row) -> ExternalRequest:
 
 
 def _dict_from_row(row: sqlite3.Row) -> dict:
+    """Преобразует произвольную SQLite-строку в словарь.
+
+    Используется для таблиц, где сейчас не введены отдельные dataclass-модели.
+    Имена колонок сохраняются без переименования, чтобы API отражал текущий
+    формат локальной базы.
+    """
     return {key: row[key] for key in row.keys()}
 
 
 def list_releases(connection: sqlite3.Connection, limit: int = 50) -> list[dict]:
-    """Return recent successful release records."""
+    """Возвращает последние успешно собранные релизы.
+
+    Данные читаются из таблицы ``releases`` и отражают только релизы, для
+    которых builder записал manifest. Порядок сортировки ориентирован на
+    свежие записи; baseline контуров здесь не учитывается.
+    """
     rows = connection.execute(
         """
         select *
@@ -427,7 +545,11 @@ def list_releases(connection: sqlite3.Connection, limit: int = 50) -> list[dict]
 
 
 def list_build_attempts(connection: sqlite3.Connection, limit: int = 50) -> list[dict]:
-    """Return recent build attempts."""
+    """Возвращает последние попытки сборки релиза.
+
+    Функция читает журнал ``build_attempts`` и не объединяет его с таблицей
+    ``releases``. Это позволяет видеть как успешные, так и упавшие сборки.
+    """
     rows = connection.execute(
         """
         select *
@@ -445,7 +567,12 @@ def list_deployment_attempts(
     contour: str = "",
     limit: int = 50,
 ) -> list[dict]:
-    """Return recent deployment attempts."""
+    """Возвращает последние попытки применения релиза.
+
+    При переданном ``contour`` список фильтруется по одному контуру, иначе
+    возвращается общий журнал. Функция не вычисляет текущий baseline, а только
+    читает историю попыток из ``deployment_attempts``.
+    """
     if contour:
         contour = validate_contour(contour)
         rows = connection.execute(
@@ -479,7 +606,12 @@ def create_job(
     payload: dict | None = None,
     log_path: str = "",
 ) -> int:
-    """Create a queued local job for a long-running CLI/web operation."""
+    """Создает запись локальной долгой операции в статусе ``queued``.
+
+    Запись попадает в ``local_jobs`` со статусом ``queued`` и может быть позже
+    переведена в ``running`` или терминальный статус. Функция только фиксирует
+    намерение выполнить работу; исполнитель процесса здесь не запускается.
+    """
     kind = kind.strip()
     if not kind:
         raise ValueError("Job kind must be non-empty")
@@ -508,7 +640,12 @@ def create_job(
 
 
 def mark_job_started(connection: sqlite3.Connection, job_id: int, log_path: str = "") -> None:
-    """Mark a local job as running."""
+    """Помечает локальное задание как запущенное.
+
+    Функция обновляет статус на ``running`` и время старта. Если передан
+    ``log_path``, он становится источником пути к логу для UI/API; пустое
+    значение сохраняет уже записанный путь.
+    """
     connection.execute(
         """
         update local_jobs
@@ -521,7 +658,12 @@ def mark_job_started(connection: sqlite3.Connection, job_id: int, log_path: str 
 
 
 def mark_job_finished(connection: sqlite3.Connection, job_id: int, status: str, error: str = "") -> None:
-    """Mark a local job as terminal."""
+    """Помечает локальное задание терминальным статусом.
+
+    Допустимы статусы ``success``, ``failed`` и ``cancelled``. Функция пишет
+    итоговую ошибку и время завершения, но не выполняет компенсационные
+    действия процесса.
+    """
     status = validate_status(status, {"success", "failed", "cancelled"})
     connection.execute(
         """
@@ -535,7 +677,11 @@ def mark_job_finished(connection: sqlite3.Connection, job_id: int, status: str, 
 
 
 def get_job(connection: sqlite3.Connection, job_id: int) -> JobRecord | None:
-    """Return a local job by id."""
+    """Возвращает локальное задание по id.
+
+    ``None`` означает, что записи с таким id нет в текущей SQLite-базе. Функция
+    только читает ``local_jobs`` и не меняет статус задания.
+    """
     row = connection.execute(
         """
         select *
@@ -548,7 +694,12 @@ def get_job(connection: sqlite3.Connection, job_id: int) -> JobRecord | None:
 
 
 def list_jobs(connection: sqlite3.Connection, limit: int = 50) -> list[JobRecord]:
-    """Return recent local jobs."""
+    """Возвращает последние локальные задания.
+
+    Список сортируется по id в обратном порядке, что соответствует порядку
+    создания записей. Функция используется web/API панелью как источник истории
+    долгих операций только для чтения.
+    """
     rows = connection.execute(
         """
         select *
@@ -570,7 +721,12 @@ def create_external_request(
     payload: dict | None = None,
     status: str = "draft",
 ) -> int:
-    """Create a TEST/PROD external release request record."""
+    """Создает запись внешней заявки для TEST/PROD.
+
+    Контур ``dev`` запрещен, потому что DEV применяется локально управляемым
+    deploy-процессом. Функция пишет заявку в SQLite, но не отправляет ее во
+    внешнюю систему и не меняет baseline контура.
+    """
     contour = validate_contour(contour)
     if contour == "dev":
         raise ValueError("External release requests are only supported for test/prod contours")
@@ -607,7 +763,12 @@ def update_external_request_status(
     error: str = "",
     external_id: str | None = None,
 ) -> None:
-    """Update TEST/PROD external release request status."""
+    """Обновляет статус внешней заявки TEST/PROD.
+
+    Функция валидирует статус, обновляет ошибку и при необходимости внешний id.
+    Она не интерпретирует ``applied`` как успешное применение релиза: baseline
+    должен двигаться отдельной ручной фиксацией результата.
+    """
     status = validate_status(status, REQUEST_STATUSES)
     if external_id is None:
         connection.execute(
@@ -631,7 +792,12 @@ def update_external_request_status(
 
 
 def get_external_request(connection: sqlite3.Connection, request_id: int) -> ExternalRequest | None:
-    """Return a TEST/PROD external request by id."""
+    """Возвращает внешнюю заявку по id.
+
+    ``None`` означает отсутствие записи в локальной SQLite-базе. Функция не
+    обращается к внешнему трекеру заявок и показывает только локально
+    зафиксированное состояние.
+    """
     row = connection.execute(
         """
         select *
@@ -648,7 +814,12 @@ def list_external_requests(
     contour: str = "",
     limit: int = 50,
 ) -> list[ExternalRequest]:
-    """Return recent TEST/PROD external requests."""
+    """Возвращает последние внешние заявки TEST/PROD.
+
+    При переданном ``contour`` список фильтруется по контуру, иначе читается
+    общий журнал. Источником истины является локальная таблица
+    ``external_requests``; внешняя система здесь не опрашивается.
+    """
     if contour:
         contour = validate_contour(contour)
         rows = connection.execute(

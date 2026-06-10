@@ -1,4 +1,10 @@
-"""Release artifact primitives and local artifact resolution."""
+"""Примитивы артефактов релиза и их локальный резолвинг.
+
+Модуль описывает файлы, которые уже лежат в директории собранного релиза, и
+строит для них локальные и удаленные пути. Источником истины здесь является
+директория релиза и runtime-конфигурация оператора; модуль не создает архивы,
+не меняет SQLite-состояние и не выполняет загрузку или распаковку на VM.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +21,13 @@ DEFAULT_MAINTENANCE_STUB_ARCHIVE = "tools-ci/maintenance_stub/maintenance_stub.t
 
 @dataclass
 class Artifact:
+    """Описание прикладного артефакта для загрузки и распаковки на app VM.
+
+    ``local_path`` указывает на архив в директории релиза, ``remote_archive`` -
+    на временный путь загрузки на VM, а ``extract_path`` - на целевой каталог,
+    который будет очищен и заполнен на этапе deploy.
+    """
+
     name: str
     local_path: Path
     remote_archive: str
@@ -23,6 +36,14 @@ class Artifact:
 
 @dataclass
 class DbSqlArtifact:
+    """Описание SQL-артефакта, который будет применяться на DB VM.
+
+    Помимо локального архива и удаленного каталога распаковки запись хранит
+    директорию и glob-шаблон entrypoint-файла внутри архива. Это позволяет
+    deploy-процессу проверить, что в архиве ровно один ожидаемый SQL или shell
+    runner.
+    """
+
     name: str
     local_path: Path
     remote_archive: str
@@ -32,6 +53,13 @@ class DbSqlArtifact:
 
 
 def require_value(env: dict[str, str], name: str) -> str:
+    """Возвращает обязательное значение runtime-окружения.
+
+    Функция принимает словарь окружения, нормализует значение через ``strip`` и
+    падает с явной ошибкой, если переменная отсутствует или пуста. Она не читает
+    ``os.environ`` напрямую: источником истины остается уже собранный runtime
+    env, переданный вызывающим процессом.
+    """
     value = env.get(name, "").strip()
     if not value:
         raise RuntimeError(f"Не задана обязательная переменная: {name}")
@@ -39,6 +67,13 @@ def require_value(env: dict[str, str], name: str) -> str:
 
 
 def runtime_local_path(path_value: object) -> Path:
+    """Преобразует настройку локального пути в абсолютный ``Path``.
+
+    Абсолютные пути возвращаются как есть, а относительные считаются
+    относительно корня репозитория simple-deploy. Функция не проверяет
+    существование файла: это делает конкретный резолвер, которому известен
+    смысл артефакта.
+    """
     path = Path(str(path_value)).expanduser()
     if path.is_absolute():
         return path
@@ -46,6 +81,13 @@ def runtime_local_path(path_value: object) -> Path:
 
 
 def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path) -> list[Artifact]:
+    """Находит backend/frontend архивы для deploy приложения.
+
+    Функция принимает runtime env, версию релиза и директорию релиза, затем
+    ищет архивы по текущим контрактным шаблонам имен. Возвращаемые записи
+    содержат локальные пути и удаленные target paths, но сама функция не
+    загружает файлы и не меняет состояние релиза.
+    """
     print(f"RESOLVE artifacts in: {release_dir}", flush=True)
     if not release_dir.is_dir():
         raise RuntimeError(f"Директория релиза не существует: {release_dir}")
@@ -83,7 +125,13 @@ def resolve_db_schema_artifact(
     release_dir: Path,
     contour: str = "dev",
 ) -> DbSqlArtifact:
-    """Находит schema SQL archive для выбранного контура в директории релиза."""
+    """Находит schema SQL-архив для выбранного контура.
+
+    Источником истины является директория релиза, где builder уже создал
+    контурный schema-архив по Git range из baseline до текущего backend commit.
+    Функция валидирует имя контура и строит удаленные пути для DB VM, но не
+    проверяет реальное состояние базы данных.
+    """
     contour = validate_contour(contour)
     print(f"RESOLVE DB schema artifact in: {release_dir}", flush=True)
     if not release_dir.is_dir():
@@ -117,6 +165,13 @@ def resolve_db_data_artifact(
     release_dir: Path,
     kind: str,
 ) -> DbSqlArtifact:
+    """Находит data SQL-архив заданного вида.
+
+    Поддерживаются только виды, которые deploy-процесс умеет применять
+    автоматически: ``insert`` и ``update_parallel``. Функция возвращает
+    описание entrypoint-файла внутри архива и не выполняет SQL; фактическое
+    применение остается ответственностью процесса deploy.
+    """
     specs = {
         "insert": (
             "db_insert",
@@ -162,6 +217,13 @@ def resolve_db_data_artifact(
 
 
 def resolve_maintenance_stub_artifact(env: dict[str, str], runtime: dict, build_version: str) -> Artifact:
+    """Создает описание архива maintenance stub для full deploy.
+
+    Локальный путь берется из runtime-конфигурации или default-значения, а
+    целевой каталог берется из ``FRONTEND_RELEASE_PATH``. Функция проверяет
+    наличие локального архива, но не распаковывает его и не проверяет HTTP
+    marker заглушки.
+    """
     local_path = runtime_local_path(runtime.get("maintenance_stub_archive_path", DEFAULT_MAINTENANCE_STUB_ARCHIVE))
     if not local_path.is_file():
         raise RuntimeError(f"Maintenance stub archive not found: {local_path}")
@@ -177,6 +239,12 @@ def resolve_maintenance_stub_artifact(env: dict[str, str], runtime: dict, build_
 
 
 def require_artifact(artifacts: list[Artifact], name: str) -> Artifact:
+    """Возвращает обязательный app-артефакт из уже разрешенного списка.
+
+    Функция используется после ``resolve_artifacts``, когда deploy-процессу
+    нужно явно получить архив backend или frontend. Отсутствие нужного
+    артефакта считается ошибкой текущей директории релиза.
+    """
     for artifact in artifacts:
         if artifact.name == name:
             return artifact
