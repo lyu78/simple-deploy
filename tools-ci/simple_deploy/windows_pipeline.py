@@ -78,6 +78,7 @@ from simple_deploy.processes.mark import (  # noqa: E402
     mark_failed,
     set_baseline,
 )
+from simple_deploy.processes.build import build  # noqa: E402
 
 DEFAULT_ENV_FILE = ROOT / ".env"
 DEFAULT_SECRETS_FILE = ROOT / "local.secrets.env"
@@ -1964,20 +1965,6 @@ def required_env_keys(app_only: bool = False) -> list[str]:
 
 def data_sql_artifacts_enabled(args: argparse.Namespace) -> bool:
     return not getattr(args, "skip_data_sql_artifacts", False)
-
-
-def build(args: argparse.Namespace) -> int:
-    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
-    print("BUILD prepare frontend env files", flush=True)
-    prepare_frontend_env_files(env)
-    build_env = prepare_build_env(env)
-    build_env[INCLUDE_DATA_SQL_ENV] = "1" if data_sql_artifacts_enabled(args) else "0"
-    return stream_command(
-        [sys.executable, "-u", "create_release.py"],
-        cwd=BUILDER_ROOT,
-        timeout=args.timeout,
-        env=build_env,
-    )
 
 
 def resolve_release_dir(env: dict[str, str], build_version: str, latest: bool) -> tuple[str, Path]:

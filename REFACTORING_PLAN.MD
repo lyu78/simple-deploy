@@ -366,5 +366,13 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 - baseline по-прежнему двигается только для `set-baseline` и `mark-applied`,
   а `mark-failed` пишет failed attempt без изменения baseline.
 
-Шаг 5 еще не завершен. Следующие кандидаты на перенос: `build`, затем
-`dry_run`, и только после этого `deploy`.
+Третьим безопасным срезом вынесен `build`:
+
+- создан модуль `tools-ci/simple_deploy/processes/build.py`;
+- из монолитного runner-а вынесен процесс `build(args)`;
+- запуск `builder/create_release.py`, `cwd`, timeout, frontend env preparation и
+  флаг `SIMPLE_DEPLOY_INCLUDE_DATA_SQL` сохранены через compatibility runner;
+- старый import/patch path `tools.windows_pipeline.build` остается рабочим.
+
+Шаг 5 еще не завершен. Следующие кандидаты на перенос: `dry_run`, и только
+после этого `deploy`.
