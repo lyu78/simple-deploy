@@ -8,8 +8,9 @@
 
 import unittest
 import json
+import os
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, closing, nullcontext
 from pathlib import Path
 import sys
 from argparse import Namespace
@@ -26,7 +27,9 @@ DEFAULT_SECRETS_FILE = Path("local.secrets.env")
 DEFAULT_CONFIG_FILE = Path("windows_pipeline.local.json")
 
 TEST_BUILD_VERSION = "1.2.3"
+PREVIOUS_BUILD_VERSION = "1.2.2"
 TEST_BACKEND_COMMIT = "abc123"
+PREVIOUS_BACKEND_COMMIT = "prev123"
 TEST_FRONTEND_COMMIT = "def456"
 
 REMOTE_TMP_ROOT = "/tmp/simple-deploy"
@@ -71,6 +74,7 @@ sys.path.insert(0, str(TOOLS_CI_ROOT))
 
 from tools.windows_pipeline import (
     Artifact,
+    BUILDER_ROOT,
     CommandResult,
     DbSqlArtifact,
     Reporter,
@@ -86,7 +90,11 @@ from tools.windows_pipeline import (
     derive_service_permission_check,
     is_sudo_command,
     load_runtime_config,
+    main,
     management_commands,
+    mark_applied,
+    mark_failed,
+    parse_args,
     pipeline,
     prepare_build_env,
     resolve_db_data_artifact,
@@ -98,13 +106,65 @@ from tools.windows_pipeline import (
     run_db_maintenance,
     scp_file,
     send_outlook_success_email,
+    set_baseline,
     sudo_list_command,
     verify_maintenance_stub_http,
+)
+from simple_deploy.release.manifest import RELEASE_MANIFEST_NAME
+from simple_deploy.release.state import (
+    connect_state_db,
+    get_contour_state,
+    list_deployment_attempts,
+    upsert_contour_state,
 )
 
 
 class WindowsPipelinePermissionTests(unittest.TestCase):
     """Проверяет поведение Windows runner, которое должно сохраниться при шаге 5."""
+
+    def _write_release_manifest(self, release_dir: Path, backend_commit: str = TEST_BACKEND_COMMIT) -> None:
+        """Создает минимальный release_manifest.json для ручных mark-процессов."""
+        release_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "repositories": {
+                "backend": {"commit_sha": backend_commit},
+                "frontend": {"commit_sha": TEST_FRONTEND_COMMIT},
+            }
+        }
+        (release_dir / RELEASE_MANIFEST_NAME).write_text(
+            json.dumps(manifest),
+            encoding="utf-8",
+        )
+
+    def _deploy_args(self, app_only: bool = False) -> Namespace:
+        """Возвращает базовый Namespace deploy-команды для process tests."""
+        return Namespace(
+            env_file=DEFAULT_ENV_FILE,
+            secrets_file=DEFAULT_SECRETS_FILE,
+            config_file=DEFAULT_CONFIG_FILE,
+            build_version=TEST_BUILD_VERSION,
+            latest=False,
+            contour="dev",
+            include_set_default_sql=False,
+            app_only=app_only,
+        )
+
+    def _deploy_env(self) -> dict[str, str]:
+        """Возвращает нейтральное окружение app VM для deploy characterization tests."""
+        return {
+            "APP_VM_USER": APP_VM_USER,
+            "APP_VM_HOST": APP_VM_HOST,
+            "APP_WORKDIR": APP_WORKDIR,
+            "APP_VENV_ACTIVATE_PATH": APP_VENV_ACTIVATE_PATH,
+            "REMOTE_TMP_ROOT": REMOTE_TMP_ROOT,
+            "DEV_DOMAIN": DEV_DOMAIN,
+        }
+
+    def _app_artifacts(self) -> tuple[Artifact, Artifact]:
+        """Создает backend/frontend artifacts с нейтральными remote paths."""
+        backend = Artifact("backend", Path("backend.tar.gz"), REMOTE_BACKEND_ARCHIVE, BACKEND_RELEASE_PATH)
+        frontend = Artifact("frontend", Path("frontend.tar.gz"), REMOTE_FRONTEND_ARCHIVE, FRONTEND_RELEASE_PATH)
+        return backend, frontend
 
     def test_reporter_warn_does_not_fail_result(self):
         """Фиксирует, что предупреждения Reporter не переводят dry-run в ошибку."""
@@ -730,6 +790,121 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
         self.assertIn("--set=ON_ERROR_STOP=1 --single-transaction", content)
 
+    def test_parse_args_preserves_public_cli_contract_for_all_commands(self):
+        """Фиксирует публичные CLI flags для всех process entrypoints."""
+        cases = [
+            (
+                ["dry-run", "--app-only", "--skip-data-sql-artifacts"],
+                {
+                    "command": "dry-run",
+                    "app_only": True,
+                    "skip_data_sql_artifacts": True,
+                    "include_data_sql": False,
+                },
+            ),
+            (
+                ["build", "--skip-data-sql-artifacts"],
+                {
+                    "command": "build",
+                    "skip_data_sql_artifacts": True,
+                    "include_data_sql": False,
+                },
+            ),
+            (
+                ["deploy", "--latest", "--contour", "test", "--include-set-default-sql", "--app-only"],
+                {
+                    "command": "deploy",
+                    "latest": True,
+                    "build_version": "",
+                    "contour": "test",
+                    "include_set_default_sql": True,
+                    "app_only": True,
+                },
+            ),
+            (
+                ["pipeline", "--contour", "prod", "--include-set-default-sql", "--skip-data-sql-artifacts"],
+                {
+                    "command": "pipeline",
+                    "contour": "prod",
+                    "include_set_default_sql": True,
+                    "skip_data_sql_artifacts": True,
+                    "app_only": False,
+                },
+            ),
+            (
+                ["set-baseline", "--contour", "test", "--backend-commit", TEST_BACKEND_COMMIT],
+                {
+                    "command": "set-baseline",
+                    "contour": "test",
+                    "build_version": "",
+                    "backend_commit": TEST_BACKEND_COMMIT,
+                },
+            ),
+            (
+                ["mark-applied", "--contour", "prod", "--build-version", TEST_BUILD_VERSION],
+                {
+                    "command": "mark-applied",
+                    "contour": "prod",
+                    "build_version": TEST_BUILD_VERSION,
+                },
+            ),
+            (
+                ["mark-failed", "--contour", "test", "--build-version", TEST_BUILD_VERSION, "--error", "sql failed"],
+                {
+                    "command": "mark-failed",
+                    "contour": "test",
+                    "build_version": TEST_BUILD_VERSION,
+                    "error": "sql failed",
+                },
+            ),
+        ]
+
+        for command_args, expected_values in cases:
+            argv = ["windows_pipeline.py", "--timeout", "77", *command_args]
+            with self.subTest(command=command_args[0]):
+                with patch.object(sys, "argv", argv):
+                    args = parse_args()
+
+                self.assertEqual(args.timeout, 77)
+                for name, expected in expected_values.items():
+                    self.assertEqual(getattr(args, name), expected)
+
+    def test_main_dispatches_all_public_commands_inside_tee_output(self):
+        """Фиксирует соответствие CLI command -> process function в main()."""
+        cases = [
+            ("dry-run", "dry_run", True, 0),
+            ("build", "build", 3, 3),
+            ("deploy", "deploy", 4, 4),
+            ("pipeline", "pipeline", 5, 5),
+            ("set-baseline", "set_baseline", 0, 0),
+            ("mark-applied", "mark_applied", 0, 0),
+            ("mark-failed", "mark_failed", 0, 0),
+        ]
+
+        for command, function_name, function_result, expected_rc in cases:
+            args = Namespace(command=command)
+            with self.subTest(command=command):
+                with ExitStack() as stack:
+                    stack.enter_context(patch("tools.windows_pipeline.parse_args", return_value=args))
+                    tee_mock = stack.enter_context(patch("tools.windows_pipeline.tee_output", return_value=nullcontext()))
+                    process_mock = stack.enter_context(
+                        patch(f"tools.windows_pipeline.{function_name}", return_value=function_result)
+                    )
+
+                    self.assertEqual(main(), expected_rc)
+
+                tee_mock.assert_called_once_with(command)
+                process_mock.assert_called_once_with(args)
+
+    def test_main_returns_one_when_process_raises(self):
+        """Фиксирует, что main преобразует исключение process function в rc=1."""
+        args = Namespace(command="build")
+
+        with patch("tools.windows_pipeline.parse_args", return_value=args):
+            with patch("tools.windows_pipeline.tee_output", return_value=nullcontext()):
+                with patch("tools.windows_pipeline.build", side_effect=RuntimeError("build failed")):
+                    self.assertEqual(main(), 1)
+
     def test_prepare_build_env_uses_backend_source_repo_for_archive_root(self):
         """Проверяет, что backend archive строится из source repo, а не target repo."""
         build_env = prepare_build_env(
@@ -760,6 +935,37 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             build_env["PIP_TRUSTED_HOST"],
             "pypi.org files.pythonhosted.org pypi.python.org",
         )
+
+    def test_build_runs_create_release_from_builder_root_with_prepared_env(self):
+        """Фиксирует build orchestration wrapper вокруг builder/create_release.py."""
+        args = Namespace(
+            env_file=DEFAULT_ENV_FILE,
+            secrets_file=DEFAULT_SECRETS_FILE,
+            timeout=123,
+            include_data_sql=False,
+            skip_data_sql_artifacts=False,
+        )
+        env = {
+            "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
+            "DEV_DOMAIN": DEV_DOMAIN,
+        }
+        prepared_env = {"BASE": "1"}
+
+        with patch("tools.windows_pipeline.load_env", return_value=env) as load_env_mock:
+            with patch("tools.windows_pipeline.prepare_frontend_env_files") as frontend_env_mock:
+                with patch("tools.windows_pipeline.prepare_build_env", return_value=prepared_env) as prepare_env_mock:
+                    with patch("tools.windows_pipeline.stream_command", return_value=7) as stream_mock:
+                        self.assertEqual(build(args), 7)
+
+        load_env_mock.assert_called_once_with(DEFAULT_ENV_FILE, DEFAULT_SECRETS_FILE, require_secrets=False)
+        frontend_env_mock.assert_called_once_with(env)
+        prepare_env_mock.assert_called_once_with(env)
+        stream_mock.assert_called_once()
+        self.assertEqual(stream_mock.call_args.args[0], [sys.executable, "-u", "create_release.py"])
+        self.assertEqual(stream_mock.call_args.kwargs["cwd"], BUILDER_ROOT)
+        self.assertEqual(stream_mock.call_args.kwargs["timeout"], 123)
+        self.assertEqual(stream_mock.call_args.kwargs["env"]["BASE"], "1")
+        self.assertEqual(stream_mock.call_args.kwargs["env"]["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "1")
 
     def test_build_enables_data_sql_by_default(self):
         """Проверяет, что build по умолчанию включает генерацию data SQL artifacts."""
@@ -856,6 +1062,98 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertFalse(dry_run_mock.call_args.args[0].skip_data_sql_artifacts)
         self.assertFalse(build_mock.call_args.args[0].skip_data_sql_artifacts)
 
+    def test_set_baseline_with_backend_commit_moves_baseline_without_attempt(self):
+        """set-baseline с commit двигает baseline и не пишет deployment attempt."""
+        args = Namespace(
+            env_file=DEFAULT_ENV_FILE,
+            secrets_file=DEFAULT_SECRETS_FILE,
+            contour="test",
+            build_version="",
+            backend_commit=TEST_BACKEND_COMMIT,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "state.sqlite3"
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}, clear=True):
+                with patch("tools.windows_pipeline.load_env", return_value={}) as load_env_mock:
+                    self.assertEqual(set_baseline(args), 0)
+
+                with closing(connect_state_db(db_path)) as connection:
+                    state = get_contour_state(connection, "test")
+                    attempts = list_deployment_attempts(connection, contour="test")
+
+        load_env_mock.assert_called_once_with(DEFAULT_ENV_FILE, DEFAULT_SECRETS_FILE, require_secrets=False)
+        self.assertEqual(state.last_success_release, "manual-baseline")
+        self.assertEqual(state.last_success_backend_commit, TEST_BACKEND_COMMIT)
+        self.assertEqual(attempts, [])
+
+    def test_mark_applied_moves_baseline_and_records_success_attempt(self):
+        """mark-applied читает manifest, двигает baseline и пишет success attempt."""
+        args = Namespace(
+            env_file=DEFAULT_ENV_FILE,
+            secrets_file=DEFAULT_SECRETS_FILE,
+            contour="test",
+            build_version=TEST_BUILD_VERSION,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "state.sqlite3"
+            release_root = root / "releases"
+            release_dir = release_root / TEST_BUILD_VERSION
+            self._write_release_manifest(release_dir)
+            env = {"RELEASE_ROOT_WINDOWS": str(release_root)}
+
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}, clear=True):
+                with patch("tools.windows_pipeline.load_env", return_value=env):
+                    self.assertEqual(mark_applied(args), 0)
+
+                with closing(connect_state_db(db_path)) as connection:
+                    state = get_contour_state(connection, "test")
+                    attempts = list_deployment_attempts(connection, contour="test")
+
+        self.assertEqual(state.last_success_release, TEST_BUILD_VERSION)
+        self.assertEqual(state.last_success_backend_commit, TEST_BACKEND_COMMIT)
+        self.assertEqual(attempts[0]["build_version"], TEST_BUILD_VERSION)
+        self.assertEqual(attempts[0]["backend_commit"], TEST_BACKEND_COMMIT)
+        self.assertEqual(attempts[0]["status"], "success")
+        self.assertEqual(attempts[0]["error"], "")
+
+    def test_mark_failed_records_failed_attempt_without_moving_baseline(self):
+        """mark-failed пишет failed attempt, но не меняет существующий baseline."""
+        args = Namespace(
+            env_file=DEFAULT_ENV_FILE,
+            secrets_file=DEFAULT_SECRETS_FILE,
+            contour="prod",
+            build_version=TEST_BUILD_VERSION,
+            error="operator rejected",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "state.sqlite3"
+            release_root = root / "releases"
+            release_dir = release_root / TEST_BUILD_VERSION
+            self._write_release_manifest(release_dir)
+            env = {"RELEASE_ROOT_WINDOWS": str(release_root)}
+            with closing(connect_state_db(db_path)) as connection:
+                upsert_contour_state(connection, "prod", PREVIOUS_BUILD_VERSION, PREVIOUS_BACKEND_COMMIT)
+
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}, clear=True):
+                with patch("tools.windows_pipeline.load_env", return_value=env):
+                    self.assertEqual(mark_failed(args), 0)
+
+                with closing(connect_state_db(db_path)) as connection:
+                    state = get_contour_state(connection, "prod")
+                    attempts = list_deployment_attempts(connection, contour="prod")
+
+        self.assertEqual(state.last_success_release, PREVIOUS_BUILD_VERSION)
+        self.assertEqual(state.last_success_backend_commit, PREVIOUS_BACKEND_COMMIT)
+        self.assertEqual(attempts[0]["build_version"], TEST_BUILD_VERSION)
+        self.assertEqual(attempts[0]["backend_commit"], TEST_BACKEND_COMMIT)
+        self.assertEqual(attempts[0]["status"], "failed")
+        self.assertEqual(attempts[0]["error"], "operator rejected")
+
     def test_deploy_failure_records_failed_attempt(self):
         """Фиксирует запись failed deploy attempt при ошибке до state success."""
         args = Namespace(
@@ -942,6 +1240,142 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         )
         healthcheck_mock.assert_called_once()
         mark_applied_mock.assert_called_once_with("dev", TEST_BUILD_VERSION, release_dir)
+
+    def test_deploy_full_skips_data_sql_when_runtime_disabled(self):
+        """При data_sql_enabled=false full deploy выполняет schema SQL и пропускает data SQL."""
+        args = self._deploy_args()
+        env = self._deploy_env()
+        runtime = {
+            "service_steps": [],
+            "healthcheck_enabled": False,
+            "maintenance_stub_enabled": False,
+            "data_sql_enabled": False,
+        }
+        release_dir = Path("releases") / TEST_BUILD_VERSION
+        backend, frontend = self._app_artifacts()
+        db_schema = DbSqlArtifact("db_schema_dev", Path("schema.tar.gz"), "", "", ".", "summary_sql_dev_*.sql")
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
+            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("tools.windows_pipeline.cleanup_db_data_update_leftovers"))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact", return_value=db_schema))
+            resolve_data_mock = stack.enter_context(patch("tools.windows_pipeline.resolve_db_data_artifact"))
+            resolve_stub_mock = stack.enter_context(patch("tools.windows_pipeline.resolve_maintenance_stub_artifact"))
+            upload_mock = stack.enter_context(patch("tools.windows_pipeline.upload_app_artifacts"))
+            stack.enter_context(patch("tools.windows_pipeline.backup_app_artifacts"))
+            stack.enter_context(patch("tools.windows_pipeline.run_service_steps"))
+            stack.enter_context(patch("tools.windows_pipeline.unpack_app_artifact"))
+            db_schema_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_schema_summary"))
+            db_insert_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_data_insert"))
+            db_update_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_data_update_parallel"))
+            stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance"))
+            stack.enter_context(patch("tools.windows_pipeline.management_commands", return_value=[]))
+            mark_mock = stack.enter_context(patch("tools.windows_pipeline.mark_contour_applied"))
+            stack.enter_context(patch("tools.windows_pipeline.send_outlook_success_email"))
+
+            self.assertEqual(deploy(args), 0)
+
+        resolve_data_mock.assert_not_called()
+        resolve_stub_mock.assert_not_called()
+        db_schema_mock.assert_called_once_with(env, runtime, db_schema)
+        db_insert_mock.assert_not_called()
+        db_update_mock.assert_not_called()
+        upload_mock.assert_called_once_with(env, [backend, frontend], REMOTE_RELEASE_ROOT)
+        mark_mock.assert_called_once_with("dev", TEST_BUILD_VERSION, release_dir)
+
+    def test_deploy_full_skips_maintenance_stub_when_runtime_disabled(self):
+        """При maintenance_stub_enabled=false deploy не resolve/unpack/verify stub."""
+        args = self._deploy_args()
+        env = self._deploy_env()
+        runtime = {
+            "service_steps": [],
+            "healthcheck_enabled": False,
+            "maintenance_stub_enabled": False,
+            "data_sql_enabled": True,
+        }
+        release_dir = Path("releases") / TEST_BUILD_VERSION
+        backend, frontend = self._app_artifacts()
+        db_schema = DbSqlArtifact("db_schema_dev", Path("schema.tar.gz"), "", "", ".", "summary_sql_dev_*.sql")
+        db_insert = DbSqlArtifact("db_insert", Path("insert.tar.gz"), "", "", ".", "run_all_insert_*.sql")
+        db_update = DbSqlArtifact("db_update_parallel", Path("update.tar.gz"), "", "", ".", "run_all_update_parallel_*.sh")
+
+        def data_artifact_side_effect(_env, _build_version, _release_dir, kind):
+            return {"insert": db_insert, "update_parallel": db_update}[kind]
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
+            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("tools.windows_pipeline.cleanup_db_data_update_leftovers"))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact", return_value=db_schema))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_db_data_artifact", side_effect=data_artifact_side_effect))
+            resolve_stub_mock = stack.enter_context(patch("tools.windows_pipeline.resolve_maintenance_stub_artifact"))
+            verify_stub_mock = stack.enter_context(patch("tools.windows_pipeline.verify_maintenance_stub_http"))
+            upload_mock = stack.enter_context(patch("tools.windows_pipeline.upload_app_artifacts"))
+            stack.enter_context(patch("tools.windows_pipeline.backup_app_artifacts"))
+            stack.enter_context(patch("tools.windows_pipeline.run_service_steps"))
+            unpack_mock = stack.enter_context(patch("tools.windows_pipeline.unpack_app_artifact"))
+            stack.enter_context(patch("tools.windows_pipeline.run_db_schema_summary"))
+            db_insert_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_data_insert"))
+            db_update_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_data_update_parallel"))
+            stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance"))
+            stack.enter_context(patch("tools.windows_pipeline.management_commands", return_value=[]))
+            stack.enter_context(patch("tools.windows_pipeline.mark_contour_applied"))
+            stack.enter_context(patch("tools.windows_pipeline.send_outlook_success_email"))
+
+            self.assertEqual(deploy(args), 0)
+
+        resolve_stub_mock.assert_not_called()
+        verify_stub_mock.assert_not_called()
+        upload_mock.assert_called_once_with(env, [backend, frontend], REMOTE_RELEASE_ROOT)
+        self.assertNotIn("maintenance_stub", [call.args[1].name for call in unpack_mock.call_args_list])
+        db_insert_mock.assert_called_once_with(env, runtime, db_insert)
+        db_update_mock.assert_called_once_with(env, runtime, db_update, include_set_default_sql=False)
+
+    def test_successful_deploy_marks_state_after_healthcheck_before_email(self):
+        """Фиксирует текущий порядок success side effects: healthcheck, mark, email."""
+        args = self._deploy_args()
+        env = self._deploy_env()
+        runtime = {
+            "service_steps": [],
+            "healthcheck_enabled": True,
+            "maintenance_stub_enabled": False,
+            "data_sql_enabled": False,
+        }
+        release_dir = Path("releases") / TEST_BUILD_VERSION
+        backend, frontend = self._app_artifacts()
+        db_schema = DbSqlArtifact("db_schema_dev", Path("schema.tar.gz"), "", "", ".", "summary_sql_dev_*.sql")
+        events = []
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
+            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("tools.windows_pipeline.cleanup_db_data_update_leftovers"))
+            stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact", return_value=db_schema))
+            stack.enter_context(patch("tools.windows_pipeline.upload_app_artifacts"))
+            stack.enter_context(patch("tools.windows_pipeline.backup_app_artifacts"))
+            stack.enter_context(patch("tools.windows_pipeline.run_service_steps"))
+            stack.enter_context(patch("tools.windows_pipeline.unpack_app_artifact"))
+            stack.enter_context(patch("tools.windows_pipeline.run_db_schema_summary"))
+            stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance"))
+            stack.enter_context(patch("tools.windows_pipeline.management_commands", return_value=[]))
+            stack.enter_context(patch("tools.windows_pipeline.healthcheck", side_effect=lambda *_args: events.append("healthcheck")))
+            stack.enter_context(
+                patch("tools.windows_pipeline.mark_contour_applied", side_effect=lambda *_args: events.append("mark"))
+            )
+            stack.enter_context(
+                patch("tools.windows_pipeline.send_outlook_success_email", side_effect=lambda *_args: events.append("email"))
+            )
+
+            self.assertEqual(deploy(args), 0)
+
+        self.assertEqual(events, ["healthcheck", "mark", "email"])
 
     def test_deploy_full_keeps_frontend_stub_until_backend_is_started(self):
         """Фиксирует порядок full deploy: stub держится до запуска backend и frontend unpack."""
