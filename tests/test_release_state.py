@@ -1,3 +1,10 @@
+"""Тесты SQLite state layer для release, deploy attempts, jobs и requests.
+
+Модуль фиксирует контракт локальной базы как источника истины для контуров,
+истории build/deploy и web jobs. Тестовые версии и коммиты вынесены в константы,
+чтобы дальнейшее разбиение тестов по директориям не требовало поиска литералов.
+"""
+
 import tempfile
 import unittest
 from contextlib import closing
@@ -5,7 +12,15 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools-ci"))
+TOOLS_CI_ROOT = ROOT / "tools-ci"
+STATE_DB_NAME = "state.sqlite3"
+TEST_BUILD_VERSION = "1.2.4"
+PREVIOUS_BUILD_VERSION = "1.2.3"
+TEST_BACKEND_COMMIT = "abc123"
+TEST_NEXT_BACKEND_COMMIT = "def456"
+TEST_FRONTEND_COMMIT = "def456"
+
+sys.path.insert(0, str(TOOLS_CI_ROOT))
 
 from simple_deploy.release.state import (
     connect_state_db,
@@ -31,113 +46,133 @@ from simple_deploy.release.state import (
 
 
 class ReleaseStateTests(unittest.TestCase):
+    """Проверяет сохранение baseline, attempts, local jobs и external requests."""
+
     def test_upsert_contour_state_sets_last_success(self):
+        """upsert_contour_state двигает baseline контура на успешный релиз."""
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite3"
+            db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
-                upsert_contour_state(connection, "test", "1.2.3", "abc123")
+                upsert_contour_state(connection, "test", PREVIOUS_BUILD_VERSION, TEST_BACKEND_COMMIT)
                 state = get_contour_state(connection, "test")
 
         self.assertIsNotNone(state)
-        self.assertEqual(state.last_success_release, "1.2.3")
-        self.assertEqual(state.last_success_backend_commit, "abc123")
+        self.assertEqual(state.last_success_release, PREVIOUS_BUILD_VERSION)
+        self.assertEqual(state.last_success_backend_commit, TEST_BACKEND_COMMIT)
 
     def test_build_attempts_schema_does_not_remove_existing_state(self):
+        """Инициализация build_attempts не удаляет существующий deploy state."""
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite3"
+            db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
-                upsert_contour_state(connection, "dev", "1.2.3", "abc123")
-                record_attempt(connection, "dev", "1.2.4", "def456", "failed", "deploy error")
+                upsert_contour_state(connection, "dev", PREVIOUS_BUILD_VERSION, TEST_BACKEND_COMMIT)
+                record_attempt(connection, "dev", TEST_BUILD_VERSION, TEST_NEXT_BACKEND_COMMIT, "failed", "deploy error")
 
             with closing(connect_state_db(db_path)) as connection:
                 state = get_contour_state(connection, "dev")
                 attempts_count = connection.execute("select count(*) from deployment_attempts").fetchone()[0]
                 build_attempts_count = connection.execute("select count(*) from build_attempts").fetchone()[0]
 
-        self.assertEqual(state.last_success_release, "1.2.3")
+        self.assertEqual(state.last_success_release, PREVIOUS_BUILD_VERSION)
         self.assertEqual(attempts_count, 1)
         self.assertEqual(build_attempts_count, 0)
 
     def test_failed_build_attempt_is_recorded(self):
+        """Failed build attempt сохраняет status, commits и error text."""
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite3"
+            db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
-                attempt_id = record_build_attempt_started(connection, "1.2.4", "abc123", "def456")
+                attempt_id = record_build_attempt_started(
+                    connection,
+                    TEST_BUILD_VERSION,
+                    TEST_BACKEND_COMMIT,
+                    TEST_FRONTEND_COMMIT,
+                )
                 record_build_attempt_finished(
                     connection,
                     attempt_id,
                     "failed",
-                    backend_commit="abc123",
-                    frontend_commit="def456",
+                    backend_commit=TEST_BACKEND_COMMIT,
+                    frontend_commit=TEST_FRONTEND_COMMIT,
                     error="build error",
                 )
                 row = connection.execute(
                     "select build_version, status, backend_commit, frontend_commit, error from build_attempts"
                 ).fetchone()
 
-        self.assertEqual(row["build_version"], "1.2.4")
+        self.assertEqual(row["build_version"], TEST_BUILD_VERSION)
         self.assertEqual(row["status"], "failed")
-        self.assertEqual(row["backend_commit"], "abc123")
-        self.assertEqual(row["frontend_commit"], "def456")
+        self.assertEqual(row["backend_commit"], TEST_BACKEND_COMMIT)
+        self.assertEqual(row["frontend_commit"], TEST_FRONTEND_COMMIT)
         self.assertEqual(row["error"], "build error")
 
     def test_success_build_attempt_is_recorded(self):
+        """Success build attempt сохраняет commits и пустой error."""
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite3"
+            db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
-                attempt_id = record_build_attempt_started(connection, "1.2.4")
+                attempt_id = record_build_attempt_started(connection, TEST_BUILD_VERSION)
                 record_build_attempt_finished(
                     connection,
                     attempt_id,
                     "success",
-                    backend_commit="abc123",
-                    frontend_commit="def456",
+                    backend_commit=TEST_BACKEND_COMMIT,
+                    frontend_commit=TEST_FRONTEND_COMMIT,
                 )
                 row = connection.execute(
                     "select status, backend_commit, frontend_commit, error from build_attempts"
                 ).fetchone()
 
         self.assertEqual(row["status"], "success")
-        self.assertEqual(row["backend_commit"], "abc123")
-        self.assertEqual(row["frontend_commit"], "def456")
+        self.assertEqual(row["backend_commit"], TEST_BACKEND_COMMIT)
+        self.assertEqual(row["frontend_commit"], TEST_FRONTEND_COMMIT)
         self.assertEqual(row["error"], "")
 
     def test_failed_attempt_does_not_move_last_success(self):
+        """Failed deploy attempt не двигает baseline контура."""
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite3"
+            db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
-                upsert_contour_state(connection, "prod", "1.2.3", "abc123")
-                record_attempt(connection, "prod", "1.2.4", "def456", "failed", "sql error")
+                upsert_contour_state(connection, "prod", PREVIOUS_BUILD_VERSION, TEST_BACKEND_COMMIT)
+                record_attempt(connection, "prod", TEST_BUILD_VERSION, TEST_NEXT_BACKEND_COMMIT, "failed", "sql error")
                 state = get_contour_state(connection, "prod")
 
-        self.assertEqual(state.last_success_release, "1.2.3")
-        self.assertEqual(state.last_success_backend_commit, "abc123")
+        self.assertEqual(state.last_success_release, PREVIOUS_BUILD_VERSION)
+        self.assertEqual(state.last_success_backend_commit, TEST_BACKEND_COMMIT)
 
     def test_recent_release_and_attempt_lists_are_returned(self):
+        """list_* методы возвращают последние releases/build/deployment attempts."""
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite3"
+            db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
-                record_release(connection, "1.2.4", "abc123", "def456", {"backend": "backend.tar.gz"})
-                build_attempt_id = record_build_attempt_started(connection, "1.2.4")
+                record_release(
+                    connection,
+                    TEST_BUILD_VERSION,
+                    TEST_BACKEND_COMMIT,
+                    TEST_FRONTEND_COMMIT,
+                    {"backend": "backend.tar.gz"},
+                )
+                build_attempt_id = record_build_attempt_started(connection, TEST_BUILD_VERSION)
                 record_build_attempt_finished(connection, build_attempt_id, "success")
-                record_attempt(connection, "dev", "1.2.4", "abc123", "success")
+                record_attempt(connection, "dev", TEST_BUILD_VERSION, TEST_BACKEND_COMMIT, "success")
                 releases = list_releases(connection)
                 build_attempts = list_build_attempts(connection)
                 deployment_attempts = list_deployment_attempts(connection, contour="dev")
 
-        self.assertEqual(releases[0]["build_version"], "1.2.4")
+        self.assertEqual(releases[0]["build_version"], TEST_BUILD_VERSION)
         self.assertEqual(build_attempts[0]["status"], "success")
         self.assertEqual(deployment_attempts[0]["contour"], "dev")
 
     def test_local_job_lifecycle_is_recorded(self):
+        """Local job проходит queued -> running -> terminal status с log path."""
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite3"
+            db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
                 job_id = create_job(
                     connection,
                     "deploy",
                     contour="dev",
-                    build_version="1.2.4",
+                    build_version=TEST_BUILD_VERSION,
                     payload={"latest": True},
                 )
                 mark_job_started(connection, job_id, log_path="logs/deploy.log")
@@ -147,18 +182,19 @@ class ReleaseStateTests(unittest.TestCase):
 
         self.assertEqual(job.status, "success")
         self.assertEqual(job.contour, "dev")
-        self.assertEqual(job.build_version, "1.2.4")
+        self.assertEqual(job.build_version, TEST_BUILD_VERSION)
         self.assertEqual(job.log_path, "logs/deploy.log")
         self.assertEqual(jobs[0].id, job_id)
 
     def test_external_request_lifecycle_is_recorded(self):
+        """External request для test/prod хранит payload, status и external id."""
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite3"
+            db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
                 request_id = create_external_request(
                     connection,
                     contour="test",
-                    build_version="1.2.4",
+                    build_version=TEST_BUILD_VERSION,
                     request_type="deploy",
                     payload={"package": "release.tar.gz"},
                 )
@@ -172,11 +208,12 @@ class ReleaseStateTests(unittest.TestCase):
         self.assertEqual(requests[0].id, request_id)
 
     def test_external_request_rejects_dev_contour(self):
+        """External request запрещен для dev, где deploy выполняется напрямую."""
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "state.sqlite3"
+            db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
                 with self.assertRaisesRegex(ValueError, "test/prod"):
-                    create_external_request(connection, "dev", "1.2.4", "deploy")
+                    create_external_request(connection, "dev", TEST_BUILD_VERSION, "deploy")
 
 
 if __name__ == "__main__":

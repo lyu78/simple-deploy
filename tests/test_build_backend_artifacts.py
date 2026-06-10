@@ -1,3 +1,11 @@
+"""Тесты сборки backend artifacts и offline SQL архивов builder-а.
+
+Модуль описывает контракты упаковки schema/data SQL, запуска дополнительных
+генераторов и синхронизации backend source repo. Пути к тестовой структуре
+исходного репозитория вынесены в константы, чтобы при следующем разбиении тестов
+их можно было заменить fixtures или параметризацией.
+"""
+
 import importlib.util
 import io
 import json
@@ -11,7 +19,32 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILDER_ROOT = ROOT / "tools-ci" / "builder"
+TOOLS_CI_ROOT = ROOT / "tools-ci"
+BUILDER_ROOT = TOOLS_CI_ROOT / "builder"
+TEST_BUILD_VERSION = "1.2.3"
+TEST_COMMIT = "abc123"
+TEST_RELEASE_BRANCH = f"release/{TEST_BUILD_VERSION}"
+
+DB_SCRIPTS_ROOT = "docs/database/scripts"
+APP_INSERT_SQL = f"{DB_SCRIPTS_ROOT}/app/insert/a.sql"
+APP_SECOND_INSERT_SQL = f"{DB_SCRIPTS_ROOT}/app/insert/b.sql"
+APP_UNUSED_UPDATE_SQL = f"{DB_SCRIPTS_ROOT}/app/update/not_used.sql"
+APP_UPDATE_SQL = f"{DB_SCRIPTS_ROOT}/app/update/a.sql"
+CATALOG_INSERT_DIR = f"{DB_SCRIPTS_ROOT}/app_ip_subcompany_catalogs/insert_01_26"
+FULL_STATE_INSERT_SQL = f"{DB_SCRIPTS_ROOT}/app_ip_subcompany_cc/insert_04_26/insert_drop_reset.sql"
+INSERT_NEW_OBJECTS_UPDATE_SQL = f"{DB_SCRIPTS_ROOT}/insert_new_objects/manual_update.sql"
+DOMAIN_A_DEFAULT_SQL = f"{DB_SCRIPTS_ROOT}/domain_a/default.sql"
+DOMAIN_A_INSERT_SQL = f"{DB_SCRIPTS_ROOT}/domain_a/insert.sql"
+DOMAIN_A_UPDATE_SQL = f"{DB_SCRIPTS_ROOT}/domain_a/update.sql"
+DOMAIN_B_DEFAULT_SQL = f"{DB_SCRIPTS_ROOT}/domain_b/default.sql"
+DOMAIN_B_UPDATE_SQL = f"{DB_SCRIPTS_ROOT}/domain_b/update.sql"
+
+BACKEND_SOURCE_REPO_WINDOWS = r"C:\example\repos\backend-source"
+BACKEND_TARGET_REPO_WINDOWS = r"C:\example\repos\backend-target"
+BACKEND_SOURCE_REPO_BASH = "/c/example/repos/backend-source"
+BACKEND_TARGET_REPO_BASH = "/c/example/repos/backend-target"
+BACKEND_APP_ROOT = "backend_app"
+
 sys.path.insert(0, str(BUILDER_ROOT))
 
 from src.build_backend import (  # noqa: E402
@@ -33,6 +66,7 @@ from src.utils import add_file_to_tar  # noqa: E402
 
 
 def load_create_run_all_sql_module():
+    """Загружает генератор run_all SQL как отдельный модуль из builder scripts."""
     module_path = BUILDER_ROOT / "scripts" / "additional_artifacts" / "create_run_all_sql.py"
     spec = importlib.util.spec_from_file_location("create_run_all_sql", module_path)
     module = importlib.util.module_from_spec(spec)
@@ -41,37 +75,44 @@ def load_create_run_all_sql_module():
 
 
 class BuildBackendArtifactTests(unittest.TestCase):
+    """Проверяет builder-контракты, важные для самодостаточного release package."""
+
     def setUp(self):
+        """Создает временный source repo и release dir для файловых builder-тестов."""
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.repo = self.root / "repo"
         self.release_dir = self.root / "release"
-        (self.repo / "docs/database/scripts/app/insert").mkdir(parents=True)
-        (self.repo / "docs/database/scripts/app/update").mkdir(parents=True)
+        (self.repo / Path(APP_INSERT_SQL).parent).mkdir(parents=True)
+        (self.repo / Path(APP_UPDATE_SQL).parent).mkdir(parents=True)
         self.release_dir.mkdir()
 
     def tearDown(self):
+        """Удаляет временную файловую структуру builder-теста."""
         self.tmp.cleanup()
 
     def _write(self, relative_path, content="select 1;\n"):
+        """Пишет файл в тестовый source repo и возвращает абсолютный путь."""
         path = self.repo / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return path
 
     def _tar_names(self, archive_name):
+        """Возвращает отсортированный список путей внутри тестового tar.gz архива."""
         with tarfile.open(self.release_dir / archive_name, "r:gz") as archive:
             return sorted(archive.getnames())
 
     def test_run_all_include_paths_are_limited_to_referenced_scripts(self):
-        first = self._write("docs/database/scripts/app/insert/a.sql")
-        second = self._write("docs/database/scripts/app/insert/b.sql")
-        self._write("docs/database/scripts/app/update/not_used.sql")
+        """В архив попадают только SQL-файлы, явно referenced из run_all."""
+        first = self._write(APP_INSERT_SQL)
+        second = self._write(APP_SECOND_INSERT_SQL)
+        self._write(APP_UNUSED_UPDATE_SQL)
         run_all = self._write(
-            "run_all_insert_abc123.sql",
+            f"run_all_insert_{TEST_COMMIT}.sql",
             "\\set ON_ERROR_STOP 1\n"
-            "\\i 'docs/database/scripts/app/insert/a.sql'\n"
-            "\\i \"docs/database/scripts/app/insert/b.sql\"\n",
+            f"\\i '{APP_INSERT_SQL}'\n"
+            f"\\i \"{APP_SECOND_INSERT_SQL}\"\n",
         )
 
         self.assertEqual(
@@ -83,18 +124,19 @@ class BuildBackendArtifactTests(unittest.TestCase):
         )
 
     def test_insert_archive_contains_entrypoint_and_only_its_includes(self):
-        self._write("docs/database/scripts/app/insert/a.sql")
-        self._write("docs/database/scripts/app/update/not_used.sql")
+        """INSERT archive содержит entrypoint и только его include-зависимости."""
+        self._write(APP_INSERT_SQL)
+        self._write(APP_UNUSED_UPDATE_SQL)
         run_all = self._write(
-            "run_all_insert_abc123.sql",
-            "\\i 'docs/database/scripts/app/insert/a.sql'\n",
+            f"run_all_insert_{TEST_COMMIT}.sql",
+            f"\\i '{APP_INSERT_SQL}'\n",
         )
 
         archive_name = _create_db_sql_artifact(
             self.release_dir,
             "insert",
-            "1.2.3",
-            "abc123",
+            TEST_BUILD_VERSION,
+            TEST_COMMIT,
             lambda archive: (
                 add_file_to_tar(archive, run_all, run_all.name),
                 _add_run_all_includes_to_tar(archive, self.repo, run_all),
@@ -104,23 +146,24 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(
             self._tar_names(archive_name),
             [
-                "docs/database/scripts/app/insert/a.sql",
-                "run_all_insert_abc123.sql",
+                APP_INSERT_SQL,
+                f"run_all_insert_{TEST_COMMIT}.sql",
             ],
         )
 
     def test_update_sequential_archive_contains_entrypoint_and_its_includes(self):
-        self._write("docs/database/scripts/app/update/a.sql")
+        """Sequential update archive содержит entrypoint и referenced SQL."""
+        self._write(APP_UPDATE_SQL)
         run_all = self._write(
-            "run_all_update_sequential_abc123.sql",
-            "\\i 'docs/database/scripts/app/update/a.sql'\n",
+            f"run_all_update_sequential_{TEST_COMMIT}.sql",
+            f"\\i '{APP_UPDATE_SQL}'\n",
         )
 
         archive_name = _create_db_sql_artifact(
             self.release_dir,
             "update_sequential",
-            "1.2.3",
-            "abc123",
+            TEST_BUILD_VERSION,
+            TEST_COMMIT,
             lambda archive: (
                 add_file_to_tar(archive, run_all, run_all.name),
                 _add_run_all_includes_to_tar(archive, self.repo, run_all),
@@ -130,17 +173,18 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(
             self._tar_names(archive_name),
             [
-                "docs/database/scripts/app/update/a.sql",
-                "run_all_update_sequential_abc123.sql",
+                APP_UPDATE_SQL,
+                f"run_all_update_sequential_{TEST_COMMIT}.sql",
             ],
         )
 
     def test_update_parallel_archive_contains_entrypoint_and_its_includes(self):
-        first = self._write("docs/database/scripts/app/update/a.sql")
+        """Parallel update archive добавляет SQL include из bash runner metadata."""
+        first = self._write(APP_UPDATE_SQL)
         runner = self._write(
-            "run_all_update_parallel_abc123.sh",
+            f"run_all_update_parallel_{TEST_COMMIT}.sh",
             "#!/usr/bin/env bash\n"
-            "# simple-deploy-include: docs/database/scripts/app/update/a.sql\n",
+            f"# simple-deploy-include: {APP_UPDATE_SQL}\n",
         )
 
         self.assertEqual(_shell_runner_include_paths(self.repo, runner), [first.relative_to(self.repo)])
@@ -148,8 +192,8 @@ class BuildBackendArtifactTests(unittest.TestCase):
         archive_name = _create_db_sql_artifact(
             self.release_dir,
             "update_parallel",
-            "1.2.3",
-            "abc123",
+            TEST_BUILD_VERSION,
+            TEST_COMMIT,
             lambda archive: (
                 add_file_to_tar(archive, runner, runner.name),
                 _add_shell_runner_includes_to_tar(archive, self.repo, runner),
@@ -159,19 +203,21 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(
             self._tar_names(archive_name),
             [
-                "docs/database/scripts/app/update/a.sql",
-                "run_all_update_parallel_abc123.sh",
+                APP_UPDATE_SQL,
+                f"run_all_update_parallel_{TEST_COMMIT}.sh",
             ],
         )
 
     def test_schema_archive_contains_only_summary_sql(self):
-        summary = self._write("build_scripts/summary_sql_dev_2026_abc123.sql")
+        """Schema archive содержит только summary SQL entrypoint без source tree."""
+        summary_name = f"summary_sql_dev_2026_{TEST_COMMIT}.sql"
+        summary = self._write(f"build_scripts/{summary_name}")
 
         archive_name = _create_db_sql_artifact(
             self.release_dir,
             "schema",
-            "1.2.3",
-            "abc123",
+            TEST_BUILD_VERSION,
+            TEST_COMMIT,
             lambda archive: add_file_to_tar(
                 archive,
                 summary,
@@ -181,19 +227,21 @@ class BuildBackendArtifactTests(unittest.TestCase):
 
         self.assertEqual(
             self._tar_names(archive_name),
-            ["summary_sql_dev_2026_abc123.sql"],
+            [summary_name],
         )
 
     def test_missing_include_fails(self):
+        """Отсутствующий include в run_all приводит к ошибке сборки архива."""
         run_all = self._write(
-            "run_all_update_sequential_abc123.sql",
-            "\\i 'docs/database/scripts/app/update/missing.sql'\n",
+            f"run_all_update_sequential_{TEST_COMMIT}.sql",
+            f"\\i '{DB_SCRIPTS_ROOT}/app/update/missing.sql'\n",
         )
 
         with self.assertRaises(RuntimeError):
             _run_all_include_paths(self.repo, run_all)
 
     def test_build_scripts_directory_is_cleaned_after_generation(self):
+        """Проверяет очистку временной build_scripts директории после подготовки."""
         stale_file = self._write("build_scripts/stale.sql")
 
         build_scripts_dir = _prepare_build_scripts(self.repo)
@@ -208,11 +256,12 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertFalse(build_scripts_dir.exists())
 
     def test_run_all_preamble_contains_postgres_session_settings(self):
+        """Фиксирует Postgres session settings в run_all INSERT entrypoint."""
         module = load_create_run_all_sql_module()
         out = io.StringIO()
 
         module.write_run_all_preamble(out, 1)
-        out.write("\\i 'docs/database/scripts/app/insert/a.sql'\n")
+        out.write(f"\\i '{APP_INSERT_SQL}'\n")
         module.write_run_all_epilogue(out)
         content = out.getvalue()
 
@@ -221,9 +270,10 @@ class BuildBackendArtifactTests(unittest.TestCase):
         for setting in module.PSQL_SESSION_SETTINGS:
             self.assertIn(f"{setting}\n", content)
         self.assertTrue(content.rstrip().endswith("SET synchronous_commit = ON;"))
-        self.assertIn("\\i 'docs/database/scripts/app/insert/a.sql'\n", content)
+        self.assertIn(f"\\i '{APP_INSERT_SQL}'\n", content)
 
     def test_update_sequential_preamble_uses_conservative_session_settings(self):
+        """Фиксирует консервативные session settings для sequential update SQL."""
         module = load_create_run_all_sql_module()
         out = io.StringIO()
 
@@ -237,9 +287,10 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertNotIn("enable_parallel_hash", content)
 
     def test_run_all_generator_treats_drop_insert_as_idempotent(self):
+        """Разрешает DROP plus INSERT сценарий как full-state idempotent data SQL."""
         module = load_create_run_all_sql_module()
         sql = self._write(
-            "docs/database/scripts/app_ip_subcompany_cc/insert_04_26/insert_drop_reset.sql",
+            FULL_STATE_INSERT_SQL,
             "DROP MATERIALIZED VIEW IF EXISTS public.some_owned_view;\n"
             "INSERT INTO public.some_owned_table (id) VALUES (1);\n",
         )
@@ -247,35 +298,38 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertTrue(module.check_idempotent(sql))
 
     def test_run_all_insert_files_use_forward_slash_paths(self):
+        """Проверяет, что генератор возвращает archive paths через forward slash."""
         module = load_create_run_all_sql_module()
         old_base_dir = module.BASE_DIR
         old_scripts_dir = module.SCRIPTS_DIR
         module.BASE_DIR = str(self.repo)
-        module.SCRIPTS_DIR = str(self.repo / "docs/database/scripts")
+        module.SCRIPTS_DIR = str(self.repo / DB_SCRIPTS_ROOT)
         try:
-            insert_dir = self.repo / "docs/database/scripts/app_ip_subcompany_catalogs/insert_01_26"
+            insert_dir = self.repo / CATALOG_INSERT_DIR
+            catalog_sql = f"{CATALOG_INSERT_DIR}/insert_catalog.sql"
             self._write(
-                "docs/database/scripts/app_ip_subcompany_catalogs/insert_01_26/insert_catalog.sql",
+                catalog_sql,
                 "INSERT INTO public.catalog (id) VALUES (1) ON CONFLICT (id) DO NOTHING;\n",
             )
 
             self.assertEqual(
                 module.find_sql_files(str(insert_dir), check_inserts=True, errors_list=[]),
-                ["docs/database/scripts/app_ip_subcompany_catalogs/insert_01_26/insert_catalog.sql"],
+                [catalog_sql],
             )
         finally:
             module.BASE_DIR = old_base_dir
             module.SCRIPTS_DIR = old_scripts_dir
 
     def test_update_sequential_metadata_files_are_sorted_and_exclude_inserts(self):
+        """Sequential metadata сортирует update/set_default и исключает INSERT."""
         module = load_create_run_all_sql_module()
         old_base_dir = module.BASE_DIR
         old_scripts_dir = module.SCRIPTS_DIR
         module.BASE_DIR = str(self.repo)
-        module.SCRIPTS_DIR = str(self.repo / "docs/database/scripts")
+        module.SCRIPTS_DIR = str(self.repo / DB_SCRIPTS_ROOT)
         try:
             self._write(
-                "docs/database/scripts/domain_b/update.sql",
+                DOMAIN_B_UPDATE_SQL,
                 "-- simple-deploy: kind=update\n"
                 "-- simple-deploy: order=20\n"
                 "-- simple-deploy: group=domain.b\n"
@@ -283,7 +337,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
                 "select 1;\n",
             )
             self._write(
-                "docs/database/scripts/domain_a/default.sql",
+                DOMAIN_A_DEFAULT_SQL,
                 "-- simple-deploy: kind=set_default\n"
                 "-- simple-deploy: order=10\n"
                 "-- simple-deploy: group=domain.a\n"
@@ -291,7 +345,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
                 "select 1;\n",
             )
             self._write(
-                "docs/database/scripts/domain_a/insert.sql",
+                DOMAIN_A_INSERT_SQL,
                 "-- simple-deploy: kind=insert\n"
                 "-- simple-deploy: order=1\n"
                 "-- simple-deploy: group=domain.a\n"
@@ -299,7 +353,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
                 "select 1;\n",
             )
             self._write(
-                "docs/database/scripts/insert_new_objects/manual_update.sql",
+                INSERT_NEW_OBJECTS_UPDATE_SQL,
                 "-- simple-deploy: kind=update\n"
                 "-- simple-deploy: order=1\n"
                 "-- simple-deploy: group=manual\n"
@@ -310,8 +364,8 @@ class BuildBackendArtifactTests(unittest.TestCase):
             self.assertEqual(
                 module.find_metadata_sql_files(module.UPDATE_SEQUENTIAL_KINDS),
                 [
-                    "docs/database/scripts/domain_a/default.sql",
-                    "docs/database/scripts/domain_b/update.sql",
+                    DOMAIN_A_DEFAULT_SQL,
+                    DOMAIN_B_UPDATE_SQL,
                 ],
             )
         finally:
@@ -319,6 +373,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
             module.SCRIPTS_DIR = old_scripts_dir
 
     def test_update_parallel_runner_has_live_status_and_no_csv_output(self):
+        """Проверяет live status parallel runner и отсутствие CSV side effects."""
         module = load_create_run_all_sql_module()
         entries = [
             {
@@ -326,16 +381,16 @@ class BuildBackendArtifactTests(unittest.TestCase):
                 "order": 10,
                 "group": "domain.a",
                 "parallel": "true",
-                "path": str(Path("docs/database/scripts/domain_a/update.sql")),
-                "archive_path": "docs/database/scripts/domain_a/update.sql",
+                "path": str(Path(DOMAIN_A_UPDATE_SQL)),
+                "archive_path": DOMAIN_A_UPDATE_SQL,
             },
             {
                 "kind": "set_default",
                 "order": 10,
                 "group": "domain.b",
                 "parallel": "false",
-                "path": str(Path("docs/database/scripts/domain_b/default.sql")),
-                "archive_path": "docs/database/scripts/domain_b/default.sql",
+                "path": str(Path(DOMAIN_B_DEFAULT_SQL)),
+                "archive_path": DOMAIN_B_DEFAULT_SQL,
             },
         ]
         out = io.StringIO()
@@ -344,8 +399,8 @@ class BuildBackendArtifactTests(unittest.TestCase):
         content = out.getvalue()
 
         self.assertIn("#!/usr/bin/env bash\n", content)
-        self.assertIn("# simple-deploy-include: docs/database/scripts/domain_a/update.sql\n", content)
-        self.assertIn("# simple-deploy-include: docs/database/scripts/domain_b/default.sql\n", content)
+        self.assertIn(f"# simple-deploy-include: {DOMAIN_A_UPDATE_SQL}\n", content)
+        self.assertIn(f"# simple-deploy-include: {DOMAIN_B_DEFAULT_SQL}\n", content)
         self.assertIn("DEFAULT_MAX_WORKERS=8", content)
         self.assertIn("DEFAULT_STATUS_INTERVAL_SECONDS=30", content)
         self.assertIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT", content)
@@ -368,6 +423,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
             subprocess.run([bash_path, "-n", str(runner_path)], check=True)
 
     def test_missing_backend_build_venv_is_created_in_source_repo(self):
+        """Создает backend build venv внутри source repo, если activate.bat отсутствует."""
         source_repo = self.root / "source"
         source_repo.mkdir()
         activate_path = source_repo / ".venv/Scripts/activate.bat"
@@ -390,6 +446,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(kwargs["cwd"], source_repo)
 
     def test_artifact_generators_run_through_source_venv_python(self):
+        """Запускает pip/schema/run_all generators через python из source repo venv."""
         source_repo = self.root / "source"
         source_repo.mkdir()
         activate_path = source_repo / ".venv/Scripts/activate.bat"
@@ -433,6 +490,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(run_all_kwargs["cwd"], source_repo)
 
     def test_artifact_generators_skip_data_sql_when_explicitly_disabled(self):
+        """При SIMPLE_DEPLOY_INCLUDE_DATA_SQL=0 пропускает run_all data SQL generator."""
         source_repo = self.root / "source"
         source_repo.mkdir()
         activate_path = source_repo / ".venv/Scripts/activate.bat"
@@ -460,6 +518,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertFalse(any("create_run_all_sql.py" in command for command in called_commands))
 
     def test_missing_schema_metadata_reports_schema_generator_failure(self):
+        """Отсутствие schema metadata после успешного generator запуска считается ошибкой."""
         source_repo = self.root / "source"
         source_repo.mkdir()
         build_scripts_dir = source_repo / "build_scripts"
@@ -467,7 +526,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         python_path = source_repo / ".venv/Scripts/python.exe"
 
         with patch.dict("os.environ", {"RELEASE_ROOT_WINDOWS": str(self.release_dir)}, clear=True):
-            with patch("src.build_backend.git_output", return_value="abc123"):
+            with patch("src.build_backend.git_output", return_value=TEST_COMMIT):
                 with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
                     with patch("src.build_backend._schema_baselines_json", return_value="{}"):
                         with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
@@ -476,12 +535,13 @@ class BuildBackendArtifactTests(unittest.TestCase):
                                     RuntimeError,
                                     "Schema migration generator exited successfully but did not create metadata",
                                 ):
-                                    _create_db_migrations_archives(str(source_repo), "1.2.3")
+                                    _create_db_migrations_archives(str(source_repo), TEST_BUILD_VERSION)
 
         run_mock.assert_called_once()
         self.assertEqual(run_mock.call_args.args[2], "create_sql_migrations.py")
 
     def test_db_migrations_archives_skip_data_sql_when_explicitly_disabled(self):
+        """Schema archives остаются, а data SQL archives не пишутся при явном skip."""
         source_repo = self.root / "source"
         source_repo.mkdir()
         build_scripts_dir = source_repo / "build_scripts"
@@ -513,7 +573,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
             "SIMPLE_DEPLOY_INCLUDE_DATA_SQL": "0",
         }
         with patch.dict("os.environ", env, clear=True):
-            with patch("src.build_backend.git_output", return_value="abc123"):
+            with patch("src.build_backend.git_output", return_value=TEST_COMMIT):
                 with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
                     with patch("src.build_backend._schema_baselines_json", return_value="{}"):
                         with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
@@ -521,7 +581,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
                                 "src.build_backend._run_artifact_generator",
                                 side_effect=fake_run_artifact_generator,
                             ) as run_mock:
-                                manifest = _create_db_migrations_archives(str(source_repo), "1.2.3")
+                                manifest = _create_db_migrations_archives(str(source_repo), TEST_BUILD_VERSION)
 
         run_mock.assert_called_once()
         self.assertFalse(manifest["db_data_sql_enabled"])
@@ -531,6 +591,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(set(manifest["db_schema_archives"]), {"dev", "test", "prod"})
 
     def test_db_migrations_archives_include_data_sql_by_default(self):
+        """По умолчанию builder добавляет schema, insert и update data SQL archives."""
         source_repo = self.root / "source"
         source_repo.mkdir()
         build_scripts_dir = source_repo / "build_scripts"
@@ -557,25 +618,25 @@ class BuildBackendArtifactTests(unittest.TestCase):
                         encoding="utf-8",
                     )
             elif script_name == "create_run_all_sql.py":
-                (build_scripts_dir / "run_all_insert_abc123.sql").write_text(
+                (build_scripts_dir / f"run_all_insert_{TEST_COMMIT}.sql").write_text(
                     "\\set ON_ERROR_STOP 1\n",
                     encoding="utf-8",
                 )
-                (build_scripts_dir / "run_all_update_sequential_abc123.sql").write_text(
+                (build_scripts_dir / f"run_all_update_sequential_{TEST_COMMIT}.sql").write_text(
                     "\\set ON_ERROR_STOP 1\n",
                     encoding="utf-8",
                 )
-                update_sql = source_repo / "docs/database/scripts/app/update/a.sql"
+                update_sql = source_repo / APP_UPDATE_SQL
                 update_sql.parent.mkdir(parents=True, exist_ok=True)
                 update_sql.write_text("select 1;\n", encoding="utf-8")
-                (build_scripts_dir / "run_all_update_parallel_abc123.sh").write_text(
+                (build_scripts_dir / f"run_all_update_parallel_{TEST_COMMIT}.sh").write_text(
                     "#!/usr/bin/env bash\n"
-                    "# simple-deploy-include: docs/database/scripts/app/update/a.sql\n",
+                    f"# simple-deploy-include: {APP_UPDATE_SQL}\n",
                     encoding="utf-8",
                 )
 
         with patch.dict("os.environ", {"RELEASE_ROOT_WINDOWS": str(self.release_dir)}, clear=True):
-            with patch("src.build_backend.git_output", return_value="abc123"):
+            with patch("src.build_backend.git_output", return_value=TEST_COMMIT):
                 with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
                     with patch("src.build_backend._schema_baselines_json", return_value="{}"):
                         with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
@@ -583,7 +644,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
                                 "src.build_backend._run_artifact_generator",
                                 side_effect=fake_run_artifact_generator,
                             ) as run_mock:
-                                manifest = _create_db_migrations_archives(str(source_repo), "1.2.3")
+                                manifest = _create_db_migrations_archives(str(source_repo), TEST_BUILD_VERSION)
 
         self.assertEqual(
             [call.args[2] for call in run_mock.call_args_list],
@@ -596,6 +657,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertIn("db_update_parallel_archive", manifest)
 
     def test_backend_build_requirements_path_can_be_configured(self):
+        """Учитывает BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH при pip install."""
         source_repo = self.root / "source"
         source_repo.mkdir()
         requirements_path = source_repo / "requirements/prod.txt"
@@ -617,9 +679,10 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertIn(str(requirements_path), run_mock.call_args_list[0].args[0])
 
     def test_source_top_level_sync_preserves_target_only_items(self):
+        """Синхронизация top-level source repo сохраняет target-only директории."""
         source_repo = self.root / "source"
         target_repo = self.root / "target"
-        app_root = "backend_app"
+        app_root = BACKEND_APP_ROOT
         source_repo.mkdir()
         target_repo.mkdir()
 
@@ -649,11 +712,12 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertFalse((target_repo / "archives" / "source.tmp").exists())
 
     def test_backend_build_overrides_archive_root_to_source_repo(self):
+        """Перед упаковкой backend архивов archive root переопределяется на source repo."""
         env = {
-            "BACKEND_SOURCE_REPO_PATH": r"C:\example\repos\backend-source",
-            "BACKEND_TARGET_REPO_PATH": r"C:\example\repos\backend-target",
-            "BACKEND_REPO_ROOT_BASH": "/c/example/repos/backend-target",
-            "BACKEND_APP_ROOT_DIR": "backend_app",
+            "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
+            "BACKEND_TARGET_REPO_PATH": BACKEND_TARGET_REPO_WINDOWS,
+            "BACKEND_REPO_ROOT_BASH": BACKEND_TARGET_REPO_BASH,
+            "BACKEND_APP_ROOT_DIR": BACKEND_APP_ROOT,
             "GIT_BASH_PATH": "bash",
         }
         with patch.dict("os.environ", env):
@@ -665,13 +729,14 @@ class BuildBackendArtifactTests(unittest.TestCase):
                                 with patch("src.build_backend.git_add_commit_push", return_value=True):
                                     with patch("src.build_backend._create_db_migrations_archives", return_value={}):
                                         with patch("src.build_backend.subprocess.run") as run_mock:
-                                            build_backend("1.2.3", "release/1.2.3")
+                                            build_backend(TEST_BUILD_VERSION, TEST_RELEASE_BRANCH)
 
         archive_env = run_mock.call_args.kwargs["env"]
-        self.assertEqual(archive_env["BACKEND_REPO_ROOT_BASH"], "/c/example/repos/backend-source")
-        self.assertEqual(archive_env["BACKEND_APP_ROOT_DIR"], "backend_app")
+        self.assertEqual(archive_env["BACKEND_REPO_ROOT_BASH"], BACKEND_SOURCE_REPO_BASH)
+        self.assertEqual(archive_env["BACKEND_APP_ROOT_DIR"], BACKEND_APP_ROOT)
 
     def test_backend_archive_script_excludes_python_cache(self):
+        """Backend archive shell script исключает Python cache файлы."""
         script_path = BUILDER_ROOT / "scripts" / "archive_script_backend.sh"
         content = script_path.read_text(encoding="utf-8")
 
