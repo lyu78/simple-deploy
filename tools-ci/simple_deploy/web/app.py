@@ -1,20 +1,34 @@
 """Web/API поверхность только для чтения над локальным состоянием релизов.
 
-Модуль предоставляет FastAPI-приложение для просмотра SQLite-состояния
-simple-deploy: контуров, релизов, попыток build/deploy, локальных заданий и
-внешних заявок. В текущем v1 слой ничего не запускает и не меняет; он только
-читает ту же локальную базу, которую используют CLI и builder.
+Модуль предоставляет FastAPI-приложение для просмотра той же SQLite-базы,
+которую используют CLI и builder. Текущий v1 слой ничего не запускает и не
+меняет состояние релизов.
 """
 
 from __future__ import annotations
 
 from contextlib import closing
-from dataclasses import asdict
 from html import escape
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
+from simple_deploy.dto.state import (
+    ExternalRequestDto,
+    JobDto,
+    ReleaseRecordDto,
+    StateSnapshotDto,
+    dto_dump,
+)
+from simple_deploy.models.state import (
+    BuildAttemptModel,
+    ContourStateModel,
+    DeploymentAttemptModel,
+    ExternalRequestModel,
+    JobModel,
+    ReleaseRecordModel,
+    StateSnapshotModel,
+)
 from simple_deploy.release.state import (
     all_contour_states,
     connect_state_db,
@@ -30,119 +44,104 @@ app = FastAPI(title="simple-deploy", version="0.1.0")
 
 
 def bounded_limit(limit: int) -> int:
-    """Ограничивает пользовательский ``limit`` безопасным диапазоном.
-
-    API принимает числовой limit от клиента, но не должен отдавать
-    неограниченные выборки из SQLite. Функция возвращает значение от 1 до 200 и
-    не обращается к базе данных.
-    """
+    """Ограничивает пользовательский ``limit`` безопасным диапазоном."""
     return max(1, min(limit, 200))
 
 
-def state_snapshot(limit: int = 50) -> dict:
-    """Собирает снимок локального состояния релизов только для чтения.
-
-    Источником истины является SQLite-база состояния релизов, путь к которой
-    выбирает ``connect_state_db``. Функция читает все таблицы, нужные панели и
-    API, преобразует dataclass-записи в словари и не изменяет состояние.
-    """
+def state_snapshot_model(limit: int = 50) -> StateSnapshotModel:
+    """Собирает внутреннюю модель чтения локального состояния релизов."""
     limit = bounded_limit(limit)
     with closing(connect_state_db()) as connection:
         contour_states = all_contour_states(connection)
-        return {
-            "contours": {
-                contour: asdict(state) if state is not None else None
+        return StateSnapshotModel(
+            contours={
+                contour: ContourStateModel.model_validate(state) if state is not None else None
                 for contour, state in contour_states.items()
             },
-            "releases": list_releases(connection, limit=limit),
-            "build_attempts": list_build_attempts(connection, limit=limit),
-            "deployment_attempts": list_deployment_attempts(connection, limit=limit),
-            "jobs": [asdict(job) for job in list_jobs(connection, limit=limit)],
-            "external_requests": [
-                asdict(request)
+            releases=[
+                ReleaseRecordModel.model_validate(record)
+                for record in list_releases(connection, limit=limit)
+            ],
+            build_attempts=[
+                BuildAttemptModel.model_validate(record)
+                for record in list_build_attempts(connection, limit=limit)
+            ],
+            deployment_attempts=[
+                DeploymentAttemptModel.model_validate(record)
+                for record in list_deployment_attempts(connection, limit=limit)
+            ],
+            jobs=[
+                JobModel.model_validate(job)
+                for job in list_jobs(connection, limit=limit)
+            ],
+            external_requests=[
+                ExternalRequestModel.model_validate(request)
                 for request in list_external_requests(connection, limit=limit)
             ],
-        }
+        )
+
+
+def state_snapshot_dto(limit: int = 50) -> StateSnapshotDto:
+    """Преобразует внутренний снимок состояния во внешний DTO."""
+
+    return StateSnapshotDto.model_validate(state_snapshot_model(limit=limit))
+
+
+def state_snapshot(limit: int = 50) -> dict:
+    """Возвращает JSON-совместимый словарь снимка состояния."""
+    return dto_dump(state_snapshot_dto(limit=limit))
 
 
 @app.get("/api/health")
 def health() -> dict:
-    """Возвращает статус самого web/API процесса.
-
-    Эндпоинт не проверяет доступность VM, Git, директории релиза или SQLite
-    сверх базовой инициализации приложения; он нужен как легкая проверка, что
-    FastAPI приложение отвечает.
-    """
+    """Возвращает статус самого web/API процесса."""
     return {"status": "ok"}
 
 
-@app.get("/api/state")
-def api_state(limit: int = 50) -> dict:
-    """Возвращает агрегированный JSON-снимок состояния релизов.
-
-    ``limit`` применяется ко всем списочным секциям снимка. Эндпоинт работает
-    только для чтения и не запускает build, deploy или runner локальных
-    заданий.
-    """
-    return state_snapshot(limit=limit)
+@app.get("/api/state", response_model=StateSnapshotDto)
+def api_state(limit: int = 50) -> StateSnapshotDto:
+    """Возвращает агрегированный JSON-снимок состояния релизов."""
+    return state_snapshot_dto(limit=limit)
 
 
-@app.get("/api/releases")
-def api_releases(limit: int = 50) -> list[dict]:
-    """Возвращает последние успешно собранные релизы из SQLite.
-
-    Список строится по таблице ``releases`` и отражает только сборки, для
-    которых был записан manifest. Deploy-статус контура здесь не вычисляется.
-    """
-    with closing(connect_state_db()) as connection:
-        return list_releases(connection, limit=bounded_limit(limit))
-
-
-@app.get("/api/jobs")
-def api_jobs(limit: int = 50) -> list[dict]:
-    """Возвращает последние локальные задания из SQLite.
-
-    Эндпоинт показывает записи ``local_jobs`` как журнал долгих операций. В
-    текущем v1 только для чтения он не создает задания и не управляет их
-    выполнением.
-    """
-    with closing(connect_state_db()) as connection:
-        return [asdict(job) for job in list_jobs(connection, limit=bounded_limit(limit))]
-
-
-@app.get("/api/requests")
-def api_requests(limit: int = 50) -> list[dict]:
-    """Возвращает последние внешние заявки TEST/PROD.
-
-    Эндпоинт читает таблицу ``external_requests`` и показывает ручные или
-    внешние продвижения релиза. Он не отправляет заявки во внешнюю систему и не
-    меняет их статус.
-    """
+@app.get("/api/releases", response_model=list[ReleaseRecordDto])
+def api_releases(limit: int = 50) -> list[ReleaseRecordDto]:
+    """Возвращает последние успешно собранные релизы из SQLite."""
     with closing(connect_state_db()) as connection:
         return [
-            asdict(request)
+            ReleaseRecordDto.model_validate(ReleaseRecordModel.model_validate(record))
+            for record in list_releases(connection, limit=bounded_limit(limit))
+        ]
+
+
+@app.get("/api/jobs", response_model=list[JobDto])
+def api_jobs(limit: int = 50) -> list[JobDto]:
+    """Возвращает последние локальные задания из SQLite."""
+    with closing(connect_state_db()) as connection:
+        return [
+            JobDto.model_validate(JobModel.model_validate(job))
+            for job in list_jobs(connection, limit=bounded_limit(limit))
+        ]
+
+
+@app.get("/api/requests", response_model=list[ExternalRequestDto])
+def api_requests(limit: int = 50) -> list[ExternalRequestDto]:
+    """Возвращает последние внешние заявки TEST/PROD."""
+    with closing(connect_state_db()) as connection:
+        return [
+            ExternalRequestDto.model_validate(ExternalRequestModel.model_validate(request))
             for request in list_external_requests(connection, limit=bounded_limit(limit))
         ]
 
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard() -> str:
-    """Возвращает HTML-панель для локального оператора.
-
-    Страница строится из того же ``state_snapshot``, что и JSON API, поэтому
-    визуальное представление и машинный эндпоинт используют одну модель данных.
-    Панель не содержит форм, которые меняют состояние релизов.
-    """
+    """Возвращает HTML-панель для локального оператора."""
     return render_dashboard(state_snapshot(limit=20))
 
 
 def render_dashboard(snapshot: dict) -> str:
-    """Рендерит полный HTML-документ панели из готового снимка.
-
-    Функция принимает уже собранный словарь состояния и не обращается к SQLite.
-    Все пользовательские значения передаются в таблицы через ``render_table``,
-    где они HTML-экранируются.
-    """
+    """Рендерит полный HTML-документ панели из готового снимка."""
     return f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -264,12 +263,7 @@ def render_dashboard(snapshot: dict) -> str:
 
 
 def render_contours(contours: dict) -> str:
-    """Рендерит таблицу состояний контуров.
-
-    На вход передается секция ``contours`` из ``state_snapshot``. Отсутствующий
-    baseline контура отображается пустыми значениями, потому что отсутствие
-    записи в SQLite является допустимым состоянием до первичной настройки.
-    """
+    """Рендерит таблицу состояний контуров."""
     rows = []
     for contour, state in contours.items():
         rows.append(
@@ -288,12 +282,7 @@ def render_contours(contours: dict) -> str:
 
 
 def render_table(title: str, rows: list[dict], columns: list[str]) -> str:
-    """Рендерит одну HTML-таблицу панели.
-
-    ``rows`` должны быть словарями с ключами из ``columns``. Функция экранирует
-    заголовки и значения, а при пустом списке возвращает секцию ``No records``;
-    она не выполняет сортировку и не меняет исходные данные.
-    """
+    """Рендерит одну HTML-таблицу панели."""
     if not rows:
         return f"<section><h2>{escape(title)}</h2><p class=\"empty\">No records</p></section>"
     head = "".join(f"<th>{escape(column)}</th>" for column in columns)

@@ -1,17 +1,8 @@
 """Windows-only runner для simple-deploy.
 
-Модуль является основной операторской точкой входа на рабочей Windows-машине.
-Он повторяет ключевые этапы Ansible-flow без обязательного WSL: читает
-локальные ``.env``/``local.secrets.env``/``windows_pipeline.local.json``,
-запускает build, доставляет артефакты на VM через Windows OpenSSH, выполняет
-SQL/management/service steps и проверяет healthcheck.
-
-Для SQL schema migrations runner также ведет локальную историю контуров через
-SQLite: команды ``set-baseline``, ``mark-applied`` и ``mark-failed`` фиксируют,
-с какого backend commit нужно строить следующий диапазон ``from -> to`` для
-DEV/TEST/PROD. Сам runner не считает сборку релиза успешным применением:
-baseline двигается только после подтвержденного deploy или явной команды
-оператора.
+Модуль является основной операторской точкой входа на рабочей Windows-машине:
+читает локальные настройки, запускает build, доставляет артефакты на VM через
+Windows OpenSSH, выполняет SQL/management/service steps и проверяет healthcheck.
 """
 
 from __future__ import annotations
@@ -40,6 +31,24 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOLS_CI_ROOT = ROOT / "tools-ci"
 BUILDER_ROOT = TOOLS_CI_ROOT / "builder"
 
+from simple_deploy.config.runtime import RuntimeConfigModel, runtime_config_model  # noqa: E402
+from simple_deploy.config.validation import (  # noqa: E402,F401
+    DB_MAINTENANCE_PHASES,
+    NGINX_SERVICE_TARGETS,
+    NGINX_STOP_START_ACTIONS,
+    NGINX_UNSUPPORTED_ACTIONS,
+    RUNTIME_BOOL_FIELDS,
+    RUNTIME_POSITIVE_INT_FIELDS,
+    SERVICE_PHASES,
+    check_runtime_config as _check_runtime_config,
+    is_bare_systemctl_command,
+    is_bare_systemctl_status_command,
+    is_disallowed_bare_systemctl_command,
+    is_nginx_stop_start_command,
+    is_unsupported_nginx_command,
+    nginx_systemctl_action,
+    systemctl_action,
+)
 from simple_deploy.release.state import (  # noqa: E402
     CONTOURS,
     validate_contour,
@@ -174,43 +183,6 @@ DEFAULT_RUNTIME_CONFIG = {
     ),
     "outlook_email_required": False,
 }
-
-DB_MAINTENANCE_PHASES = {"before_unpack", "before_migrate", "after_migrate"}
-SERVICE_PHASES = {"before_unpack", "after_unpack", "after_migrate", "after_frontend_unpack"}
-NGINX_SERVICE_TARGETS = {"nginx", "nginx.service"}
-NGINX_STOP_START_ACTIONS = {"stop", "start"}
-NGINX_UNSUPPORTED_ACTIONS = {
-    "restart",
-    "reload",
-    "try-restart",
-    "reload-or-restart",
-    "reload-or-try-restart",
-}
-RUNTIME_BOOL_FIELDS = (
-    "backup_enabled",
-    "maintenance_stub_enabled",
-    "maintenance_stub_verify_enabled",
-    "data_sql_enabled",
-    "db_maintenance_enabled",
-    "service_permission_checks_enabled",
-    "healthcheck_enabled",
-    "healthcheck_validate_certs",
-    "portal_version_check_enabled",
-    "outlook_email_enabled",
-    "outlook_email_required",
-)
-RUNTIME_POSITIVE_INT_FIELDS = (
-    "db_maintenance_sql_timeout_seconds",
-    "db_data_sql_timeout_seconds",
-    "db_update_parallel_max_workers",
-    "db_update_parallel_status_interval_seconds",
-    "maintenance_stub_verify_retries",
-    "maintenance_stub_verify_delay",
-    "healthcheck_retries",
-    "healthcheck_delay",
-    "portal_version_asset_limit",
-)
-
 
 @dataclass
 class CommandResult:
@@ -433,6 +405,13 @@ def load_runtime_config(config_file: Path) -> tuple[dict, list[str]]:
     return config, defaulted_keys
 
 
+def load_runtime_config_model(config_file: Path) -> tuple[RuntimeConfigModel, list[str]]:
+    """Загружает runtime config через legacy loader и возвращает typed read-model."""
+
+    runtime, defaulted_keys = load_runtime_config(config_file)
+    return runtime_config_model(runtime), defaulted_keys
+
+
 def runtime_default_preview(value: object) -> str:
     text = json.dumps(value, ensure_ascii=False)
     if len(text) > 80:
@@ -440,257 +419,19 @@ def runtime_default_preview(value: object) -> str:
     return text
 
 
-def is_bare_systemctl_command(command: object) -> bool:
-    if not isinstance(command, str):
-        return False
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return False
-    return bool(tokens and tokens[0] == "systemctl")
-
-
-def is_bare_systemctl_status_command(command: object) -> bool:
-    if not isinstance(command, str):
-        return False
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return False
-    return len(tokens) >= 3 and tokens[0] == "systemctl" and tokens[1] == "status"
-
-
-def is_disallowed_bare_systemctl_command(command: object) -> bool:
-    return is_bare_systemctl_command(command) and not is_bare_systemctl_status_command(command)
-
-
-def systemctl_action(command: object) -> tuple[str, list[str]] | None:
-    if not isinstance(command, str):
-        return None
-    try:
-        tokens = shlex.split(command)
-    except ValueError:
-        return None
-    if not tokens:
-        return None
-    if tokens[0] == "sudo":
-        tokens = tokens[1:]
-        while tokens and tokens[0].startswith("-"):
-            option = tokens.pop(0)
-            if option in {"-u", "-g", "-h", "-p"} and tokens:
-                tokens.pop(0)
-    if not tokens or Path(tokens[0]).name != "systemctl":
-        return None
-    verbs = {
-        "start",
-        "stop",
-        "restart",
-        "reload",
-        "try-restart",
-        "reload-or-restart",
-        "reload-or-try-restart",
-        "status",
-    }
-    for index, token in enumerate(tokens[1:], start=1):
-        if token in verbs:
-            return token, tokens[index + 1 :]
-    return None
-
-
-def is_nginx_stop_start_command(command: object) -> bool:
-    return nginx_systemctl_action(command) in NGINX_STOP_START_ACTIONS
-
-
-def is_unsupported_nginx_command(command: object) -> bool:
-    return nginx_systemctl_action(command) in NGINX_UNSUPPORTED_ACTIONS
-
-
-def nginx_systemctl_action(command: object) -> str | None:
-    action = systemctl_action(command)
-    if not action:
-        return None
-    verb, targets = action
-    if any(target in NGINX_SERVICE_TARGETS for target in targets):
-        return verb
-    return None
-
-
 def is_readable_systemctl_status_result(command: str, result: CommandResult) -> bool:
     return is_bare_systemctl_status_command(command) and result.rc in {0, 3}
 
 
 def check_runtime_config(reporter: Reporter, runtime: dict) -> bool:
-    ok = True
-    unknown_keys = sorted(set(runtime) - set(DEFAULT_RUNTIME_CONFIG))
-    if unknown_keys:
-        reporter.fail("runtime config keys", "unknown key(s): " + ", ".join(unknown_keys))
-        ok = False
-    else:
-        reporter.pass_("runtime config keys", f"{len(DEFAULT_RUNTIME_CONFIG)} known key(s)")
+    """Проверяет runtime config через вынесенный слой config validation."""
 
-    for field in RUNTIME_BOOL_FIELDS:
-        if isinstance(runtime.get(field), bool):
-            continue
-        reporter.fail(f"runtime {field}", "expected boolean true/false")
-        ok = False
-
-    for field in RUNTIME_POSITIVE_INT_FIELDS:
-        value = runtime.get(field)
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-            continue
-        reporter.fail(f"runtime {field}", "expected positive integer")
-        ok = False
-
-    for field in (
-        "db_psql_bin",
-        "db_psql_host",
-        "maintenance_stub_archive_path",
-        "maintenance_stub_verify_marker",
-    ):
-        value = runtime.get(field)
-        if isinstance(value, str) and value.strip():
-            continue
-        reporter.fail(f"runtime {field}", "expected non-empty string")
-        ok = False
-
-    phase = runtime.get("db_maintenance_sql_phase")
-    if phase not in DB_MAINTENANCE_PHASES:
-        reporter.fail(
-            "runtime db_maintenance_sql_phase",
-            "expected one of: " + ", ".join(sorted(DB_MAINTENANCE_PHASES)),
-        )
-        ok = False
-
-    for field in ("db_maintenance_sql", "management_commands", "healthcheck_commands"):
-        value = runtime.get(field)
-        if not isinstance(value, list):
-            reporter.fail(f"runtime {field}", "expected list")
-            ok = False
-            continue
-        bad_indexes = [
-            str(index)
-            for index, item in enumerate(value, start=1)
-            if not isinstance(item, str) or not item.strip()
-        ]
-        if bad_indexes:
-            reporter.fail(
-                f"runtime {field}",
-                "expected non-empty string item(s), bad index(es): " + ", ".join(bad_indexes),
-            )
-            ok = False
-
-    for field in ("outlook_email_recipients", "outlook_email_cc"):
-        value = runtime.get(field)
-        if isinstance(value, str):
-            continue
-        if isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value):
-            continue
-        if isinstance(value, list) and not value:
-            continue
-        reporter.fail(f"runtime {field}", "expected string or list of non-empty strings")
-        ok = False
-
-    for field in ("outlook_email_subject", "outlook_email_body"):
-        if isinstance(runtime.get(field), str):
-            continue
-        reporter.fail(f"runtime {field}", "expected string")
-        ok = False
-
-    sql_scripts = runtime.get("sql_scripts")
-    if not isinstance(sql_scripts, list):
-        reporter.fail("runtime sql_scripts", "expected list")
-        ok = False
-    else:
-        for index, script in enumerate(sql_scripts, start=1):
-            label = f"runtime sql_scripts #{index}"
-            if not isinstance(script, dict):
-                reporter.fail(label, "expected object with path and phase")
-                ok = False
-                continue
-            path_value = script.get("path")
-            if not isinstance(path_value, str) or not path_value.strip():
-                reporter.fail(label, "path must be a non-empty string")
-                ok = False
-            else:
-                path = ROOT / path_value
-                if path.is_file():
-                    reporter.pass_(f"{label} path", str(path))
-                else:
-                    reporter.fail(label, f"path not found: {path}")
-                    ok = False
-            script_phase = script.get("phase")
-            if script_phase not in DB_MAINTENANCE_PHASES:
-                reporter.fail(label, "phase must be one of: " + ", ".join(sorted(DB_MAINTENANCE_PHASES)))
-                ok = False
-
-    service_steps = runtime.get("service_steps")
-    if not isinstance(service_steps, list):
-        reporter.fail("runtime service_steps", "expected list")
-        ok = False
-    else:
-        nginx_service_actions: list[tuple[int, str, str, str]] = []
-        for index, step in enumerate(service_steps, start=1):
-            label = f"runtime service_steps #{index}"
-            if not isinstance(step, dict):
-                reporter.fail(label, "expected object with command and optional phase")
-                ok = False
-                continue
-            step_phase = step.get("phase", "after_migrate")
-            if step_phase not in SERVICE_PHASES:
-                reporter.fail(label, "phase must be one of: " + ", ".join(sorted(SERVICE_PHASES)))
-                ok = False
-            command = step.get("command")
-            nginx_command_action = nginx_systemctl_action(command)
-            if nginx_command_action in NGINX_STOP_START_ACTIONS:
-                nginx_service_actions.append((index, label, str(step_phase), nginx_command_action))
-            if not isinstance(command, str) or not command.strip():
-                reporter.fail(label, "command must be a non-empty string")
-                ok = False
-            elif is_unsupported_nginx_command(command):
-                reporter.fail(label, "nginx restart/reload commands are not supported; use stop nginx then start nginx")
-                ok = False
-            elif is_nginx_stop_start_command(command) and step_phase != "after_frontend_unpack":
-                reporter.fail(
-                    label,
-                    "nginx stop/start commands must run in after_frontend_unpack after final frontend unpack",
-                )
-                ok = False
-            elif is_disallowed_bare_systemctl_command(command):
-                reporter.fail(label, "systemctl service commands except status must use sudo")
-                ok = False
-            for optional_field in ("name", "permission_check_command"):
-                if optional_field in step and not isinstance(step[optional_field], str):
-                    reporter.fail(label, f"{optional_field} must be a string when set")
-                    ok = False
-                elif is_unsupported_nginx_command(step.get(optional_field)):
-                    reporter.fail(
-                        label,
-                        f"{optional_field} must not use nginx restart/reload; use stop nginx then start nginx",
-                    )
-                    ok = False
-                elif is_nginx_stop_start_command(step.get(optional_field)) and step_phase != "after_frontend_unpack":
-                    reporter.fail(
-                        label,
-                        f"{optional_field} must run nginx stop/start in after_frontend_unpack",
-                    )
-                    ok = False
-                elif is_disallowed_bare_systemctl_command(step.get(optional_field)):
-                    reporter.fail(label, f"{optional_field} must use sudo for systemctl commands except status")
-                    ok = False
-        for position, (_index, label, step_phase, verb) in enumerate(nginx_service_actions):
-            if verb != "stop" or step_phase != "after_frontend_unpack":
-                continue
-            has_later_start = any(
-                later_phase == "after_frontend_unpack" and later_verb == "start"
-                for _later_index, _later_label, later_phase, later_verb in nginx_service_actions[position + 1 :]
-            )
-            if not has_later_start:
-                reporter.fail(label, "nginx stop in after_frontend_unpack must be followed by nginx start before healthcheck")
-                ok = False
-
-    if ok:
-        reporter.pass_("runtime config values", "types and ranges are valid")
-    return ok
+    return _check_runtime_config(
+        reporter,
+        runtime,
+        root=ROOT,
+        default_runtime_config=DEFAULT_RUNTIME_CONFIG,
+    )
 
 
 def management_commands(env: dict[str, str], runtime: dict) -> list[str]:

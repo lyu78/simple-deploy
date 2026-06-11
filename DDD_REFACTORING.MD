@@ -908,7 +908,9 @@ application services:
 
 ## Ближайшее практическое решение
 
-До изменения кода считаем этот документ рабочим словарем. Следующий безопасный
-шаг после обсуждения - выбрать один read-only DTO слой поверх текущего
-`release/state.py`, чтобы начать переход к Pydantic без изменения поведения
-CLI, builder и deploy-процессов.
+Документ остается рабочим словарем. Первый безопасный срез после обсуждения
+реализован как read-only `types`/`models`/`configs`/DTO слой поверх текущего
+`release/state.py` и web/API: это начинает переход к Pydantic без изменения
+поведения CLI, builder и deploy-процессов. Первый `configs`-срез разделяет
+структурную Pydantic-модель runtime config и runtime preflight/policy validation
+в `config/validation.py`. Доменные `entities` в этом срезе еще не вводятся.

@@ -447,6 +447,37 @@ steps, healthcheck, email и summary. Механический перенос э
    helper-слои уже в понятные области: `configs`, `bundles`, `environments`,
    `sources`, `registry`, command/SSH infrastructure и notifications.
 
+### Статус первого среза шага 6
+
+Шаг 6 начат с read-only DTO слоя поверх текущего SQLite state/API:
+
+- создан пакет `tools-ci/simple_deploy/dto/`;
+- создан пакет `tools-ci/simple_deploy/types/` с первыми custom primitives:
+  `ReleaseVersionString`/`BuildVersionString`, `CommitShaString`, `ContourCode`
+  status types, `ComponentId`, `ArtifactKind`/`ArtifactScope` и
+  `DeploymentTargetRole`;
+- добавлены Pydantic DTO для state snapshot, releases, build/deploy attempts,
+  jobs, external requests и contour state;
+- добавлены внутренние read-only `models` для того же state snapshot, чтобы web/API
+  шел через `SQLite state -> models -> DTO`;
+- DTO-поля `build_version`, commit SHA, `contour` и `status` подключены к custom
+  types без изменения SQLite-схемы;
+- добавлен первый `configs`-срез: Pydantic `RuntimeConfigModel` для текущего
+  `windows_pipeline.local.json`, а `load_runtime_config_model()` оставлен
+  отдельной typed-оберткой над старым loader без изменения формата config;
+- runtime preflight/policy validation вынесена в
+  `tools-ci/simple_deploy/config/validation.py`, при этом
+  `tools.windows_pipeline.check_runtime_config` оставлен compatibility wrapper-ом;
+- FastAPI endpoints `/api/state`, `/api/releases`, `/api/jobs`, `/api/requests`
+  используют `response_model` и возвращают DTO вместо сырых `dict`/`asdict`;
+- публичный helper `state_snapshot()` сохраняет прежний JSON-совместимый словарь
+  для dashboard-кода;
+- тест `tests/test_web_app.py` расширен так, чтобы фиксировать JSON-контракт
+  snapshot и отдельных read-only endpoints.
+
+Поведение CLI, builder, deploy-процессов, SQLite-схема и public wrapper paths в
+этом срезе не менялись.
+
 Исключение: если отдельный маленький блок монолита мешает внедрению DTO,
 models или configs, его можно вынести точечно с сохранением старых import/patch
 paths. Но уменьшение `windows_pipeline.py` само по себе не является целью

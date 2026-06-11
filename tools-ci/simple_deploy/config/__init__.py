@@ -1,7 +1,22 @@
 """Пакет загрузки и валидации конфигурации.
 
-Будущие модули этого пакета должны отвечать за чтение runtime-конфигурации,
-нормализацию значений и preflight-валидацию. Пакет уже создан как стабильное
-место для логики, которая будет выноситься из Windows runner малыми срезами
-при сохранении текущего контракта ``windows_pipeline.local.json``.
+Модули пакета отвечают за чтение runtime-конфигурации, нормализацию значений и
+preflight-проверки при сохранении текущего контракта
+``windows_pipeline.local.json``.
 """
+
+from simple_deploy.config.runtime import (
+    RuntimeConfigModel,
+    ServiceStepConfigModel,
+    SqlScriptConfigModel,
+    runtime_config_model,
+)
+from simple_deploy.config.validation import check_runtime_config
+
+__all__ = [
+    "RuntimeConfigModel",
+    "ServiceStepConfigModel",
+    "SqlScriptConfigModel",
+    "check_runtime_config",
+    "runtime_config_model",
+]

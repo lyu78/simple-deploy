@@ -30,19 +30,30 @@ CLI, web/API, builder-интеграции и будущим локальным 
   локальных заданий и внешних заявок;
 - `release/artifacts.py` - dataclass-модели и резолверы файлов релиза;
 - `release/manifest.py` - построение, чтение и запись `release_manifest.json`.
+- `types/` - первые constrained primitives для release/build version, commit SHA,
+  contour, status, component, artifact и deployment target справочников.
+- `models/state.py` - внутренние модели чтения над SQLite state/API.
+- `config/runtime.py` - первая Pydantic-модель текущего `windows_pipeline.local.json`
+  без изменения старого loader-контракта.
+- `config/validation.py` - runtime preflight/policy validation, вынесенная из
+  `windows_pipeline.py` с сохранением старого `check_runtime_config()` path.
 
 ## Карта пакета
 
 - `cli/` - тонкие CLI-точки входа. Здесь не должно быть логики build/deploy.
-- `config/` - будущий слой чтения и валидации конфигурации времени выполнения.
+- `config/` - слой чтения, структурной валидации и preflight policy checks
+  конфигурации времени выполнения.
 - `contours/` - модели и правила контуров `dev`, `test`, `prod`.
 - `core/` - будущие общие вспомогательные функции для команд, путей,
   логирования, SSH и файлов.
+- `dto/` - внешние JSON/API контракты, отделенные от SQLite rows и dataclass state.
 - `jobs/` - модель и будущий runner локальных долгих операций.
+- `models/` - внутренние application/read модели между state/query и DTO.
 - `processes/` - целевое место для процессов `dry_run`, `build`, `deploy`, `mark`,
   `data_sql`.
 - `release/` - состояние релизов, manifest и артефакты. Этот слой не должен
   выполнять deploy.
+- `types/` - enum-ы, справочники и custom primitive types без бизнес-логики.
 - `web/` - локальная FastAPI-панель/API поверх той же SQLite-базы.
 - `windows_pipeline.py` - временный монолит текущего Windows runner.
 
