@@ -6,8 +6,18 @@ from typing import Annotated
 
 from pydantic import AfterValidator, StringConstraints
 
+from simple_deploy.types._enum import DomainStringEnum
 
-CONTOUR_CODES = ("dev", "test", "prod")
+
+class ContourCodeEnum(DomainStringEnum):
+    """Справочник deploy-контуров продукта."""
+
+    DEV = "dev"
+    TEST = "test"
+    PROD = "prod"
+
+
+CONTOUR_CODES = ContourCodeEnum.get_values()
 
 
 def _validate_contour_code(value: str) -> str:
@@ -43,5 +53,6 @@ OptionalContourCode = Annotated[
 __all__ = [
     "CONTOUR_CODES",
     "ContourCode",
+    "ContourCodeEnum",
     "OptionalContourCode",
 ]

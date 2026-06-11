@@ -6,8 +6,18 @@ from typing import Annotated
 
 from pydantic import AfterValidator, StringConstraints
 
+from simple_deploy.types._enum import DomainStringEnum
 
-COMPONENT_IDS = ("backend", "frontend", "database")
+
+class ComponentIdEnum(DomainStringEnum):
+    """Справочник логических компонентов продукта."""
+
+    BACKEND = "backend"
+    FRONTEND = "frontend"
+    DATABASE = "database"
+
+
+COMPONENT_IDS = ComponentIdEnum.get_values()
 
 
 def _validate_component_id(value: str) -> str:
@@ -29,4 +39,5 @@ ComponentId = Annotated[
 __all__ = [
     "COMPONENT_IDS",
     "ComponentId",
+    "ComponentIdEnum",
 ]

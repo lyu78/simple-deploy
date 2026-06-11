@@ -6,8 +6,21 @@ from typing import Annotated
 
 from pydantic import AfterValidator, StringConstraints
 
+from simple_deploy.types._enum import DomainStringEnum
 
-DEPLOYMENT_TARGET_ROLES = ("backend", "frontend", "database", "cache", "reporting", "s3")
+
+class DeploymentTargetRoleEnum(DomainStringEnum):
+    """Справочник ролей технических точек размещения."""
+
+    BACKEND = "backend"
+    FRONTEND = "frontend"
+    DATABASE = "database"
+    CACHE = "cache"
+    REPORTING = "reporting"
+    S3 = "s3"
+
+
+DEPLOYMENT_TARGET_ROLES = DeploymentTargetRoleEnum.get_values()
 
 
 def _validate_deployment_target_role(value: str) -> str:
@@ -31,4 +44,5 @@ DeploymentTargetRole = Annotated[
 __all__ = [
     "DEPLOYMENT_TARGET_ROLES",
     "DeploymentTargetRole",
+    "DeploymentTargetRoleEnum",
 ]

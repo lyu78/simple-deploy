@@ -12,22 +12,67 @@ TOOLS_CI_ROOT = ROOT / "tools-ci"
 
 sys.path.insert(0, str(TOOLS_CI_ROOT))
 
-from simple_deploy.types.artifact import ArtifactKind, ArtifactScope
-from simple_deploy.types.component import ComponentId
-from simple_deploy.types.contour import ContourCode, OptionalContourCode
+from simple_deploy.types._enum import DomainStringEnum
+from simple_deploy.types.artifact import (
+    ARTIFACT_KINDS,
+    ARTIFACT_SCOPES,
+    ArtifactKind,
+    ArtifactKindEnum,
+    ArtifactScope,
+    ArtifactScopeEnum,
+)
+from simple_deploy.types.component import COMPONENT_IDS, ComponentId, ComponentIdEnum
+from simple_deploy.types.contour import (
+    CONTOUR_CODES,
+    ContourCode,
+    ContourCodeEnum,
+    OptionalContourCode,
+)
 from simple_deploy.types.release import BuildVersionString, OptionalBuildVersionString
 from simple_deploy.types.source import CommitShaString, OptionalCommitShaString
 from simple_deploy.types.status import (
+    BUILD_ATTEMPT_STATUSES,
+    DEPLOYMENT_ATTEMPT_STATUSES,
+    EXTERNAL_REQUEST_STATUSES,
+    JOB_STATUSES,
     BuildAttemptStatus,
+    BuildAttemptStatusEnum,
     DeploymentAttemptStatus,
+    DeploymentAttemptStatusEnum,
     ExternalRequestStatus,
+    ExternalRequestStatusEnum,
     JobStatus,
+    JobStatusEnum,
 )
-from simple_deploy.types.target import DeploymentTargetRole
+from simple_deploy.types.target import (
+    DEPLOYMENT_TARGET_ROLES,
+    DeploymentTargetRole,
+    DeploymentTargetRoleEnum,
+)
 
 
 class ReleaseTypeTests(unittest.TestCase):
     """Проверяет первый безопасный слой custom primitive типов."""
+
+    def test_dictionary_constants_are_backed_by_enums(self):
+        """Справочные tuple-константы собираются из enum-классов."""
+        cases = (
+            (ARTIFACT_KINDS, ArtifactKindEnum),
+            (ARTIFACT_SCOPES, ArtifactScopeEnum),
+            (COMPONENT_IDS, ComponentIdEnum),
+            (CONTOUR_CODES, ContourCodeEnum),
+            (BUILD_ATTEMPT_STATUSES, BuildAttemptStatusEnum),
+            (DEPLOYMENT_ATTEMPT_STATUSES, DeploymentAttemptStatusEnum),
+            (JOB_STATUSES, JobStatusEnum),
+            (EXTERNAL_REQUEST_STATUSES, ExternalRequestStatusEnum),
+            (DEPLOYMENT_TARGET_ROLES, DeploymentTargetRoleEnum),
+        )
+
+        for constant_values, enum_class in cases:
+            with self.subTest(enum_class=enum_class.__name__):
+                self.assertEqual(constant_values, enum_class.get_values())
+                self.assertEqual(enum_class.get_values(), tuple(item.value for item in enum_class))
+                self.assertTrue(issubclass(enum_class, DomainStringEnum))
 
     def test_build_version_accepts_current_and_legacy_values(self):
         """BuildVersionString принимает текущий, старый и ручной baseline форматы."""

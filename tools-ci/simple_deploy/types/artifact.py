@@ -6,9 +6,30 @@ from typing import Annotated
 
 from pydantic import AfterValidator, StringConstraints
 
+from simple_deploy.types._enum import DomainStringEnum
 
-ARTIFACT_KINDS = ("backend", "frontend", "db_schema", "db_data", "maintenance_stub", "manifest")
-ARTIFACT_SCOPES = ("shared", "contour_specific", "target_specific")
+
+class ArtifactKindEnum(DomainStringEnum):
+    """Справочник типов файлов внутри release bundle."""
+
+    BACKEND = "backend"
+    FRONTEND = "frontend"
+    DB_SCHEMA = "db_schema"
+    DB_DATA = "db_data"
+    MAINTENANCE_STUB = "maintenance_stub"
+    MANIFEST = "manifest"
+
+
+class ArtifactScopeEnum(DomainStringEnum):
+    """Справочник областей применимости артефактов release bundle."""
+
+    SHARED = "shared"
+    CONTOUR_SPECIFIC = "contour_specific"
+    TARGET_SPECIFIC = "target_specific"
+
+
+ARTIFACT_KINDS = ArtifactKindEnum.get_values()
+ARTIFACT_SCOPES = ArtifactScopeEnum.get_values()
 
 
 def _validate_artifact_kind(value: str) -> str:
@@ -47,5 +68,7 @@ __all__ = [
     "ARTIFACT_KINDS",
     "ARTIFACT_SCOPES",
     "ArtifactKind",
+    "ArtifactKindEnum",
     "ArtifactScope",
+    "ArtifactScopeEnum",
 ]
