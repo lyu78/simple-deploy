@@ -508,3 +508,22 @@ steps, healthcheck, email и summary. Механический перенос э
 models или configs, его можно вынести точечно с сохранением старых import/patch
 paths. Но уменьшение `windows_pipeline.py` само по себе не является целью
 следующего этапа.
+
+### Отложенное улучшение: data SQL set_default artifacts
+
+Текущая реализация генерирует `kind=set_default` внутри update artifacts:
+
+- `run_all_update_parallel_*.sh` содержит `set_default` задачи, но пропускает
+  их по умолчанию и включает только при `SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT=1`;
+- `run_all_update_sequential_*.sql` содержит `set_default` без runtime-фильтра,
+  поэтому ручной emergency fallback через `psql -f` применит defaults.
+
+Это рабочее, но слишком неявное поведение. Целевое улучшение: разделить
+`update` и `set_default` на уровне artifacts и deploy chain:
+
+- update artifacts должны содержать только `kind=update`;
+- set_default должен собираться в отдельные artifacts/entrypoints;
+- `--include-set-default-sql` должен добавлять отдельный set_default step в
+  цепочку выполнения, а не менять поведение update runner-а через env;
+- ручной запуск update runner-а должен быть безопасен без знания внутреннего
+  фильтра set_default.
