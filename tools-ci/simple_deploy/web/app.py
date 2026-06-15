@@ -16,18 +16,20 @@ from fastapi.responses import HTMLResponse
 from simple_deploy.dto.state import (
     ExternalRequestDto,
     JobDto,
-    ReleaseRecordDto,
+    ReleaseDto,
     StateSnapshotDto,
     dto_dump,
 )
 from simple_deploy.models.state import (
-    BuildAttemptModel,
-    ContourStateModel,
-    DeploymentAttemptModel,
-    ExternalRequestModel,
-    JobModel,
-    ReleaseRecordModel,
-    StateSnapshotModel,
+    BuildAttemptReadModel,
+    ContourStateReadModel,
+    DeploymentAttemptReadModel,
+    ExternalRequestReadModel,
+    JobReadModel,
+    ReleaseBundleReadModel,
+    ReleaseReadModel,
+    ReleaseReferenceReadModel,
+    StateSnapshotReadModel,
 )
 from simple_deploy.release.state import (
     all_contour_states,
@@ -48,43 +50,206 @@ def bounded_limit(limit: int) -> int:
     return max(1, min(limit, 200))
 
 
-def state_snapshot_model(limit: int = 50) -> StateSnapshotModel:
+def release_sort_key(release: ReleaseReadModel) -> tuple[str, str]:
+    """Возвращает ключ сортировки ресурса релиза для API."""
+    timestamps = [attempt.finished_at for attempt in release.build_attempts]
+    timestamps.extend(attempt.finished_at for attempt in release.deployment_attempts)
+    timestamps.extend(request.updated_at for request in release.external_requests)
+    if release.bundle is not None:
+        timestamps.append(release.bundle.created_at)
+    return (max(timestamps, default=""), release.build_version)
+
+
+def release_read_models(
+    bundles: list[ReleaseBundleReadModel],
+    build_attempts: list[BuildAttemptReadModel],
+    deployment_attempts: list[DeploymentAttemptReadModel],
+    external_requests: list[ExternalRequestReadModel],
+    *,
+    limit: int,
+) -> list[ReleaseReadModel]:
+    """Собирает ресурсные модели чтения релизов поверх строк состояния."""
+    records: dict[str, dict] = {}
+
+    def ensure(build_version: str) -> dict:
+        return records.setdefault(
+            build_version,
+            {
+                "bundle": None,
+                "build_attempts": [],
+                "deployment_attempts": [],
+                "external_requests": [],
+            },
+        )
+
+    for bundle in bundles:
+        ensure(bundle.build_version)["bundle"] = bundle
+    for attempt in build_attempts:
+        ensure(attempt.build_version)["build_attempts"].append(attempt)
+    for attempt in deployment_attempts:
+        ensure(attempt.build_version)["deployment_attempts"].append(attempt)
+    for request in external_requests:
+        ensure(request.build_version)["external_requests"].append(request)
+
+    releases = []
+    for build_version, record in records.items():
+        bundle = record["bundle"]
+        attempts = sorted(record["build_attempts"], key=lambda attempt: attempt.id, reverse=True)
+        latest_attempt = attempts[0] if attempts else None
+        if bundle is not None:
+            build_status = "success"
+            backend_commit = bundle.backend_commit
+            frontend_commit = bundle.frontend_commit
+        elif latest_attempt is not None:
+            build_status = latest_attempt.status
+            backend_commit = latest_attempt.backend_commit
+            frontend_commit = latest_attempt.frontend_commit
+        else:
+            build_status = None
+            backend_commit = None
+            frontend_commit = None
+        releases.append(
+            ReleaseReadModel(
+                build_version=build_version,
+                build_status=build_status,
+                backend_commit=backend_commit,
+                frontend_commit=frontend_commit,
+                bundle=bundle,
+                build_attempts=attempts,
+                deployment_attempts=sorted(
+                    record["deployment_attempts"],
+                    key=lambda attempt: attempt.id,
+                    reverse=True,
+                ),
+                external_requests=sorted(
+                    record["external_requests"],
+                    key=lambda request: request.id,
+                    reverse=True,
+                ),
+            )
+        )
+
+    return sorted(releases, key=release_sort_key, reverse=True)[:limit]
+
+
+def release_read_models_from_state(limit: int = 50) -> list[ReleaseReadModel]:
+    """Читает базу состояния и возвращает ресурсные модели чтения релизов."""
+    limit = bounded_limit(limit)
+    with closing(connect_state_db()) as connection:
+        bundles = [
+            ReleaseBundleReadModel.model_validate(record)
+            for record in list_releases(connection, limit=limit)
+        ]
+        build_attempts = [
+            BuildAttemptReadModel.model_validate(record)
+            for record in list_build_attempts(connection, limit=limit)
+        ]
+        deployment_attempts = [
+            DeploymentAttemptReadModel.model_validate(record)
+            for record in list_deployment_attempts(connection, limit=limit)
+        ]
+        external_requests = [
+            ExternalRequestReadModel.model_validate(request)
+            for request in list_external_requests(connection, limit=limit)
+        ]
+
+    return release_read_models(
+        bundles,
+        build_attempts,
+        deployment_attempts,
+        external_requests,
+        limit=limit,
+    )
+
+
+def release_reference_read_model(release: ReleaseReadModel) -> ReleaseReferenceReadModel:
+    """Строит компактную ссылку на ресурс релиза для вложенных проекций."""
+    return ReleaseReferenceReadModel(
+        build_version=release.build_version,
+        build_status=release.build_status,
+        backend_commit=release.backend_commit,
+        frontend_commit=release.frontend_commit,
+    )
+
+
+def contour_state_read_models(
+    contour_states: dict,
+    releases: list[ReleaseReadModel],
+) -> dict[str, ContourStateReadModel | None]:
+    """Обогащает состояния контуров ссылками на ресурсы релизов."""
+    release_refs = {
+        release.build_version: release_reference_read_model(release)
+        for release in releases
+    }
+    contours: dict[str, ContourStateReadModel | None] = {}
+    for contour, state in contour_states.items():
+        if state is None:
+            contours[contour] = None
+            continue
+        model = ContourStateReadModel.model_validate(state)
+        release_ref = release_refs.get(model.last_success_release)
+        if release_ref is None:
+            release_ref = ReleaseReferenceReadModel(
+                build_version=model.last_success_release,
+                build_status="success",
+                backend_commit=model.last_success_backend_commit,
+            )
+        contours[contour] = model.model_copy(
+            update={"last_success_release_ref": release_ref}
+        )
+    return contours
+
+
+def state_snapshot_read_model(limit: int = 50) -> StateSnapshotReadModel:
     """Собирает внутреннюю модель чтения локального состояния релизов."""
     limit = bounded_limit(limit)
     with closing(connect_state_db()) as connection:
         contour_states = all_contour_states(connection)
-        return StateSnapshotModel(
-            contours={
-                contour: ContourStateModel.model_validate(state) if state is not None else None
-                for contour, state in contour_states.items()
-            },
-            releases=[
-                ReleaseRecordModel.model_validate(record)
-                for record in list_releases(connection, limit=limit)
-            ],
-            build_attempts=[
-                BuildAttemptModel.model_validate(record)
-                for record in list_build_attempts(connection, limit=limit)
-            ],
-            deployment_attempts=[
-                DeploymentAttemptModel.model_validate(record)
-                for record in list_deployment_attempts(connection, limit=limit)
-            ],
+        bundles = [
+            ReleaseBundleReadModel.model_validate(record)
+            for record in list_releases(connection, limit=limit)
+        ]
+        build_attempts = [
+            BuildAttemptReadModel.model_validate(record)
+            for record in list_build_attempts(connection, limit=limit)
+        ]
+        deployment_attempts = [
+            DeploymentAttemptReadModel.model_validate(record)
+            for record in list_deployment_attempts(connection, limit=limit)
+        ]
+        external_requests = [
+            ExternalRequestReadModel.model_validate(request)
+            for request in list_external_requests(connection, limit=limit)
+        ]
+        releases = release_read_models(
+            bundles,
+            build_attempts,
+            deployment_attempts,
+            external_requests,
+            limit=limit,
+        )
+        return StateSnapshotReadModel(
+            contours=contour_state_read_models(contour_states, releases),
+            releases=releases,
+            build_attempts=build_attempts,
+            deployment_attempts=deployment_attempts,
             jobs=[
-                JobModel.model_validate(job)
+                JobReadModel.model_validate(job)
                 for job in list_jobs(connection, limit=limit)
             ],
-            external_requests=[
-                ExternalRequestModel.model_validate(request)
-                for request in list_external_requests(connection, limit=limit)
-            ],
+            external_requests=external_requests,
         )
+
+
+def state_snapshot_model(limit: int = 50) -> StateSnapshotReadModel:
+    """Возвращает внутреннюю модель чтения снимка состояния для старых импортов."""
+    return state_snapshot_read_model(limit=limit)
 
 
 def state_snapshot_dto(limit: int = 50) -> StateSnapshotDto:
     """Преобразует внутренний снимок состояния во внешний DTO."""
 
-    return StateSnapshotDto.model_validate(state_snapshot_model(limit=limit))
+    return StateSnapshotDto.model_validate(state_snapshot_read_model(limit=limit))
 
 
 def state_snapshot(limit: int = 50) -> dict:
@@ -104,14 +269,13 @@ def api_state(limit: int = 50) -> StateSnapshotDto:
     return state_snapshot_dto(limit=limit)
 
 
-@app.get("/api/releases", response_model=list[ReleaseRecordDto])
-def api_releases(limit: int = 50) -> list[ReleaseRecordDto]:
-    """Возвращает последние успешно собранные релизы из SQLite."""
-    with closing(connect_state_db()) as connection:
-        return [
-            ReleaseRecordDto.model_validate(ReleaseRecordModel.model_validate(record))
-            for record in list_releases(connection, limit=bounded_limit(limit))
-        ]
+@app.get("/api/releases", response_model=list[ReleaseDto])
+def api_releases(limit: int = 50) -> list[ReleaseDto]:
+    """Возвращает ресурсные представления релизов."""
+    return [
+        ReleaseDto.model_validate(release)
+        for release in release_read_models_from_state(limit=limit)
+    ]
 
 
 @app.get("/api/jobs", response_model=list[JobDto])
@@ -119,7 +283,7 @@ def api_jobs(limit: int = 50) -> list[JobDto]:
     """Возвращает последние локальные задания из SQLite."""
     with closing(connect_state_db()) as connection:
         return [
-            JobDto.model_validate(JobModel.model_validate(job))
+            JobDto.model_validate(JobReadModel.model_validate(job))
             for job in list_jobs(connection, limit=bounded_limit(limit))
         ]
 
@@ -129,7 +293,7 @@ def api_requests(limit: int = 50) -> list[ExternalRequestDto]:
     """Возвращает последние внешние заявки TEST/PROD."""
     with closing(connect_state_db()) as connection:
         return [
-            ExternalRequestDto.model_validate(ExternalRequestModel.model_validate(request))
+            ExternalRequestDto.model_validate(ExternalRequestReadModel.model_validate(request))
             for request in list_external_requests(connection, limit=bounded_limit(limit))
         ]
 
@@ -142,6 +306,30 @@ def dashboard() -> str:
 
 def render_dashboard(snapshot: dict) -> str:
     """Рендерит полный HTML-документ панели из готового снимка."""
+    release_columns = ["build_version", "build_status", "backend_commit", "frontend_commit"]
+    build_attempt_columns = ["id", "build_version", "status", "started_at", "finished_at", "error"]
+    deployment_attempt_columns = ["id", "contour", "build_version", "status", "started_at", "finished_at", "error"]
+    job_columns = [
+        "id",
+        "kind",
+        "contour",
+        "build_version",
+        "status",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "error",
+    ]
+    external_request_columns = [
+        "id",
+        "contour",
+        "build_version",
+        "request_type",
+        "status",
+        "external_id",
+        "updated_at",
+        "error",
+    ]
     return f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -245,18 +433,18 @@ def render_dashboard(snapshot: dict) -> str:
     <div>
       <h1>simple-deploy</h1>
       <div class="meta">
-        <span class="pill">read-only v1</span>
+        <span class="pill">только чтение v1</span>
         <a href="/api/state">/api/state</a>
       </div>
     </div>
   </header>
   <main>
     {render_contours(snapshot["contours"])}
-    {render_table("Releases", snapshot["releases"], ["build_version", "backend_commit", "frontend_commit", "created_at"])}
-    {render_table("Build attempts", snapshot["build_attempts"], ["id", "build_version", "status", "started_at", "finished_at", "error"])}
-    {render_table("Deploy attempts", snapshot["deployment_attempts"], ["id", "contour", "build_version", "status", "started_at", "finished_at", "error"])}
-    {render_table("Jobs", snapshot["jobs"], ["id", "kind", "contour", "build_version", "status", "created_at", "started_at", "finished_at", "error"])}
-    {render_table("External requests", snapshot["external_requests"], ["id", "contour", "build_version", "request_type", "status", "external_id", "updated_at", "error"])}
+    {render_table("Releases", snapshot["releases"], release_columns)}
+    {render_table("Build attempts", snapshot["build_attempts"], build_attempt_columns)}
+    {render_table("Deploy attempts", snapshot["deployment_attempts"], deployment_attempt_columns)}
+    {render_table("Jobs", snapshot["jobs"], job_columns)}
+    {render_table("External requests", snapshot["external_requests"], external_request_columns)}
   </main>
 </body>
 </html>"""
@@ -266,18 +454,36 @@ def render_contours(contours: dict) -> str:
     """Рендерит таблицу состояний контуров."""
     rows = []
     for contour, state in contours.items():
+        release_ref = state.get("last_success_release_ref") if state else None
         rows.append(
             {
                 "contour": contour,
-                "last_success_release": state["last_success_release"] if state else "",
-                "last_success_backend_commit": state["last_success_backend_commit"] if state else "",
+                "last_success_release": (
+                    release_ref["build_version"] if release_ref else state["last_success_release"]
+                )
+                if state
+                else "",
+                "last_success_build_status": release_ref.get("build_status", "") if release_ref else "",
+                "last_success_backend_commit": (
+                    release_ref["backend_commit"]
+                    if release_ref
+                    else state["last_success_backend_commit"]
+                )
+                if state
+                else "",
                 "updated_at": state["updated_at"] if state else "",
             }
         )
     return render_table(
         "Contours",
         rows,
-        ["contour", "last_success_release", "last_success_backend_commit", "updated_at"],
+        [
+            "contour",
+            "last_success_release",
+            "last_success_build_status",
+            "last_success_backend_commit",
+            "updated_at",
+        ],
     )
 
 

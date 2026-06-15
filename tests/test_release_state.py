@@ -170,7 +170,7 @@ class ReleaseStateTests(unittest.TestCase):
             with closing(connect_state_db(db_path)) as connection:
                 job_id = create_job(
                     connection,
-                    "deploy",
+                    "DEPLOY",
                     contour="dev",
                     build_version=TEST_BUILD_VERSION,
                     payload={"latest": True},
@@ -181,6 +181,7 @@ class ReleaseStateTests(unittest.TestCase):
                 jobs = list_jobs(connection)
 
         self.assertEqual(job.status, "success")
+        self.assertEqual(job.kind, "deploy")
         self.assertEqual(job.contour, "dev")
         self.assertEqual(job.build_version, TEST_BUILD_VERSION)
         self.assertEqual(job.log_path, "logs/deploy.log")
@@ -195,7 +196,7 @@ class ReleaseStateTests(unittest.TestCase):
                     connection,
                     contour="test",
                     build_version=TEST_BUILD_VERSION,
-                    request_type="deploy",
+                    request_type="DEPLOY",
                     payload={"package": "release.tar.gz"},
                 )
                 update_external_request_status(connection, request_id, "submitted", external_id="REQ-123")
@@ -203,6 +204,7 @@ class ReleaseStateTests(unittest.TestCase):
                 requests = list_external_requests(connection, contour="test")
 
         self.assertEqual(request.status, "submitted")
+        self.assertEqual(request.request_type, "deploy")
         self.assertEqual(request.external_id, "REQ-123")
         self.assertEqual(request.contour, "test")
         self.assertEqual(requests[0].id, request_id)
@@ -214,6 +216,16 @@ class ReleaseStateTests(unittest.TestCase):
             with closing(connect_state_db(db_path)) as connection:
                 with self.assertRaisesRegex(ValueError, "test/prod"):
                     create_external_request(connection, "dev", TEST_BUILD_VERSION, "deploy")
+
+    def test_job_and_external_request_reject_unknown_types(self):
+        """State helpers отклоняют неизвестные kind и request_type до записи в SQLite."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / STATE_DB_NAME
+            with closing(connect_state_db(db_path)) as connection:
+                with self.assertRaisesRegex(ValueError, "Unknown job kind"):
+                    create_job(connection, "rollback")
+                with self.assertRaisesRegex(ValueError, "Unknown external request type"):
+                    create_external_request(connection, "test", TEST_BUILD_VERSION, "rollback")
 
 
 if __name__ == "__main__":

@@ -4,22 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 import shlex
-from typing import Mapping, Protocol, get_args
+from typing import Mapping, Protocol
 
-from simple_deploy.config.runtime import MaintenanceSqlPhase, ServiceStepPhase
+from simple_deploy.types.runtime import (
+    MAINTENANCE_SQL_PHASES,
+    NGINX_STOP_START_ACTIONS,
+    NGINX_UNSUPPORTED_ACTIONS,
+    SERVICE_STEP_PHASES,
+    SYSTEMCTL_ACTIONS,
+)
 
 
-DB_MAINTENANCE_PHASES = frozenset(get_args(MaintenanceSqlPhase))
-SERVICE_PHASES = frozenset(get_args(ServiceStepPhase))
+DB_MAINTENANCE_PHASES = frozenset(MAINTENANCE_SQL_PHASES)
+SERVICE_PHASES = frozenset(SERVICE_STEP_PHASES)
 NGINX_SERVICE_TARGETS = {"nginx", "nginx.service"}
-NGINX_STOP_START_ACTIONS = {"stop", "start"}
-NGINX_UNSUPPORTED_ACTIONS = {
-    "restart",
-    "reload",
-    "try-restart",
-    "reload-or-restart",
-    "reload-or-try-restart",
-}
 RUNTIME_BOOL_FIELDS = (
     "backup_enabled",
     "maintenance_stub_enabled",
@@ -105,18 +103,8 @@ def systemctl_action(command: object) -> tuple[str, list[str]] | None:
                 tokens.pop(0)
     if not tokens or Path(tokens[0]).name != "systemctl":
         return None
-    verbs = {
-        "start",
-        "stop",
-        "restart",
-        "reload",
-        "try-restart",
-        "reload-or-restart",
-        "reload-or-try-restart",
-        "status",
-    }
     for index, token in enumerate(tokens[1:], start=1):
-        if token in verbs:
+        if token in SYSTEMCTL_ACTIONS:
             return token, tokens[index + 1 :]
     return None
 
@@ -336,6 +324,7 @@ __all__ = [
     "RUNTIME_POSITIVE_INT_FIELDS",
     "RuntimeConfigReporter",
     "SERVICE_PHASES",
+    "SYSTEMCTL_ACTIONS",
     "check_runtime_config",
     "is_bare_systemctl_command",
     "is_bare_systemctl_status_command",

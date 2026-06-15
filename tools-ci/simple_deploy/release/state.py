@@ -16,6 +16,8 @@ import sqlite3
 from typing import Iterable
 
 from simple_deploy.types.contour import CONTOUR_CODES
+from simple_deploy.types.job import JOB_KINDS, JobKind
+from simple_deploy.types.request import EXTERNAL_REQUEST_TYPES, ExternalRequestType
 from simple_deploy.types.status import (
     EXTERNAL_REQUEST_STATUSES,
     JOB_STATUSES as JOB_STATUS_CODES,
@@ -23,7 +25,9 @@ from simple_deploy.types.status import (
 
 
 CONTOURS = CONTOUR_CODES
+JOB_KIND_CODES = JOB_KINDS
 JOB_STATUSES = JOB_STATUS_CODES
+REQUEST_TYPES = EXTERNAL_REQUEST_TYPES
 REQUEST_STATUSES = EXTERNAL_REQUEST_STATUSES
 
 
@@ -42,7 +46,7 @@ class JobRecord:
     """Снимок локальной долгой операции."""
 
     id: int
-    kind: str
+    kind: JobKind
     contour: str
     build_version: str
     status: str
@@ -61,7 +65,7 @@ class ExternalRequest:
     id: int
     contour: str
     build_version: str
-    request_type: str
+    request_type: ExternalRequestType
     status: str
     external_id: str
     payload_json: str
@@ -190,6 +194,26 @@ def validate_status(status: str, allowed: Iterable[str]) -> str:
     normalized = status.strip().lower()
     if normalized not in allowed:
         raise ValueError(f"Unknown status: {status}. Expected one of: {', '.join(sorted(allowed))}")
+    return normalized
+
+
+def validate_job_kind(kind: str) -> str:
+    """Нормализует и валидирует вид локальной долгой операции."""
+    normalized = kind.strip().lower()
+    if normalized not in JOB_KIND_CODES:
+        raise ValueError(
+            f"Unknown job kind: {kind}. Expected one of: {', '.join(JOB_KIND_CODES)}"
+        )
+    return normalized
+
+
+def validate_external_request_type(request_type: str) -> str:
+    """Нормализует и валидирует тип внешней TEST/PROD заявки."""
+    normalized = request_type.strip().lower()
+    if normalized not in REQUEST_TYPES:
+        raise ValueError(
+            f"Unknown external request type: {request_type}. Expected one of: {', '.join(REQUEST_TYPES)}"
+        )
     return normalized
 
 
@@ -476,16 +500,14 @@ def list_deployment_attempts(
 
 def create_job(
     connection: sqlite3.Connection,
-    kind: str,
+    kind: JobKind,
     contour: str = "",
     build_version: str = "",
     payload: dict | None = None,
     log_path: str = "",
 ) -> int:
     """Создает запись локальной долгой операции в статусе ``queued``."""
-    kind = kind.strip()
-    if not kind:
-        raise ValueError("Job kind must be non-empty")
+    kind = validate_job_kind(kind)
     normalized_contour = validate_contour(contour) if contour else ""
     now = utc_now()
     cursor = connection.execute(
@@ -568,7 +590,7 @@ def create_external_request(
     connection: sqlite3.Connection,
     contour: str,
     build_version: str,
-    request_type: str,
+    request_type: ExternalRequestType,
     external_id: str = "",
     payload: dict | None = None,
     status: str = "draft",
@@ -577,9 +599,7 @@ def create_external_request(
     contour = validate_contour(contour)
     if contour == "dev":
         raise ValueError("External release requests are only supported for test/prod contours")
-    request_type = request_type.strip()
-    if not request_type:
-        raise ValueError("External request type must be non-empty")
+    request_type = validate_external_request_type(request_type)
     status = validate_status(status, REQUEST_STATUSES)
     now = utc_now()
     cursor = connection.execute(
@@ -679,7 +699,9 @@ def list_external_requests(
 
 __all__ = [
     "CONTOURS",
+    "JOB_KIND_CODES",
     "JOB_STATUSES",
+    "REQUEST_TYPES",
     "REQUEST_STATUSES",
     "ContourState",
     "ExternalRequest",
@@ -709,5 +731,7 @@ __all__ = [
     "upsert_contour_state",
     "utc_now",
     "validate_contour",
+    "validate_external_request_type",
+    "validate_job_kind",
     "validate_status",
 ]

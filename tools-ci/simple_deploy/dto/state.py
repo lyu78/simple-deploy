@@ -1,4 +1,4 @@
-"""DTO-модели только для чтения для ответов API локального состояния релизов."""
+"""DTO-модели ответов API локального состояния релизов."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from simple_deploy.types.contour import ContourCode, OptionalContourCode
+from simple_deploy.types.job import JobKind
 from simple_deploy.types.release import BuildVersionString, OptionalBuildVersionString
+from simple_deploy.types.request import ExternalRequestType
 from simple_deploy.types.source import CommitShaString, OptionalCommitShaString
 from simple_deploy.types.status import (
     BuildAttemptStatus,
@@ -18,9 +20,18 @@ from simple_deploy.types.status import (
 
 
 class _StateDto(BaseModel):
-    """Базовая DTO-модель для строк состояния и dataclass-записей."""
+    """Базовая DTO-модель для строк и объектов состояния."""
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ReleaseReferenceDto(_StateDto):
+    """Ссылка на ресурс релиза внутри API-проекции."""
+
+    build_version: BuildVersionString
+    build_status: BuildAttemptStatus | None = None
+    backend_commit: OptionalCommitShaString | None = None
+    frontend_commit: OptionalCommitShaString | None = None
 
 
 class ContourStateDto(_StateDto):
@@ -29,11 +40,12 @@ class ContourStateDto(_StateDto):
     contour: ContourCode
     last_success_release: BuildVersionString
     last_success_backend_commit: CommitShaString
+    last_success_release_ref: ReleaseReferenceDto | None = None
     updated_at: str
 
 
-class ReleaseRecordDto(_StateDto):
-    """Запись успешно собранного релиза для read-only API."""
+class ReleaseBundleDto(_StateDto):
+    """Материализованный результат успешной сборки release bundle для API."""
 
     build_version: BuildVersionString
     backend_commit: CommitShaString
@@ -43,7 +55,7 @@ class ReleaseRecordDto(_StateDto):
 
 
 class BuildAttemptDto(_StateDto):
-    """Строка журнала попытки сборки для read-only API."""
+    """Строка журнала попытки сборки для API."""
 
     id: int
     build_version: BuildVersionString
@@ -56,7 +68,7 @@ class BuildAttemptDto(_StateDto):
 
 
 class DeploymentAttemptDto(_StateDto):
-    """Строка журнала попытки деплоя для read-only API."""
+    """Строка журнала попытки деплоя для API."""
 
     id: int
     contour: ContourCode
@@ -69,10 +81,10 @@ class DeploymentAttemptDto(_StateDto):
 
 
 class JobDto(_StateDto):
-    """Запись локальной долгой операции для read-only API."""
+    """Запись локальной долгой операции для API."""
 
     id: int
-    kind: str
+    kind: JobKind
     contour: OptionalContourCode
     build_version: OptionalBuildVersionString
     status: JobStatus
@@ -85,12 +97,12 @@ class JobDto(_StateDto):
 
 
 class ExternalRequestDto(_StateDto):
-    """Запись внешней TEST/PROD заявки на релиз для read-only API."""
+    """Запись внешней TEST/PROD заявки на релиз для API."""
 
     id: int
     contour: ContourCode
     build_version: BuildVersionString
-    request_type: str
+    request_type: ExternalRequestType
     status: ExternalRequestStatus
     external_id: str
     payload_json: str
@@ -99,11 +111,24 @@ class ExternalRequestDto(_StateDto):
     updated_at: str
 
 
+class ReleaseDto(_StateDto):
+    """Ресурс релиза для API."""
+
+    build_version: BuildVersionString
+    build_status: BuildAttemptStatus | None = None
+    backend_commit: OptionalCommitShaString | None = None
+    frontend_commit: OptionalCommitShaString | None = None
+    bundle: ReleaseBundleDto | None = None
+    build_attempts: list[BuildAttemptDto]
+    deployment_attempts: list[DeploymentAttemptDto]
+    external_requests: list[ExternalRequestDto]
+
+
 class StateSnapshotDto(_StateDto):
-    """Агрегированный снимок состояния только для чтения для dashboard и API."""
+    """Агрегированный снимок состояния для dashboard и API."""
 
     contours: dict[str, ContourStateDto | None]
-    releases: list[ReleaseRecordDto]
+    releases: list[ReleaseDto]
     build_attempts: list[BuildAttemptDto]
     deployment_attempts: list[DeploymentAttemptDto]
     jobs: list[JobDto]
@@ -116,12 +141,18 @@ def dto_dump(model: BaseModel) -> dict[str, Any]:
     return model.model_dump(mode="json")
 
 
+ReleaseRecordDto = ReleaseBundleDto
+
+
 __all__ = [
     "BuildAttemptDto",
     "ContourStateDto",
     "DeploymentAttemptDto",
     "ExternalRequestDto",
     "JobDto",
+    "ReleaseBundleDto",
+    "ReleaseDto",
+    "ReleaseReferenceDto",
     "ReleaseRecordDto",
     "StateSnapshotDto",
     "dto_dump",

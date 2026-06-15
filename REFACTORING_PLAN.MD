@@ -147,10 +147,34 @@ CLI-команды остаются первичным контрактом:
 - та же SQLite-база, что у CLI;
 - запуск долгих операций через local jobs;
 - просмотр релизов, build attempts, deployment attempts и jobs;
-- запуск существующих команд CLI-процессов из UI;
+- запуск существующих CLI-процессов через resource-oriented API без RPC-style
+  endpoints;
 - ручная пометка `applied`/`failed` для TEST/PROD.
 
 Web не должен становиться отдельной реализацией деплоя. Он только интерфейс к тому же toolkit.
+
+REST-контракт для будущих write endpoints должен быть строгим:
+
+- `POST` к коллекции создает новый дочерний ресурс, например
+  `POST /releases/{release_version}/build-attempts`;
+- если релиз уже успешно собран или сборка уже активна, API возвращает
+  `409 Conflict`, а не существующий релиз как успешный результат `POST`;
+- `403 Forbidden` остается ошибкой доступа, а не способом сообщить о конфликте
+  состояния;
+- RPC-style действия вроде `runBuild`/`buildRelease` не являются целевой формой
+  публичного API.
+
+Модель хранения для будущих schema changes должна держаться 3НФ:
+
+- SQLite registry хранит сущности, связи и факты без дублирования свойств
+  другого ресурса;
+- `ContourState` ссылается на release/placement, а не становится владельцем
+  commit-ов или bundle metadata;
+- backend/frontend commits принадлежат source snapshot/release bundle;
+- удобные поля для dashboard/API собираются в read models/DTO как производная
+  проекция, а не записываются в БД как второй источник истины.
+- до миграции storage API может сохранять legacy-поля контура, но рядом должен
+  отдавать ссылку на ресурс релиза как источник производных commit/status полей.
 
 ## Порядок реализации
 
@@ -454,8 +478,10 @@ steps, healthcheck, email и summary. Механический перенос э
 - создан пакет `tools-ci/simple_deploy/dto/`;
 - создан пакет `tools-ci/simple_deploy/types/` с первыми custom primitives:
   `ReleaseVersionString`/`BuildVersionString`, `CommitShaString`, `ContourCode`
-  status types, `ComponentId`, `ArtifactKind`/`ArtifactScope` и
-  `DeploymentTargetRole`;
+  status types, `ComponentId`, `ArtifactKind`/`ArtifactScope`,
+  `DeploymentTargetRole`, `JobKind`, `ExternalRequestType`,
+  `ReleaseTriggerType`, `SourceOriginKind`, `RepoId`, `MachineId` и
+  runtime-справочниками фаз/service actions;
 - добавлены Pydantic DTO для state snapshot, releases, build/deploy attempts,
   jobs, external requests и contour state;
 - добавлены внутренние read-only `models` для того же state snapshot, чтобы web/API

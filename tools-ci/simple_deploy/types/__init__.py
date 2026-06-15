@@ -15,12 +15,39 @@ from simple_deploy.types.contour import (
     ContourCodeEnum,
     OptionalContourCode,
 )
+from simple_deploy.types.job import JOB_KINDS, JobKind, JobKindEnum
+from simple_deploy.types.machine import MachineId
 from simple_deploy.types.release import (
     BuildVersionString,
     OptionalBuildVersionString,
     ReleaseVersionString,
 )
-from simple_deploy.types.source import CommitShaString, OptionalCommitShaString
+from simple_deploy.types.request import (
+    EXTERNAL_REQUEST_TYPES,
+    ExternalRequestType,
+    ExternalRequestTypeEnum,
+)
+from simple_deploy.types.runtime import (
+    MAINTENANCE_SQL_PHASES,
+    NGINX_STOP_START_ACTIONS,
+    NGINX_UNSUPPORTED_ACTIONS,
+    SERVICE_STEP_PHASES,
+    SYSTEMCTL_ACTIONS,
+    MaintenanceSqlPhase,
+    MaintenanceSqlPhaseEnum,
+    ServiceStepPhase,
+    ServiceStepPhaseEnum,
+    SystemctlAction,
+    SystemctlActionEnum,
+)
+from simple_deploy.types.source import (
+    SOURCE_ORIGIN_KINDS,
+    CommitShaString,
+    OptionalCommitShaString,
+    RepoId,
+    SourceOriginKind,
+    SourceOriginKindEnum,
+)
 from simple_deploy.types.status import (
     BUILD_ATTEMPT_STATUSES,
     DEPLOYMENT_ATTEMPT_STATUSES,
@@ -40,6 +67,11 @@ from simple_deploy.types.target import (
     DeploymentTargetRole,
     DeploymentTargetRoleEnum,
 )
+from simple_deploy.types.trigger import (
+    RELEASE_TRIGGER_TYPES,
+    ReleaseTriggerType,
+    ReleaseTriggerTypeEnum,
+)
 
 __all__ = [
     "ARTIFACT_KINDS",
@@ -50,7 +82,16 @@ __all__ = [
     "DEPLOYMENT_ATTEMPT_STATUSES",
     "DEPLOYMENT_TARGET_ROLES",
     "EXTERNAL_REQUEST_STATUSES",
+    "EXTERNAL_REQUEST_TYPES",
+    "JOB_KINDS",
     "JOB_STATUSES",
+    "MAINTENANCE_SQL_PHASES",
+    "NGINX_STOP_START_ACTIONS",
+    "NGINX_UNSUPPORTED_ACTIONS",
+    "RELEASE_TRIGGER_TYPES",
+    "SERVICE_STEP_PHASES",
+    "SOURCE_ORIGIN_KINDS",
+    "SYSTEMCTL_ACTIONS",
     "ArtifactKind",
     "ArtifactKindEnum",
     "ArtifactScope",
@@ -71,8 +112,24 @@ __all__ = [
     "ExternalRequestStatusEnum",
     "JobStatus",
     "JobStatusEnum",
+    "JobKind",
+    "JobKindEnum",
+    "MachineId",
+    "ExternalRequestType",
+    "ExternalRequestTypeEnum",
+    "MaintenanceSqlPhase",
+    "MaintenanceSqlPhaseEnum",
     "OptionalCommitShaString",
     "OptionalContourCode",
     "OptionalBuildVersionString",
+    "RepoId",
     "ReleaseVersionString",
+    "ReleaseTriggerType",
+    "ReleaseTriggerTypeEnum",
+    "ServiceStepPhase",
+    "ServiceStepPhaseEnum",
+    "SourceOriginKind",
+    "SourceOriginKindEnum",
+    "SystemctlAction",
+    "SystemctlActionEnum",
 ]

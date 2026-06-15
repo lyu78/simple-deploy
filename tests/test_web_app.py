@@ -1,4 +1,4 @@
-"""Тесты read-only FastAPI dashboard/API поверх локальной state DB.
+"""Тесты FastAPI dashboard/API только для чтения поверх локальной базы состояния.
 
 Модуль проверяет, что web слой читает ту же SQLite-базу, что и CLI, и не имеет
 собственной модели состояния.
@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOLS_CI_ROOT = ROOT / "tools-ci"
 STATE_DB_NAME = "state.sqlite3"
 TEST_BUILD_VERSION = "1.2.4"
+FAILED_BUILD_VERSION = "1.2.5"
 TEST_BACKEND_COMMIT = "abc123"
 TEST_FRONTEND_COMMIT = "def456"
 TEST_EXTERNAL_ID = "REQ-123"
@@ -43,7 +44,7 @@ class WebAppTests(unittest.TestCase):
     """Проверяет локальный dashboard/API без запуска внешнего сервера."""
 
     def test_dashboard_and_state_api_use_local_state_db(self):
-        """Dashboard и API читают state через стабильный read-only JSON-контракт."""
+        """Dashboard и API читают состояние через стабильный JSON-контракт."""
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / STATE_DB_NAME
             with closing(connect_state_db(db_path)) as connection:
@@ -67,6 +68,20 @@ class WebAppTests(unittest.TestCase):
                     "success",
                     backend_commit=TEST_BACKEND_COMMIT,
                     frontend_commit=TEST_FRONTEND_COMMIT,
+                )
+                failed_build_attempt_id = record_build_attempt_started(
+                    connection,
+                    FAILED_BUILD_VERSION,
+                    backend_commit=TEST_BACKEND_COMMIT,
+                    frontend_commit=TEST_FRONTEND_COMMIT,
+                )
+                record_build_attempt_finished(
+                    connection,
+                    failed_build_attempt_id,
+                    "failed",
+                    backend_commit=TEST_BACKEND_COMMIT,
+                    frontend_commit=TEST_FRONTEND_COMMIT,
+                    error="build error",
                 )
                 record_attempt(
                     connection,
@@ -108,14 +123,49 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(health_response.json(), {"status": "ok"})
         state_json = state_response.json()
         self.assertEqual(state_json["contours"]["dev"]["last_success_release"], TEST_BUILD_VERSION)
-        self.assertEqual(state_json["releases"][0]["build_version"], TEST_BUILD_VERSION)
-        self.assertEqual(state_json["build_attempts"][0]["status"], "success")
+        self.assertEqual(
+            state_json["contours"]["dev"]["last_success_release_ref"]["build_version"],
+            TEST_BUILD_VERSION,
+        )
+        self.assertEqual(
+            state_json["contours"]["dev"]["last_success_release_ref"]["backend_commit"],
+            TEST_BACKEND_COMMIT,
+        )
+        self.assertEqual(
+            state_json["contours"]["dev"]["last_success_release_ref"]["build_status"],
+            "success",
+        )
+        self.assertEqual(
+            {attempt["build_version"]: attempt["status"] for attempt in state_json["build_attempts"]},
+            {TEST_BUILD_VERSION: "success", FAILED_BUILD_VERSION: "failed"},
+        )
         self.assertEqual(state_json["deployment_attempts"][0]["contour"], "dev")
         self.assertEqual(state_json["jobs"][0]["kind"], "deploy")
         self.assertEqual(state_json["external_requests"][0]["external_id"], TEST_EXTERNAL_ID)
+        releases_by_version = {release["build_version"]: release for release in state_json["releases"]}
+        successful_release = releases_by_version[TEST_BUILD_VERSION]
+        failed_release = releases_by_version[FAILED_BUILD_VERSION]
+        self.assertEqual(successful_release["build_status"], "success")
+        self.assertIsNotNone(successful_release["bundle"])
+        self.assertEqual(successful_release["bundle"]["artifacts_json"], '{"backend": "backend.tar.gz"}')
+        self.assertEqual(successful_release["build_attempts"][0]["status"], "success")
+        self.assertEqual(successful_release["deployment_attempts"][0]["contour"], "dev")
+        self.assertEqual(successful_release["external_requests"][0]["external_id"], TEST_EXTERNAL_ID)
+        self.assertEqual(failed_release["build_status"], "failed")
+        self.assertIsNone(failed_release["bundle"])
+        self.assertEqual(failed_release["build_attempts"][0]["error"], "build error")
         self.assertEqual(
-            set(state_json["releases"][0]),
-            {"build_version", "backend_commit", "frontend_commit", "artifacts_json", "created_at"},
+            set(successful_release),
+            {
+                "build_version",
+                "build_status",
+                "backend_commit",
+                "frontend_commit",
+                "bundle",
+                "build_attempts",
+                "deployment_attempts",
+                "external_requests",
+            },
         )
         self.assertEqual(releases_response.json(), state_json["releases"])
         self.assertEqual(jobs_response.json(), state_json["jobs"])

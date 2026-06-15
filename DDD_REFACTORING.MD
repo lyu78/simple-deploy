@@ -242,9 +242,10 @@ PROD flow строится на TEST-заявках: нельзя собрать
 - ссылку на build attempt.
 
 Bundle должен считаться immutable после успешной сборки. Если сборка
-повторяется для того же release version и того же source snapshot, вся цепочка
-должна быть идемпотентной. Отличаться может только техническое время генерации
-и производные timestamps.
+повторяется внутри той же технической попытки для того же release version и
+того же source snapshot, application service должен стремиться к
+идемпотентности операции и не создавать второй bundle. Отличаться может только
+техническое время генерации и производные timestamps.
 
 Один `Release` имеет ровно один успешный `ReleaseBundle`. Если после успешного
 bundle-а требуется доработка ПО или новые commit-ы, это уже новый релиз с новым
@@ -379,6 +380,25 @@ BuildAttempt не равен Release. У одного релиза может б
 Если для исправления требуется доработка ПО и новые commit-ы, это должно
 переходить в новый релиз, а не перегенерировать старый release bundle с другим
 содержимым.
+
+REST/API граница для сборки должна быть строгой и resource-oriented:
+
+- `Release` является основным ресурсом;
+- `BuildAttempt` является дочерним ресурсом релиза;
+- `POST /releases/{release_version}/build-attempts` создает новую попытку
+  сборки и возвращает `201 Created` или `202 Accepted`;
+- если у релиза уже есть успешный `ReleaseBundle`, новый `BuildAttempt` не
+  создается, а API возвращает `409 Conflict`;
+- если для того же релиза уже идет активная попытка сборки, API также
+  возвращает `409 Conflict`;
+- `403 Forbidden` используется для запрета доступа, а не для конфликта
+  жизненного цикла релиза;
+- API не должен маскировать RPC-команды вида `runBuild`/`buildRelease` под
+  REST. Если запрос не создает новый ресурс, он не должен быть успешным
+  `POST` к коллекции attempts;
+- idempotency key допустим только для сетевых повторов того же запроса на
+  создание attempts, но не превращает новый `POST` в молчаливое возвращение
+  уже существующего успешного релиза.
 
 ### Contour
 
@@ -725,6 +745,16 @@ simple_deploy/
 `types` может проверять формат или допустимый набор значений, но не должен знать
 про SQLite, FastAPI, SSH, файлы, порядок deploy или правила продвижения релиза.
 
+Модули внутри `types` называются в единственном числе: `artifact.py`,
+`component.py`, `contour.py`, `job.py`, `machine.py`, `source.py`,
+`trigger.py`. Этот слой описывает типы одной доменной концепции и экспортирует
+конкретные constrained types / enum-ы, а не управляет коллекциями ресурсов.
+
+Множественное число лучше оставлять для application/config/registry слоев,
+которые работают с наборами сущностей или подсистемами: `jobs`, `machines.py`,
+`origins.py`, `requests.py`. Это также снижает путаницу между пакетом
+`simple_deploy.jobs` и модулем типов `simple_deploy.types.job`.
+
 ### Entities
 
 `entities` содержит чистые DDD entities и value objects: `Release`,
@@ -740,6 +770,34 @@ Entities не являются API response, SQLite row или Pydantic configs 
 списки attempts, матрица размещения, validation results.
 
 Models могут быть Pydantic-моделями, но они не являются внешним контрактом API.
+
+### Registry / Storage
+
+Registry/storage schema должна стремиться к 3НФ. Таблицы состояния хранят
+идентичность сущностей, связи и факты, но не дублируют поля, которые являются
+свойствами другой сущности.
+
+Примеры:
+
+- `ContourState` хранит ссылку на последний успешно размещенный `Release` или
+  placement, а не дублирует backend commit как собственное состояние контура;
+- backend/frontend commits принадлежат `SourceSnapshot` или `ReleaseBundle`, а
+  не `ContourState`;
+- artifact metadata принадлежит `ReleaseBundle`/manifest, а не попытке deploy;
+- attempts хранят статус, ошибку и timestamps конкретной попытки, но не
+  становятся источником истины для текущего состояния контура.
+
+Денормализация допустима в read models, DTO и HTTP responses, если она делает
+ответ сервера удобнее для dashboard/API. Такая денормализация является
+производной проекцией и не должна становиться источником истины в БД. Если для
+совместимости временно сохраняется legacy-поле вроде
+`last_success_backend_commit`, его нужно считать transitional/compatibility
+полем до миграции registry schema, а не частью целевой модели.
+
+Текущий read/API слой на переходном этапе должен рядом с legacy-полями контура
+отдавать ссылку на релиз, например `last_success_release_ref`. Производные поля
+commit/status в таком ответе берутся из ресурса релиза или его bundle-а, а не
+трактуются как нормализованные свойства `ContourState`.
 
 ### DTO
 
@@ -860,8 +918,11 @@ application services:
 ## Принятые решения по открытым вопросам
 
 1. Один `Release` имеет ровно один успешный `ReleaseBundle`.
-2. Перегенерация при том же release version и том же source snapshot должна быть
-   идемпотентной. Если нужны новые commit-ы или доработка ПО, это новый релиз.
+2. Повтор одной технической попытки при том же release version и том же source
+   snapshot должен быть идемпотентным внутри application service, но внешний
+   `POST /releases/{release_version}/build-attempts` обязан либо создать новый
+   `BuildAttempt`, либо вернуть `409 Conflict`. Если нужны новые commit-ы или
+   доработка ПО, это новый релиз.
 3. `BuildAttempt` должен различать обычный failed build и невалидный source
    contract, например когда в репозитории пропали обязательные скрипты.
 4. `ReleaseIntent` хранится отдельно как persisted entity.
@@ -899,6 +960,13 @@ application services:
 20. Тестовые pipeline-ы фиксируются как `BundleValidationAttempt`/`Job`, а не
     как `DeploymentAttempt`; они не меняют `ContourState`, `ReleasePlacement`
     и baseline контура.
+21. HTTP API держим строгим REST/resource contract без RPC-запаха: `Release` -
+    ресурс, `BuildAttempt` - дочерний ресурс, повторный `POST` после успешного
+    bundle-а не возвращает существующий релиз и не создает фиктивную попытку,
+    а завершается `409 Conflict`.
+22. Registry/storage schema держим в 3НФ: свойства релиза, source snapshot,
+    bundle-а, attempts и contour state не дублируются как источники истины.
+    Денормализация допустима только в read models, DTO и HTTP responses.
 
 ## Оставшиеся открытые вопросы
 

@@ -40,6 +40,7 @@ from simple_deploy.config.validation import (  # noqa: E402,F401
     RUNTIME_BOOL_FIELDS,
     RUNTIME_POSITIVE_INT_FIELDS,
     SERVICE_PHASES,
+    SYSTEMCTL_ACTIONS,
     check_runtime_config as _check_runtime_config,
     is_bare_systemctl_command,
     is_bare_systemctl_status_command,
@@ -1253,17 +1254,8 @@ def derive_service_permission_check(command: str) -> str:
     if tokens[0] != "systemctl":
         return ""
 
-    verbs = {
-        "start",
-        "stop",
-        "restart",
-        "reload",
-        "try-restart",
-        "reload-or-restart",
-        "reload-or-try-restart",
-    }
     for index, token in enumerate(tokens[1:], start=1):
-        if token in verbs:
+        if token in SYSTEMCTL_ACTIONS and token != "status":
             options = tokens[1:index]
             targets = tokens[index + 1 :]
             if not targets:

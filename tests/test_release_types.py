@@ -28,8 +28,35 @@ from simple_deploy.types.contour import (
     ContourCodeEnum,
     OptionalContourCode,
 )
+from simple_deploy.types.job import JOB_KINDS, JobKind, JobKindEnum
+from simple_deploy.types.machine import MachineId
 from simple_deploy.types.release import BuildVersionString, OptionalBuildVersionString
-from simple_deploy.types.source import CommitShaString, OptionalCommitShaString
+from simple_deploy.types.request import (
+    EXTERNAL_REQUEST_TYPES,
+    ExternalRequestType,
+    ExternalRequestTypeEnum,
+)
+from simple_deploy.types.runtime import (
+    MAINTENANCE_SQL_PHASES,
+    NGINX_STOP_START_ACTIONS,
+    NGINX_UNSUPPORTED_ACTIONS,
+    SERVICE_STEP_PHASES,
+    SYSTEMCTL_ACTIONS,
+    MaintenanceSqlPhase,
+    MaintenanceSqlPhaseEnum,
+    ServiceStepPhase,
+    ServiceStepPhaseEnum,
+    SystemctlAction,
+    SystemctlActionEnum,
+)
+from simple_deploy.types.source import (
+    SOURCE_ORIGIN_KINDS,
+    CommitShaString,
+    OptionalCommitShaString,
+    RepoId,
+    SourceOriginKind,
+    SourceOriginKindEnum,
+)
 from simple_deploy.types.status import (
     BUILD_ATTEMPT_STATUSES,
     DEPLOYMENT_ATTEMPT_STATUSES,
@@ -49,6 +76,11 @@ from simple_deploy.types.target import (
     DeploymentTargetRole,
     DeploymentTargetRoleEnum,
 )
+from simple_deploy.types.trigger import (
+    RELEASE_TRIGGER_TYPES,
+    ReleaseTriggerType,
+    ReleaseTriggerTypeEnum,
+)
 
 
 class ReleaseTypeTests(unittest.TestCase):
@@ -66,6 +98,13 @@ class ReleaseTypeTests(unittest.TestCase):
             (JOB_STATUSES, JobStatusEnum),
             (EXTERNAL_REQUEST_STATUSES, ExternalRequestStatusEnum),
             (DEPLOYMENT_TARGET_ROLES, DeploymentTargetRoleEnum),
+            (MAINTENANCE_SQL_PHASES, MaintenanceSqlPhaseEnum),
+            (SERVICE_STEP_PHASES, ServiceStepPhaseEnum),
+            (SYSTEMCTL_ACTIONS, SystemctlActionEnum),
+            (JOB_KINDS, JobKindEnum),
+            (EXTERNAL_REQUEST_TYPES, ExternalRequestTypeEnum),
+            (RELEASE_TRIGGER_TYPES, ReleaseTriggerTypeEnum),
+            (SOURCE_ORIGIN_KINDS, SourceOriginKindEnum),
         )
 
         for constant_values, enum_class in cases:
@@ -134,6 +173,69 @@ class ReleaseTypeTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             TypeAdapter(ExternalRequestStatus).validate_python("running")
 
+    def test_runtime_phase_types_accept_only_pipeline_phases(self):
+        """Runtime phase types проверяют фазы SQL, service step и systemctl actions."""
+        self.assertEqual(TypeAdapter(MaintenanceSqlPhase).validate_python(" BEFORE_UNPACK "), "before_unpack")
+        self.assertEqual(
+            TypeAdapter(ServiceStepPhase).validate_python("AFTER_FRONTEND_UNPACK"),
+            "after_frontend_unpack",
+        )
+        self.assertEqual(TypeAdapter(SystemctlAction).validate_python("TRY-RESTART"), "try-restart")
+
+        with self.assertRaises(ValidationError):
+            TypeAdapter(MaintenanceSqlPhase).validate_python("during_deploy")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ServiceStepPhase).validate_python("before_migrate")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(SystemctlAction).validate_python("enable")
+
+    def test_nginx_action_policy_sets_are_backed_by_systemctl_enum(self):
+        """Nginx action policy sets собираются из SystemctlActionEnum values."""
+        self.assertEqual(
+            NGINX_STOP_START_ACTIONS,
+            frozenset(
+                {
+                    SystemctlActionEnum.STOP.value,
+                    SystemctlActionEnum.START.value,
+                }
+            ),
+        )
+        self.assertEqual(
+            NGINX_UNSUPPORTED_ACTIONS,
+            frozenset(
+                {
+                    SystemctlActionEnum.RESTART.value,
+                    SystemctlActionEnum.RELOAD.value,
+                    SystemctlActionEnum.TRY_RESTART.value,
+                    SystemctlActionEnum.RELOAD_OR_RESTART.value,
+                    SystemctlActionEnum.RELOAD_OR_TRY_RESTART.value,
+                }
+            ),
+        )
+
+    def test_job_and_request_types_accept_current_operation_dictionaries(self):
+        """JobKind и ExternalRequestType проверяют текущие операционные словари."""
+        self.assertEqual(TypeAdapter(JobKind).validate_python("MARK_APPLIED"), "mark_applied")
+        self.assertEqual(TypeAdapter(JobKind).validate_python(" deploy "), "deploy")
+        self.assertEqual(TypeAdapter(ExternalRequestType).validate_python(" DEPLOY "), "deploy")
+
+        with self.assertRaises(ValidationError):
+            TypeAdapter(JobKind).validate_python("rollback")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ExternalRequestType).validate_python("rollback")
+
+    def test_release_trigger_type_accepts_current_trigger_dictionary(self):
+        """ReleaseTriggerType проверяет текущий словарь technical release triggers."""
+        self.assertEqual(TypeAdapter(ReleaseTriggerType).validate_python("MANUAL"), "manual")
+        self.assertEqual(
+            TypeAdapter(ReleaseTriggerType).validate_python(" backend_branch_push "),
+            "backend_branch_push",
+        )
+        self.assertEqual(TypeAdapter(ReleaseTriggerType).validate_python("SCHEDULED"), "scheduled")
+
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ReleaseTriggerType).validate_python("frontend_branch_push")
+
     def test_commit_sha_accepts_short_and_full_hex_values(self):
         """CommitShaString принимает короткий и полный Git SHA."""
         adapter = TypeAdapter(CommitShaString)
@@ -160,6 +262,43 @@ class ReleaseTypeTests(unittest.TestCase):
         self.assertEqual(adapter.validate_python(""), "")
         self.assertEqual(adapter.validate_python("  "), "")
         self.assertEqual(adapter.validate_python("DEF456"), "def456")
+
+    def test_source_origin_kind_accepts_current_origin_dictionary(self):
+        """SourceOriginKind проверяет словарь источников Git-данных."""
+        self.assertEqual(TypeAdapter(SourceOriginKind).validate_python("PRIMARY_REMOTE"), "primary_remote")
+        self.assertEqual(TypeAdapter(SourceOriginKind).validate_python(" mirror "), "mirror")
+        self.assertEqual(
+            TypeAdapter(SourceOriginKind).validate_python("LOCAL_BARE_CLONE"),
+            "local_bare_clone",
+        )
+
+        with self.assertRaises(ValidationError):
+            TypeAdapter(SourceOriginKind).validate_python("ftp_remote")
+
+    def test_repo_id_accepts_stable_repository_identifiers(self):
+        """RepoId принимает стабильные идентификаторы репозиториев без path-синтаксиса."""
+        adapter = TypeAdapter(RepoId)
+
+        self.assertEqual(adapter.validate_python("backend"), "backend")
+        self.assertEqual(adapter.validate_python(" frontend-app "), "frontend-app")
+        self.assertEqual(adapter.validate_python("db.migrations"), "db.migrations")
+
+        for value in ("", "   ", "../backend", "group/backend", "group\\backend"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    adapter.validate_python(value)
+
+    def test_machine_id_accepts_stable_machine_identifiers(self):
+        """MachineId принимает стабильные идентификаторы VM без path-синтаксиса."""
+        adapter = TypeAdapter(MachineId)
+
+        self.assertEqual(adapter.validate_python("dev-app-01"), "dev-app-01")
+        self.assertEqual(adapter.validate_python(" prod.db.01 "), "prod.db.01")
+
+        for value in ("", "   ", "../dev-app", "prod/db", "prod\\db"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    adapter.validate_python(value)
 
     def test_component_id_accepts_initial_domain_components(self):
         """ComponentId принимает начальный словарь DDD components."""

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Mapping
+from typing import Annotated, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, StringConstraints
 
-
-MaintenanceSqlPhase = Literal["before_unpack", "before_migrate", "after_migrate"]
-ServiceStepPhase = Literal["before_unpack", "after_unpack", "after_migrate", "after_frontend_unpack"]
+from simple_deploy.types.runtime import MaintenanceSqlPhase, ServiceStepPhase
 
 NonEmptyString = Annotated[StrictStr, StringConstraints(strip_whitespace=True, min_length=1)]
 PositiveStrictInt = Annotated[StrictInt, Field(gt=0)]
