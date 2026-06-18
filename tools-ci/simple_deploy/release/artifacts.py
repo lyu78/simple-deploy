@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import fnmatch
 from pathlib import Path
 
-from simple_deploy.release.state import validate_contour
+from simple_deploy.registry.state import validate_contour
 
 
 ROOT = Path(__file__).resolve().parents[3]

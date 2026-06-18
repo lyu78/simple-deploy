@@ -50,7 +50,7 @@ from simple_deploy.config.validation import (  # noqa: E402,F401
     nginx_systemctl_action,
     systemctl_action,
 )
-from simple_deploy.release.state import (  # noqa: E402
+from simple_deploy.registry.state import (  # noqa: E402
     CONTOURS,
     validate_contour,
 )

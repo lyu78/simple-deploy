@@ -30,7 +30,7 @@ from src.infra import (
     git_checkout_new_branch,
     git_pull,
 )
-from simple_deploy.release.state import CONTOURS, connect_state_db, get_contour_state
+from simple_deploy.registry.state import CONTOURS, connect_state_db, get_contour_state
 from src.utils import (
     add_file_to_tar,
     get_required_env,

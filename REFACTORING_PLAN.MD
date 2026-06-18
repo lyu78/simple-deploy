@@ -623,6 +623,19 @@ implementation:
 - низкоуровневые `registry.state` functions оставлены для storage compatibility;
 - SQLite-схема и существующие read/query контракты не менялись.
 
+### Статус десятого среза шага 6
+
+Десятый безопасный срез переключил production imports на registry boundary:
+
+- `windows_pipeline`, builder baseline checks, jobs/contours models и release
+  artifact validation импортируют `CONTOURS`, `validate_contour` и SQLite state
+  helpers из `simple_deploy.registry.state`;
+- legacy builder import path `builder/src/release_state.py` также смотрит в
+  `registry.state`;
+- `simple_deploy.release.state` пока остается compatibility implementation для
+  старых imports и тестов;
+- поведение CLI, builder, state schema и публичные функции не менялись.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

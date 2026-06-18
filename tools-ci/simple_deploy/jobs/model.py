@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from simple_deploy.release.state import (
+from simple_deploy.registry.state import (
     JOB_STATUSES,
     JobRecord,
     create_job,
