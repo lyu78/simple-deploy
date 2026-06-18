@@ -124,11 +124,15 @@ class RegistryQueryTests(unittest.TestCase):
         self.assertEqual(jobs[0].build_version, TEST_BUILD_VERSION)
         self.assertEqual(requests[0].external_id, TEST_EXTERNAL_ID)
 
-    def test_web_app_reexports_registry_query_helpers_for_compatibility(self):
-        """Старые imports из web.app остаются, но реализация живет в registry.queries."""
-        self.assertIs(web_app.bounded_limit, registry_queries.bounded_limit)
-        self.assertIs(web_app.release_read_models, registry_queries.release_read_models)
-        self.assertIs(web_app.state_snapshot_read_model, registry_queries.state_snapshot_read_model)
+    def test_web_app_keeps_snapshot_helper_as_adapter(self):
+        """Web helper остается совместимым adapter-ом над registry query слоем."""
+        with patch.object(web_app, "_state_snapshot_read_model") as query:
+            query.return_value = "snapshot"
+
+            self.assertEqual(web_app.state_snapshot_model(limit=7), "snapshot")
+
+        query.assert_called_once_with(limit=7)
+        self.assertFalse(hasattr(web_app, "release_read_models"))
 
 
 if __name__ == "__main__":

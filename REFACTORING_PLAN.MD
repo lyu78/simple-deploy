@@ -569,6 +569,18 @@ implementation:
 - SQLite-схема, JSON-контракт FastAPI endpoints и CLI/build/deploy поведение не
   менялись.
 
+### Статус шестого среза шага 6
+
+Шестой безопасный срез подчистил web boundary после переноса read queries:
+
+- `web.app` больше не реэкспортирует внутренние query helpers вроде
+  `release_read_models`;
+- публичными compatibility helper-ами web-слоя остаются только
+  `state_snapshot_model()`, `state_snapshot_dto()` и `state_snapshot()`;
+- FastAPI endpoints продолжают использовать `registry.queries` через private
+  aliases, поэтому HTTP/DTO слой не становится владельцем query API;
+- JSON-контракт dashboard/API не менялся.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

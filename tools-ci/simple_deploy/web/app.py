@@ -1,8 +1,10 @@
-"""Web/API поверхность только для чтения над локальным состоянием релизов.
+"""Web/API поверхность только для чтения над локальным registry state.
 
-Модуль предоставляет FastAPI-приложение для просмотра той же SQLite-базы,
-которую используют CLI и builder. Текущий v1 слой ничего не запускает и не
-меняет состояние релизов.
+Модуль предоставляет FastAPI-приложение и HTML dashboard для просмотра той же
+SQLite-базы, которую используют CLI и builder. Read projections собираются в
+``simple_deploy.registry.queries``; здесь остаются HTTP routes, DTO conversion и
+HTML rendering. Текущий v1 слой ничего не запускает и не меняет состояние
+релизов.
 """
 
 from __future__ import annotations
@@ -21,15 +23,10 @@ from simple_deploy.dto.state import (
 )
 from simple_deploy.models.state import StateSnapshotReadModel
 from simple_deploy.registry.queries import (
-    bounded_limit,
-    contour_state_read_models,
-    external_request_read_models_from_state,
-    job_read_models_from_state,
-    release_read_models,
-    release_read_models_from_state,
-    release_reference_read_model,
-    release_sort_key,
-    state_snapshot_read_model,
+    external_request_read_models_from_state as _external_request_read_models_from_state,
+    job_read_models_from_state as _job_read_models_from_state,
+    release_read_models_from_state as _release_read_models_from_state,
+    state_snapshot_read_model as _state_snapshot_read_model,
 )
 
 
@@ -38,13 +35,13 @@ app = FastAPI(title="simple-deploy", version="0.1.0")
 
 def state_snapshot_model(limit: int = 50) -> StateSnapshotReadModel:
     """Возвращает внутреннюю модель чтения снимка состояния для старых импортов."""
-    return state_snapshot_read_model(limit=limit)
+    return _state_snapshot_read_model(limit=limit)
 
 
 def state_snapshot_dto(limit: int = 50) -> StateSnapshotDto:
     """Преобразует внутренний снимок состояния во внешний DTO."""
 
-    return StateSnapshotDto.model_validate(state_snapshot_read_model(limit=limit))
+    return StateSnapshotDto.model_validate(_state_snapshot_read_model(limit=limit))
 
 
 def state_snapshot(limit: int = 50) -> dict:
@@ -69,7 +66,7 @@ def api_releases(limit: int = 50) -> list[ReleaseDto]:
     """Возвращает ресурсные представления релизов."""
     return [
         ReleaseDto.model_validate(release)
-        for release in release_read_models_from_state(limit=limit)
+        for release in _release_read_models_from_state(limit=limit)
     ]
 
 
@@ -78,7 +75,7 @@ def api_jobs(limit: int = 50) -> list[JobDto]:
     """Возвращает последние локальные задания из SQLite."""
     return [
         JobDto.model_validate(job)
-        for job in job_read_models_from_state(limit=limit)
+        for job in _job_read_models_from_state(limit=limit)
     ]
 
 
@@ -87,7 +84,7 @@ def api_requests(limit: int = 50) -> list[ExternalRequestDto]:
     """Возвращает последние внешние заявки TEST/PROD."""
     return [
         ExternalRequestDto.model_validate(request)
-        for request in external_request_read_models_from_state(limit=limit)
+        for request in _external_request_read_models_from_state(limit=limit)
     ]
 
 
