@@ -596,6 +596,20 @@ implementation:
 - CLI-поведение `set-baseline`, `mark-applied`, `mark-failed` и SQLite-схема не
   менялись.
 
+### Статус восьмого среза шага 6
+
+Восьмой безопасный срез расширил write/use-case boundary на build flow:
+
+- `registry.commands` получил команды `start_build_attempt`,
+  `finish_build_attempt` и `record_release_bundle`;
+- `tools-ci/builder/create_release.py` больше не импортирует
+  `simple_deploy.release.state` напрямую и пишет build attempts/release record
+  через `registry.commands`;
+- best-effort запись failed build attempt осталась в builder-е и по-прежнему не
+  маскирует исходную ошибку сборки;
+- `processes.build` продолжает только запускать builder как отдельный процесс;
+- CLI/builder поведение, manifest format и SQLite-схема не менялись.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

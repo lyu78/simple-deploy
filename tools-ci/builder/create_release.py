@@ -1,6 +1,5 @@
 from pathlib import Path
 import subprocess
-from contextlib import closing
 import sys
 
 
@@ -12,11 +11,10 @@ from src.infra import (
     get_new_branch_name,
     get_new_build_version,
 )
-from simple_deploy.release.state import (
-    connect_state_db,
-    record_build_attempt_finished,
-    record_build_attempt_started,
-    record_release,
+from simple_deploy.registry.commands import (
+    finish_build_attempt,
+    record_release_bundle,
+    start_build_attempt,
 )
 from src.utils import get_required_env
 from simple_deploy.release.manifest import (
@@ -67,14 +65,12 @@ def write_release_manifest(
     print(f"Release manifest created: {manifest_path}", flush=True)
     backend_repo = manifest["repositories"]["backend"]
     frontend_repo = manifest["repositories"]["frontend"]
-    with closing(connect_state_db()) as connection:
-        record_release(
-            connection,
-            build_version=build_version,
-            backend_commit=backend_repo["commit_sha"],
-            frontend_commit=frontend_repo["commit_sha"],
-            artifacts=manifest["artifacts"],
-        )
+    record_release_bundle(
+        build_version=build_version,
+        backend_commit=backend_repo["commit_sha"],
+        frontend_commit=frontend_repo["commit_sha"],
+        artifacts=manifest["artifacts"],
+    )
     return manifest
 
 
@@ -89,15 +85,14 @@ def safe_repo_commit(env_name: str) -> str:
 def record_build_failure(attempt_id: int, build_version: str, error: BaseException) -> None:
     """Best-effort failed build attempt marker that preserves the original build error."""
     try:
-        with closing(connect_state_db()) as connection:
-            record_build_attempt_finished(
-                connection,
-                attempt_id=attempt_id,
-                status="failed",
-                backend_commit=safe_repo_commit("BACKEND_SOURCE_REPO_PATH"),
-                frontend_commit=safe_repo_commit("FRONTEND_SOURCE_REPO_PATH"),
-                error=str(error),
-            )
+        finish_build_attempt(
+            attempt_id=attempt_id,
+            status="failed",
+            build_version=build_version,
+            backend_commit=safe_repo_commit("BACKEND_SOURCE_REPO_PATH"),
+            frontend_commit=safe_repo_commit("FRONTEND_SOURCE_REPO_PATH"),
+            error=str(error),
+        )
     except Exception as record_error:
         print(
             f"WARN failed to record failed build attempt: build_version={build_version} error={record_error}",
@@ -114,13 +109,11 @@ def main() -> int:
     build_version = get_new_build_version()
     branch_name = get_new_branch_name(build_version=build_version)
 
-    with closing(connect_state_db()) as connection:
-        build_attempt_id = record_build_attempt_started(
-            connection,
-            build_version=build_version,
-            backend_commit=safe_repo_commit("BACKEND_SOURCE_REPO_PATH"),
-            frontend_commit=safe_repo_commit("FRONTEND_SOURCE_REPO_PATH"),
-        )
+    build_attempt = start_build_attempt(
+        build_version=build_version,
+        backend_commit=safe_repo_commit("BACKEND_SOURCE_REPO_PATH"),
+        frontend_commit=safe_repo_commit("FRONTEND_SOURCE_REPO_PATH"),
+    )
 
     try:
         backend_artifacts = build_backend(
@@ -136,16 +129,15 @@ def main() -> int:
         manifest = write_release_manifest(build_version, backend_artifacts=backend_artifacts)
         backend_repo = manifest["repositories"]["backend"]
         frontend_repo = manifest["repositories"]["frontend"]
-        with closing(connect_state_db()) as connection:
-            record_build_attempt_finished(
-                connection,
-                attempt_id=build_attempt_id,
-                status="success",
-                backend_commit=backend_repo["commit_sha"],
-                frontend_commit=frontend_repo["commit_sha"],
-            )
+        finish_build_attempt(
+            attempt_id=build_attempt.attempt_id,
+            status="success",
+            build_version=build_version,
+            backend_commit=backend_repo["commit_sha"],
+            frontend_commit=frontend_repo["commit_sha"],
+        )
     except (Exception, SystemExit) as exc:
-        record_build_failure(build_attempt_id, build_version, exc)
+        record_build_failure(build_attempt.attempt_id, build_version, exc)
         raise
 
     # TODO собирать summary и roles нужно на этапе пре-пушей.

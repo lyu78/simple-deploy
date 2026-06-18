@@ -24,6 +24,96 @@ class DeploymentMarkResult:
     backend_commit: str
 
 
+@dataclass(frozen=True)
+class BuildAttemptResult:
+    """Результат registry-команды фиксации build attempt."""
+
+    attempt_id: int
+    build_version: str
+    backend_commit: str
+    frontend_commit: str
+    status: str
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class ReleaseBundleRecordResult:
+    """Результат registry-команды записи успешного release bundle."""
+
+    build_version: str
+    backend_commit: str
+    frontend_commit: str | None
+
+
+def record_release_bundle(
+    build_version: str,
+    backend_commit: str,
+    frontend_commit: str | None,
+    artifacts: dict,
+) -> ReleaseBundleRecordResult:
+    """Записывает метаданные успешно собранного release bundle."""
+    with closing(state.connect_state_db()) as connection:
+        state.record_release(
+            connection,
+            build_version=build_version,
+            backend_commit=backend_commit,
+            frontend_commit=frontend_commit,
+            artifacts=artifacts,
+        )
+    return ReleaseBundleRecordResult(build_version, backend_commit, frontend_commit)
+
+
+def start_build_attempt(
+    build_version: str,
+    backend_commit: str = "",
+    frontend_commit: str = "",
+) -> BuildAttemptResult:
+    """Создает запись о начале build attempt."""
+    with closing(state.connect_state_db()) as connection:
+        attempt_id = state.record_build_attempt_started(
+            connection,
+            build_version=build_version,
+            backend_commit=backend_commit,
+            frontend_commit=frontend_commit,
+        )
+    return BuildAttemptResult(
+        attempt_id=attempt_id,
+        build_version=build_version,
+        backend_commit=backend_commit,
+        frontend_commit=frontend_commit,
+        status="started",
+    )
+
+
+def finish_build_attempt(
+    attempt_id: int,
+    status: str,
+    build_version: str = "",
+    backend_commit: str = "",
+    frontend_commit: str = "",
+    error: str = "",
+) -> BuildAttemptResult:
+    """Фиксирует терминальный статус build attempt."""
+    status = state.validate_status(status, {"success", "failed"})
+    with closing(state.connect_state_db()) as connection:
+        state.record_build_attempt_finished(
+            connection,
+            attempt_id=attempt_id,
+            status=status,
+            backend_commit=backend_commit,
+            frontend_commit=frontend_commit,
+            error=error,
+        )
+    return BuildAttemptResult(
+        attempt_id=attempt_id,
+        build_version=build_version,
+        backend_commit=backend_commit,
+        frontend_commit=frontend_commit,
+        status=status,
+        error=error,
+    )
+
+
 def set_contour_baseline(
     contour: str,
     build_version: str,
@@ -63,8 +153,13 @@ def record_deployment_failed(
 
 
 __all__ = [
+    "BuildAttemptResult",
     "DeploymentMarkResult",
+    "ReleaseBundleRecordResult",
+    "finish_build_attempt",
     "record_deployment_applied",
     "record_deployment_failed",
+    "record_release_bundle",
     "set_contour_baseline",
+    "start_build_attempt",
 ]
