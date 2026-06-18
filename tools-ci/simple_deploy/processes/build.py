@@ -11,16 +11,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-
-def _runner_module():
-    """Возвращает compatibility runner с helper-ами build orchestration.
-
-    Ленивый импорт сохраняет старые patch paths ``tools.windows_pipeline.*`` и
-    не переносит env/config helper-ы в этом срезе шага 5.
-    """
-    from simple_deploy import windows_pipeline
-
-    return windows_pipeline
+from simple_deploy.core.build_env import data_sql_artifacts_enabled, prepare_build_env, prepare_frontend_env_files
+from simple_deploy.core.commands import stream_command
+from simple_deploy.core.env import load_env
+from simple_deploy.core.paths import BUILDER_ROOT, INCLUDE_DATA_SQL_ENV
 
 
 def build(args: argparse.Namespace) -> int:
@@ -30,15 +24,14 @@ def build(args: argparse.Namespace) -> int:
     процесс сборки, передавая builder-у флаг ``SIMPLE_DEPLOY_INCLUDE_DATA_SQL``
     согласно CLI-аргументам текущего runner-а.
     """
-    runner = _runner_module()
-    env = runner.load_env(args.env_file, args.secrets_file, require_secrets=False)
+    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
     print("BUILD prepare frontend env files", flush=True)
-    runner.prepare_frontend_env_files(env)
-    build_env = runner.prepare_build_env(env)
-    build_env[runner.INCLUDE_DATA_SQL_ENV] = "1" if runner.data_sql_artifacts_enabled(args) else "0"
-    return runner.stream_command(
+    prepare_frontend_env_files(env)
+    build_env = prepare_build_env(env)
+    build_env[INCLUDE_DATA_SQL_ENV] = "1" if data_sql_artifacts_enabled(args) else "0"
+    return stream_command(
         [sys.executable, "-u", "create_release.py"],
-        cwd=runner.BUILDER_ROOT,
+        cwd=BUILDER_ROOT,
         timeout=args.timeout,
         env=build_env,
     )

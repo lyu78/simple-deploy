@@ -528,9 +528,24 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 
 - старая точка запуска `tools-ci/tools/windows_pipeline.py` сохранена как compatibility wrapper;
 - фактическая реализация Windows runner перенесена в `tools-ci/simple_deploy/windows_pipeline.py`;
-- новый пакет `tools-ci/simple_deploy/` содержит начальный каркас `cli`, `config`, `core`, `release`, `contours`, `processes`, `jobs`, `web`;
-- state facade доступен через `simple_deploy.release.state`, старый builder state пока остается источником реализации;
+- пакет `tools-ci/simple_deploy/` содержит рабочие области `application`, `cli`, `config`,
+  `core`, `registry`, `release`, `contours`, `processes`, `jobs`, `web`;
+- SQLite state implementation принадлежит `simple_deploy.registry.state`; старый
+  `simple_deploy.release.state` является compatibility re-export-ом;
+- registry write/read границы вынесены в `simple_deploy.registry.commands` и
+  `simple_deploy.registry.queries`;
 - SQLite schema расширена таблицами `local_jobs` и `external_requests` для будущего запуска долгих операций из web/API и учета заявок TEST/PROD;
+- `simple_deploy.core.paths`, `core.commands`, `core.env`, `core.build_env` и
+  `core.release_paths` уже вынесены из `windows_pipeline.py`;
+- `processes.build` и `processes.mark` больше не импортируют `simple_deploy.windows_pipeline`;
+- `processes.dry_run`, `processes.data_sql` и `processes.deploy` пока зависят от
+  `windows_pipeline` как от compatibility host для оставшихся dry-run, SSH, DB и
+  deploy helper-ов;
 - read-only web/API v1 доступен как `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000`;
 - Ansible перенесен из корня в `legacy/ansible-ci`, дефолтные пути legacy Ansible поправлены на новую глубину каталога;
 - текущий CLI-контракт не менялся.
+
+Следующий рефакторинг-срез: убрать `_runner_module` из `processes.dry_run`.
+Критерий прогресса - уменьшать число process modules, которые импортируют
+`simple_deploy.windows_pipeline`, а не добавлять новые фасады без удаления
+обратных зависимостей.

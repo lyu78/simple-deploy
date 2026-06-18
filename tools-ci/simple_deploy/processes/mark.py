@@ -12,6 +12,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from simple_deploy.core.env import load_env
+from simple_deploy.core.release_paths import resolve_release_dir
 from simple_deploy.release.manifest import release_backend_commit
 from simple_deploy.registry.commands import (
     record_deployment_applied,
@@ -19,19 +21,6 @@ from simple_deploy.registry.commands import (
     set_contour_baseline,
 )
 from simple_deploy.registry.state import validate_contour
-
-
-def _runner_module():
-    """Возвращает compatibility runner с CLI helper-ами.
-
-    Ленивый импорт нужен, чтобы ``windows_pipeline`` мог реэкспортировать mark
-    функции без циклической загрузки. В этом срезе ``load_env`` и
-    ``resolve_release_dir`` остаются в runner-е до переноса соответствующих
-    process/core слоев.
-    """
-    from simple_deploy import windows_pipeline
-
-    return windows_pipeline
 
 
 def mark_contour_applied(contour: str, build_version: str, release_dir: Path) -> None:
@@ -76,9 +65,8 @@ def mark_contour_failed_best_effort(contour: str, build_version: str, release_di
     ошибка только выводится в лог, а исходное исключение deploy остается главным
     результатом процесса.
     """
-    runner = _runner_module()
     try:
-        runner.mark_contour_failed(contour, build_version, release_dir, str(error))
+        mark_contour_failed(contour, build_version, release_dir, str(error))
     except Exception as record_error:
         print(
             f"WARN failed to record failed deploy attempt: "
@@ -94,15 +82,14 @@ def set_baseline(args: argparse.Namespace) -> int:
     baseline здесь задается оператором как начальная точка для будущих offline
     SQL ranges, а не как результат deploy-попытки.
     """
-    runner = _runner_module()
     print("BASELINE load config", flush=True)
-    env = runner.load_env(args.env_file, args.secrets_file, require_secrets=False)
+    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
     contour = validate_contour(args.contour)
     if args.backend_commit:
         build_version = args.build_version or "manual-baseline"
         backend_commit = args.backend_commit.strip()
     else:
-        build_version, release_dir = runner.resolve_release_dir(env, args.build_version, latest=False)
+        build_version, release_dir = resolve_release_dir(env, args.build_version, latest=False)
         backend_commit = release_backend_commit(release_dir)
     result = set_contour_baseline(contour, build_version, backend_commit)
     print(
@@ -120,10 +107,9 @@ def mark_applied(args: argparse.Namespace) -> int:
     ``mark_contour_applied``. Baseline двигается только после успешного чтения
     backend commit из manifest.
     """
-    runner = _runner_module()
     print("MARK-APPLIED load config", flush=True)
-    env = runner.load_env(args.env_file, args.secrets_file, require_secrets=False)
-    build_version, release_dir = runner.resolve_release_dir(env, args.build_version, latest=False)
+    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
+    build_version, release_dir = resolve_release_dir(env, args.build_version, latest=False)
     mark_contour_applied(args.contour, build_version, release_dir)
     return 0
 
@@ -134,10 +120,9 @@ def mark_failed(args: argparse.Namespace) -> int:
     Команда пишет failed attempt и не меняет baseline контура. Текст ошибки
     берется из CLI-аргумента ``--error`` без дополнительной нормализации.
     """
-    runner = _runner_module()
     print("MARK-FAILED load config", flush=True)
-    env = runner.load_env(args.env_file, args.secrets_file, require_secrets=False)
-    build_version, release_dir = runner.resolve_release_dir(env, args.build_version, latest=False)
+    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
+    build_version, release_dir = resolve_release_dir(env, args.build_version, latest=False)
     mark_contour_failed(args.contour, build_version, release_dir, args.error)
     return 0
 

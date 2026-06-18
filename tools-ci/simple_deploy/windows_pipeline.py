@@ -10,13 +10,10 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import os
 import re
 from pathlib import Path, PurePosixPath
 import shlex
-import shutil
 import ssl
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -24,12 +21,42 @@ from html.parser import HTMLParser
 from typing import Iterable
 from urllib import error, parse, request
 
-from dotenv import dotenv_values
 
-
-ROOT = Path(__file__).resolve().parents[2]
-TOOLS_CI_ROOT = ROOT / "tools-ci"
-BUILDER_ROOT = TOOLS_CI_ROOT / "builder"
+from simple_deploy.core.build_env import (  # noqa: E402
+    INCLUDE_DATA_SQL_ENV,
+    data_sql_artifacts_enabled,
+    prepare_build_env,
+    prepare_frontend_env_files,
+    set_env_line,
+)
+from simple_deploy.core.commands import (  # noqa: E402
+    CommandResult,
+    decode_subprocess_output,
+    mask_text,
+    run_command,
+    stream_command,
+)
+from simple_deploy.core.env import (  # noqa: E402
+    load_dotenv_file,
+    load_env,
+    require_value,
+    to_git_bash_path,
+    windows_release_root,
+    wsl_to_windows_path,
+)
+from simple_deploy.core.paths import (  # noqa: E402
+    BUILDER_ROOT,
+    DEFAULT_BACKEND_APP_ROOT_DIR,
+    DEFAULT_CONFIG_FILE,
+    DEFAULT_ENV_FILE,
+    DEFAULT_LOG_DIR,
+    DEFAULT_SECRETS_FILE,
+    DEFAULT_TIMEOUT,
+    PIP_TRUSTED_HOSTS,
+    ROOT,
+    TOOLS_CI_ROOT,
+)
+from simple_deploy.core.release_paths import resolve_release_dir  # noqa: E402
 
 from simple_deploy.config.runtime import RuntimeConfigModel, runtime_config_model  # noqa: E402
 from simple_deploy.config.validation import (  # noqa: E402,F401
@@ -94,14 +121,6 @@ from simple_deploy.application.services import (  # noqa: E402
 )
 from simple_deploy.processes.dry_run import dry_run, required_env_keys  # noqa: E402
 
-DEFAULT_ENV_FILE = ROOT / ".env"
-DEFAULT_SECRETS_FILE = ROOT / "local.secrets.env"
-DEFAULT_CONFIG_FILE = ROOT / "windows_pipeline.local.json"
-DEFAULT_LOG_DIR = ROOT / "logs"
-DEFAULT_TIMEOUT = 20
-DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
-PIP_TRUSTED_HOSTS = "pypi.org files.pythonhosted.org pypi.python.org"
-INCLUDE_DATA_SQL_ENV = "SIMPLE_DEPLOY_INCLUDE_DATA_SQL"
 DB_DATA_UPDATE_APP_NAME = "simple-deploy-data-update"
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 DATA_SQL_INSERT_DIRS = ("app_ip_subcompany_catalogs",)
@@ -186,13 +205,6 @@ DEFAULT_RUNTIME_CONFIG = {
     ),
     "outlook_email_required": False,
 }
-
-@dataclass
-class CommandResult:
-    rc: int
-    stdout: str
-    stderr: str
-
 
 class Reporter:
     def __init__(self) -> None:
@@ -284,118 +296,6 @@ def tee_output(command: str):
             sys.stderr = original_stderr
 
 
-def decode_subprocess_output(data: bytes | str | None) -> str:
-    if data is None:
-        return ""
-    if isinstance(data, str):
-        return data
-    for encoding in ("utf-8", "cp1251", "cp866"):
-        try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return data.decode("utf-8", errors="replace")
-
-
-def mask_text(text: str, mask: Iterable[str] = ()) -> str:
-    masked = text
-    for secret in mask:
-        if secret:
-            masked = masked.replace(secret, "***")
-    return masked
-
-
-def run_command(
-    args: list[str],
-    cwd: Path | None = None,
-    timeout: int = DEFAULT_TIMEOUT,
-    input_text: str | None = None,
-    env: dict[str, str] | None = None,
-    mask: Iterable[str] = (),
-) -> CommandResult:
-    try:
-        completed = subprocess.run(
-            args,
-            cwd=cwd,
-            input=input_text.encode("utf-8") if input_text is not None else None,
-            env=env,
-            capture_output=True,
-            timeout=timeout,
-        )
-    except FileNotFoundError as exc:
-        return CommandResult(127, "", str(exc))
-    except subprocess.TimeoutExpired as exc:
-        stdout = decode_subprocess_output(exc.stdout)
-        stderr = decode_subprocess_output(exc.stderr)
-        return CommandResult(124, stdout, stderr or f"timeout after {timeout}s")
-
-    stdout = decode_subprocess_output(completed.stdout)
-    stderr = decode_subprocess_output(completed.stderr)
-    stdout = mask_text(stdout, mask)
-    stderr = mask_text(stderr, mask)
-    return CommandResult(completed.returncode, stdout, stderr)
-
-
-def stream_command(
-    args: list[str],
-    cwd: Path | None = None,
-    timeout: int | None = None,
-    env: dict[str, str] | None = None,
-    mask: Iterable[str] = (),
-) -> int:
-    mask_values = tuple(mask)
-    printable_args = [mask_text(str(arg), mask_values) for arg in args]
-    print(f"RUN {' '.join(printable_args)}", flush=True)
-    process = subprocess.Popen(
-        args,
-        cwd=cwd,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    start = time.monotonic()
-    try:
-        assert process.stdout is not None
-        for line in process.stdout:
-            print(mask_text(decode_subprocess_output(line), mask_values), end="", flush=True)
-            if timeout is not None and time.monotonic() - start > timeout:
-                process.kill()
-                print(f"ERROR: timeout after {timeout}s", file=sys.stderr, flush=True)
-                return 124
-        return process.wait()
-    finally:
-        if process.stdout is not None:
-            process.stdout.close()
-
-
-def load_dotenv_file(path: Path, required: bool) -> dict[str, str]:
-    if not path.exists():
-        if required:
-            raise RuntimeError(f"Файл не найден: {path}")
-        return {}
-    return {k.lstrip("\ufeff"): v for k, v in dotenv_values(path).items() if v is not None}
-
-
-def load_env(env_file: Path, secrets_file: Path, require_secrets: bool) -> dict[str, str]:
-    config = load_dotenv_file(env_file, required=True)
-    secrets = load_dotenv_file(secrets_file, required=require_secrets)
-    merged = {**config, **secrets}
-
-    if require_secrets:
-        db_user = merged.get("DB_LOGIN_USER", "").strip()
-        db_password = merged.get("DB_LOGIN_PASSWORD", "").strip()
-        if not db_user:
-            raise RuntimeError("DB_LOGIN_USER must be set in local.secrets.env")
-        if not db_password or db_password == "change-me":
-            raise RuntimeError("DB_LOGIN_PASSWORD must be set in local.secrets.env")
-
-    if "DB_LOGIN_USER" not in merged:
-        merged["DB_LOGIN_USER"] = "postgres"
-    if "DB_LOGIN_PASSWORD" not in merged:
-        merged["DB_LOGIN_PASSWORD"] = ""
-    return merged
-
-
 def load_runtime_config(config_file: Path) -> tuple[dict, list[str]]:
     config = json.loads(json.dumps(DEFAULT_RUNTIME_CONFIG))
     configured_keys: set[str] = set()
@@ -448,13 +348,6 @@ def management_commands(env: dict[str, str], runtime: dict) -> list[str]:
     ]
 
 
-def require_value(env: dict[str, str], name: str) -> str:
-    value = env.get(name, "").strip()
-    if not value:
-        raise RuntimeError(f"Не задана обязательная переменная: {name}")
-    return value
-
-
 def resolve_ssh_key_path(path_value: str) -> Path:
     path = Path(path_value).expanduser()
     if path.is_absolute():
@@ -474,101 +367,6 @@ def ssh_key_args(env: dict[str, str], scope: str) -> list[str]:
     if not path_value:
         return []
     return ["-i", str(resolve_ssh_key_path(path_value))]
-
-
-def windows_release_root(env: dict[str, str]) -> Path:
-    explicit = env.get("RELEASE_ROOT_WINDOWS", "").strip()
-    if explicit:
-        return Path(explicit)
-
-    wsl_path = env.get("RELEASE_ROOT_WSL", "").strip()
-    converted = wsl_to_windows_path(wsl_path)
-    if converted:
-        return Path(converted)
-
-    return ROOT / "releases"
-
-
-def wsl_to_windows_path(path: str) -> str:
-    if path.startswith("/mnt/") and len(path) > 6:
-        drive = path[5].upper()
-        rest = path[7:].replace("/", "\\")
-        return f"{drive}:\\{rest}"
-    return ""
-
-
-def to_git_bash_path(path: str | Path) -> str:
-    normalized = str(path).replace("\\", "/")
-    if len(normalized) >= 2 and normalized[1] == ":":
-        drive = normalized[0].lower()
-        rest = normalized[2:].lstrip("/")
-        return f"/{drive}/{rest}"
-    return normalized
-
-
-def prepare_build_env(env: dict[str, str]) -> dict[str, str]:
-    build_env = os.environ.copy()
-    build_env.update(env)
-    build_env.setdefault("PYTHONIOENCODING", "utf-8")
-
-    release_root = windows_release_root(env)
-    build_env.setdefault("RELEASE_ROOT_WINDOWS", str(release_root))
-    build_env.setdefault("BACKEND_BUILD_VENV_RELATIVE_PATH", ".venv/Scripts/activate.bat")
-    build_env.setdefault("BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH", "requirements.txt")
-    build_env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
-    build_env.setdefault("PIP_TRUSTED_HOST", PIP_TRUSTED_HOSTS)
-    if not build_env.get("BACKEND_APP_ROOT_DIR"):
-        build_env["BACKEND_APP_ROOT_DIR"] = DEFAULT_BACKEND_APP_ROOT_DIR
-    if not build_env.get("BACKEND_DJANGO_SETTINGS_MODULE"):
-        build_env["BACKEND_DJANGO_SETTINGS_MODULE"] = f"{build_env['BACKEND_APP_ROOT_DIR']}.settings.base"
-    if not build_env.get("RELEASE_ROOT_BASH"):
-        build_env["RELEASE_ROOT_BASH"] = to_git_bash_path(release_root)
-    build_env["BACKEND_REPO_ROOT_BASH"] = to_git_bash_path(require_value(env, "BACKEND_SOURCE_REPO_PATH"))
-    if not build_env.get("FRONTEND_DEV_SERVER_NAME"):
-        build_env["FRONTEND_DEV_SERVER_NAME"] = require_value(env, "DEV_DOMAIN")
-    return build_env
-
-
-def set_env_line(path: Path, key: str, value: str) -> None:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    prefix = f"{key}="
-    replaced = False
-    for index, line in enumerate(lines):
-        if line.startswith(prefix):
-            lines[index] = f"{key}={value}"
-            replaced = True
-            break
-    if not replaced:
-        lines.append(f"{key}={value}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def prepare_frontend_env_files(env: dict[str, str], build_version: str = "") -> None:
-    settings = [
-        ("frontend_dev", require_value(env, "DEV_DOMAIN")),
-        ("frontend_test", require_value(env, "TEST_DOMAIN")),
-        ("frontend_prod", require_value(env, "PROD_DOMAIN")),
-    ]
-    for dirname, domain in settings:
-        directory = BUILDER_ROOT / "settings" / dirname
-        template = directory / ".env.template"
-        target = directory / ".env"
-        if not template.exists():
-            raise RuntimeError(f"Не найден frontend template: {template}")
-        shutil.copy2(template, target)
-        base_url = f"https://{domain}"
-        replacements = {
-            "REACT_APP_BASE_BACKEND_URL": base_url,
-            "VITE_BASE_BACKEND_URL": base_url,
-            "REACT_APP_FILE_PROXY_SERVICE_URL": f"{base_url}/file/",
-            "VITE_FILE_PROXY_SERVICE_URL": f"{base_url}/file/",
-            "REACT_APP_FILTERS_SERVICE_URL": f"{base_url}/filters/",
-            "VITE_FILTERS_SERVICE_URL": f"{base_url}/filters/",
-        }
-        if build_version:
-            replacements["VITE_BUILD_VERSION"] = build_version
-        for key, value in replacements.items():
-            set_env_line(target, key, value)
 
 
 def check_command(reporter: Reporter, name: str, args: list[str]) -> bool:
@@ -1564,27 +1362,6 @@ def verify_maintenance_stub_http(env: dict[str, str], runtime: dict) -> None:
             time.sleep(delay)
 
     raise RuntimeError(f"maintenance stub HTTP check failed: {last_error}")
-
-
-def data_sql_artifacts_enabled(args: argparse.Namespace) -> bool:
-    return not getattr(args, "skip_data_sql_artifacts", False)
-
-
-def resolve_release_dir(env: dict[str, str], build_version: str, latest: bool) -> tuple[str, Path]:
-    release_root = windows_release_root(env)
-    print(f"RESOLVE release root: {release_root}", flush=True)
-    if latest:
-        dirs = [path for path in release_root.iterdir() if path.is_dir()] if release_root.exists() else []
-        if not dirs:
-            raise RuntimeError(f"В {release_root} не найдены директории релизов")
-        selected = max(dirs, key=lambda path: path.stat().st_mtime)
-        print(f"RESOLVE latest release: {selected.name} ({selected})", flush=True)
-        return selected.name, selected
-    if not build_version:
-        raise RuntimeError("Укажите --build-version или --latest")
-    selected = release_root / build_version
-    print(f"RESOLVE requested release: {selected.name} ({selected})", flush=True)
-    return build_version, selected
 
 
 def run_or_raise(label: str, result: CommandResult, mask: Iterable[str] = ()) -> None:

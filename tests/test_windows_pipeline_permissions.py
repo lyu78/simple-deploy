@@ -951,10 +951,10 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         }
         prepared_env = {"BASE": "1"}
 
-        with patch("tools.windows_pipeline.load_env", return_value=env) as load_env_mock:
-            with patch("tools.windows_pipeline.prepare_frontend_env_files") as frontend_env_mock:
-                with patch("tools.windows_pipeline.prepare_build_env", return_value=prepared_env) as prepare_env_mock:
-                    with patch("tools.windows_pipeline.stream_command", return_value=7) as stream_mock:
+        with patch("simple_deploy.processes.build.load_env", return_value=env) as load_env_mock:
+            with patch("simple_deploy.processes.build.prepare_frontend_env_files") as frontend_env_mock:
+                with patch("simple_deploy.processes.build.prepare_build_env", return_value=prepared_env) as prepare_env_mock:
+                    with patch("simple_deploy.processes.build.stream_command", return_value=7) as stream_mock:
                         self.assertEqual(build(args), 7)
 
         load_env_mock.assert_called_once_with(DEFAULT_ENV_FILE, DEFAULT_SECRETS_FILE, require_secrets=False)
@@ -980,9 +980,9 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
             "DEV_DOMAIN": DEV_DOMAIN,
         }
-        with patch("tools.windows_pipeline.load_env", return_value=env):
-            with patch("tools.windows_pipeline.prepare_frontend_env_files"):
-                with patch("tools.windows_pipeline.stream_command", return_value=0) as stream_mock:
+        with patch("simple_deploy.processes.build.load_env", return_value=env):
+            with patch("simple_deploy.processes.build.prepare_frontend_env_files"):
+                with patch("simple_deploy.processes.build.stream_command", return_value=0) as stream_mock:
                     self.assertEqual(build(args), 0)
 
         build_env = stream_mock.call_args.kwargs["env"]
@@ -1001,9 +1001,9 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
             "DEV_DOMAIN": DEV_DOMAIN,
         }
-        with patch("tools.windows_pipeline.load_env", return_value=env):
-            with patch("tools.windows_pipeline.prepare_frontend_env_files"):
-                with patch("tools.windows_pipeline.stream_command", return_value=0) as stream_mock:
+        with patch("simple_deploy.processes.build.load_env", return_value=env):
+            with patch("simple_deploy.processes.build.prepare_frontend_env_files"):
+                with patch("simple_deploy.processes.build.stream_command", return_value=0) as stream_mock:
                     self.assertEqual(build(args), 0)
 
         build_env = stream_mock.call_args.kwargs["env"]
@@ -1075,7 +1075,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "state.sqlite3"
             with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}, clear=True):
-                with patch("tools.windows_pipeline.load_env", return_value={}) as load_env_mock:
+                with patch("simple_deploy.processes.mark.load_env", return_value={}) as load_env_mock:
                     self.assertEqual(set_baseline(args), 0)
 
                 with closing(connect_state_db(db_path)) as connection:
@@ -1105,7 +1105,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             env = {"RELEASE_ROOT_WINDOWS": str(release_root)}
 
             with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}, clear=True):
-                with patch("tools.windows_pipeline.load_env", return_value=env):
+                with patch("simple_deploy.processes.mark.load_env", return_value=env):
                     self.assertEqual(mark_applied(args), 0)
 
                 with closing(connect_state_db(db_path)) as connection:
@@ -1140,7 +1140,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
                 upsert_contour_state(connection, "prod", PREVIOUS_BUILD_VERSION, PREVIOUS_BACKEND_COMMIT)
 
             with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}, clear=True):
-                with patch("tools.windows_pipeline.load_env", return_value=env):
+                with patch("simple_deploy.processes.mark.load_env", return_value=env):
                     self.assertEqual(mark_failed(args), 0)
 
                 with closing(connect_state_db(db_path)) as connection:
@@ -1174,7 +1174,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
                         "tools.windows_pipeline.resolve_artifacts",
                         side_effect=RuntimeError("artifact missing"),
                     ):
-                        with patch("tools.windows_pipeline.mark_contour_failed") as mark_failed_mock:
+                        with patch("simple_deploy.processes.mark.mark_contour_failed") as mark_failed_mock:
                             with self.assertRaisesRegex(RuntimeError, "artifact missing"):
                                 deploy(args)
 
@@ -1529,7 +1529,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
                         side_effect=RuntimeError("artifact missing"),
                     ):
                         with patch(
-                            "tools.windows_pipeline.mark_contour_failed",
+                            "simple_deploy.processes.mark.mark_contour_failed",
                             side_effect=RuntimeError("sqlite error"),
                         ):
                             with self.assertRaisesRegex(RuntimeError, "artifact missing"):

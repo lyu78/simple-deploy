@@ -683,6 +683,26 @@ implementation:
 - `processes` остаются владельцами текущей CLI-oriented orchestration, а application
   layer становится общей точкой подключения для будущих web/API и local jobs.
 
+### Статус пятнадцатого среза шага 6
+
+Пятнадцатый безопасный срез начал реальный отход process layer от `windows_pipeline`:
+
+- созданы core-модули `simple_deploy.core.paths`, `core.commands`, `core.env`,
+  `core.build_env` и `core.release_paths`;
+- `windows_pipeline.py` теперь реэкспортирует эти helper-ы через imports, но больше
+  не владеет их реализацией;
+- `processes.build` напрямую импортирует env/build/command helper-ы из `core` и
+  больше не содержит `_runner_module`;
+- `processes.mark` напрямую использует `core.env`, `core.release_paths`, release
+  manifest и registry commands, без импорта `simple_deploy.windows_pipeline`;
+- тестовые patch paths для build/mark переведены на новых владельцев, а старые
+  `tools.windows_pipeline.*` compatibility names сохранены для внешних imports.
+
+Следующий практический срез: убрать `_runner_module` из `processes.dry_run`, вынося
+dry-run-specific checks из `windows_pipeline.py` только по мере необходимости.
+`processes.deploy` и `processes.data_sql` остаются зависимыми от runner-а до переноса
+SSH/DB/app deploy helper-ов.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

@@ -24,12 +24,17 @@ CLI, web/API, builder-интеграции и будущим локальным 
 `simple_deploy/windows_pipeline.py`; это временный монолит, из которого код
 будет выноситься малыми срезами.
 
-Уже вынесены общие примитивы релизов:
+Уже вынесены общие примитивы release/deploy toolkit:
 
-- `release/state.py` - SQLite-состояние релизов, контуров, попыток build/deploy,
-  локальных заданий и внешних заявок;
+- `registry/state.py` - SQLite-состояние релизов, контуров, попыток build/deploy,
+  локальных заданий и внешних заявок; `release/state.py` оставлен compatibility
+  re-export-ом;
+- `registry/commands.py` и `registry/queries.py` - write/read boundary поверх SQLite;
 - `release/artifacts.py` - dataclass-модели и резолверы файлов релиза;
 - `release/manifest.py` - построение, чтение и запись `release_manifest.json`.
+- `core/paths.py`, `core/commands.py`, `core/env.py`, `core/build_env.py`,
+  `core/release_paths.py` - общие helper-ы, уже используемые build/mark процессами
+  без импорта `windows_pipeline`.
 - `types/` - первые constrained primitives для release/build version, commit SHA,
   contour, status, component, artifact и deployment target справочников.
 - `models/state.py` - внутренние модели чтения над SQLite state/API.
@@ -46,8 +51,9 @@ CLI, web/API, builder-интеграции и будущим локальным 
 - `config/` - слой чтения, структурной валидации и preflight policy checks
   конфигурации времени выполнения.
 - `contours/` - модели и правила контуров `dev`, `test`, `prod`.
-- `core/` - будущие общие вспомогательные функции для команд, путей,
-  логирования, SSH и файлов.
+- `core/` - общие вспомогательные функции для команд, путей, env, build-env,
+  release-path resolving; SSH и часть файловых helper-ов еще остаются в
+  compatibility runner-е.
 - `dto/` - внешние JSON/API контракты, отделенные от SQLite rows и dataclass state.
 - `jobs/` - модель и будущий runner локальных долгих операций.
 - `models/` - внутренние application/read модели между state/query и DTO.
@@ -83,6 +89,11 @@ CLI, web/API, builder-интеграции и будущим локальным 
 - логи в терминал и `logs/<timestamp>-<command>.log`;
 - поведение baseline: он двигается только после подтвержденного успешного
   применения релиза или явной ручной фиксации.
+
+Текущий dependency baseline: `processes.build` и `processes.mark` уже не
+импортируют `simple_deploy.windows_pipeline`; `processes.dry_run`, `processes.data_sql`
+и `processes.deploy` пока используют runner как compatibility host для оставшихся
+dry-run, SSH, DB и deploy helper-ов.
 
 ## Документация и проверки
 
