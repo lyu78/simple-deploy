@@ -4,6 +4,13 @@ Registry - это область, через которую прикладной
 локальной историей и operational state toolkit-а: release bundles, contour
 baselines, build/deploy attempts, local jobs и external TEST/PROD requests.
 
+Пакет разделяет низкоуровневый storage API, read/query проекции и write/use-case
+команды:
+
+* ``registry.state`` - compatibility API текущей SQLite implementation;
+* ``registry.queries`` - read models для dashboard/API;
+* ``registry.commands`` - небольшие write-команды поверх state.
+
 Сейчас реализация SQLite еще физически находится в ``simple_deploy.release.state``.
 Этот пакет намеренно переэкспортирует тот же API как compatibility boundary:
 новые query/application слои могут импортировать state из ``simple_deploy.registry``

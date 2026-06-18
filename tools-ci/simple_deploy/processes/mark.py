@@ -10,16 +10,15 @@ deploy-попытки. Источники истины разделены явн
 from __future__ import annotations
 
 import argparse
-from contextlib import closing
 from pathlib import Path
 
 from simple_deploy.release.manifest import release_backend_commit
-from simple_deploy.release.state import (
-    connect_state_db,
-    record_attempt,
-    upsert_contour_state,
-    validate_contour,
+from simple_deploy.registry.commands import (
+    record_deployment_applied,
+    record_deployment_failed,
+    set_contour_baseline,
 )
+from simple_deploy.registry.state import validate_contour
 
 
 def _runner_module():
@@ -39,16 +38,14 @@ def mark_contour_applied(contour: str, build_version: str, release_dir: Path) ->
     """Фиксирует успешное применение релиза и двигает baseline.
 
     Backend commit берется из ``release_manifest.json`` выбранного релиза.
-    Функция обновляет ``contour_state`` и пишет успешную запись в
-    ``deployment_attempts`` одной SQLite-транзакцией соединения.
+    Функция делегирует запись ``contour_state`` и ``deployment_attempts`` в
+    ``simple_deploy.registry.commands``.
     """
-    contour = validate_contour(contour)
     backend_commit = release_backend_commit(release_dir)
-    with closing(connect_state_db()) as connection:
-        upsert_contour_state(connection, contour, build_version, backend_commit)
-        record_attempt(connection, contour, build_version, backend_commit, "success")
+    result = record_deployment_applied(contour, build_version, backend_commit)
     print(
-        f"MARK applied: contour={contour} build_version={build_version} backend_commit={backend_commit}",
+        f"MARK applied: contour={result.contour} "
+        f"build_version={result.build_version} backend_commit={result.backend_commit}",
         flush=True,
     )
 
@@ -60,15 +57,14 @@ def mark_contour_failed(contour: str, build_version: str, release_dir: Path, err
     пустым backend commit. Это важно для ручной фиксации отказа TEST/PROD, где
     переносимый пакет мог быть неполным.
     """
-    contour = validate_contour(contour)
     try:
         backend_commit = release_backend_commit(release_dir)
     except Exception:
         backend_commit = ""
-    with closing(connect_state_db()) as connection:
-        record_attempt(connection, contour, build_version, backend_commit, "failed", error_text)
+    result = record_deployment_failed(contour, build_version, backend_commit, error_text)
     print(
-        f"MARK failed: contour={contour} build_version={build_version} backend_commit={backend_commit}",
+        f"MARK failed: contour={result.contour} "
+        f"build_version={result.build_version} backend_commit={result.backend_commit}",
         flush=True,
     )
 
@@ -108,10 +104,10 @@ def set_baseline(args: argparse.Namespace) -> int:
     else:
         build_version, release_dir = runner.resolve_release_dir(env, args.build_version, latest=False)
         backend_commit = release_backend_commit(release_dir)
-    with closing(connect_state_db()) as connection:
-        upsert_contour_state(connection, contour, build_version, backend_commit)
+    result = set_contour_baseline(contour, build_version, backend_commit)
     print(
-        f"BASELINE set: contour={contour} build_version={build_version} backend_commit={backend_commit}",
+        f"BASELINE set: contour={result.contour} "
+        f"build_version={result.build_version} backend_commit={result.backend_commit}",
         flush=True,
     )
     return 0

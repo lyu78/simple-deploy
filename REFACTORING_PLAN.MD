@@ -581,6 +581,21 @@ implementation:
   aliases, поэтому HTTP/DTO слой не становится владельцем query API;
 - JSON-контракт dashboard/API не менялся.
 
+### Статус седьмого среза шага 6
+
+Седьмой безопасный срез начал write/use-case boundary для registry:
+
+- добавлен модуль `tools-ci/simple_deploy/registry/commands.py`;
+- команды `set_contour_baseline`, `record_deployment_applied` и
+  `record_deployment_failed` инкапсулируют запись baseline/deployment attempts
+  поверх `registry.state`;
+- `processes.mark` больше не пишет SQLite напрямую и делегирует state changes в
+  `registry.commands`;
+- чтение `release_manifest.json` осталось в process layer, поэтому registry не
+  зависит от release artifacts или CLI;
+- CLI-поведение `set-baseline`, `mark-applied`, `mark-failed` и SQLite-схема не
+  менялись.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:
