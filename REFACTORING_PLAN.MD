@@ -671,6 +671,18 @@ implementation:
 - deploy/build/CLI пока не используют эту topology для принятия решений, поэтому runtime
   поведение не менялось.
 
+### Статус четырнадцатого среза шага 6
+
+Четырнадцатый безопасный срез ввел application service boundary над текущими процессами:
+
+- создан пакет `simple_deploy.application` и модуль `application.services`;
+- application services `build`, `deploy`, `set_baseline`, `mark_applied` и
+  `mark_failed` делегируют существующим process modules без изменения orchestration;
+- совместимый Windows runner импортирует верхнеуровневые команды из application layer,
+  но сохраняет старые `tools.windows_pipeline.*` patch/import paths;
+- `processes` остаются владельцами текущей CLI-oriented orchestration, а application
+  layer становится общей точкой подключения для будущих web/API и local jobs.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

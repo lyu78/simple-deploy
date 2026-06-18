@@ -41,6 +41,8 @@ CLI, web/API, builder-интеграции и будущим локальным 
 ## Карта пакета
 
 - `cli/` - тонкие CLI-точки входа. Здесь не должно быть логики build/deploy.
+- `application/` - прикладные сервисы над process modules для CLI, web/API и
+  будущих local jobs.
 - `config/` - слой чтения, структурной валидации и preflight policy checks
   конфигурации времени выполнения.
 - `contours/` - модели и правила контуров `dev`, `test`, `prod`.
@@ -61,8 +63,8 @@ CLI, web/API, builder-интеграции и будущим локальным 
 
 Новый код процесса не добавляется в `simple_deploy/windows_pipeline.py`, если
 его можно положить в целевой модуль. Монолит можно менять как адаптер: оставить
-публичные команды и делегировать работу в `processes/`, `release/`, `config/`,
-`core/` или `jobs/`.
+публичные команды и делегировать работу в `application/`, `processes/`,
+`release/`, `config/`, `core/` или `jobs/`.
 
 При шаге 5 из `REFACTORING_PLAN.MD` процессы нужно выносить по одному:
 

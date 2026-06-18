@@ -81,16 +81,18 @@ from simple_deploy.processes.data_sql import (  # noqa: E402
     upload_unpack_db_sql_artifact,
 )
 from simple_deploy.processes.mark import (  # noqa: E402
-    mark_applied,
     mark_contour_applied,
     mark_contour_failed,
     mark_contour_failed_best_effort,
+)
+from simple_deploy.application.services import (  # noqa: E402
+    build,
+    deploy,
+    mark_applied,
     mark_failed,
     set_baseline,
 )
-from simple_deploy.processes.build import build  # noqa: E402
 from simple_deploy.processes.dry_run import dry_run, required_env_keys  # noqa: E402
-from simple_deploy.processes.deploy import deploy  # noqa: E402
 
 DEFAULT_ENV_FILE = ROOT / ".env"
 DEFAULT_SECRETS_FILE = ROOT / "local.secrets.env"
