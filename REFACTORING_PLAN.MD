@@ -610,6 +610,19 @@ implementation:
 - `processes.build` продолжает только запускать builder как отдельный процесс;
 - CLI/builder поведение, manifest format и SQLite-схема не менялись.
 
+### Статус девятого среза шага 6
+
+Девятый безопасный срез закрыл оставшиеся мелкие write commands registry:
+
+- `registry.commands` получил команды для lifecycle local jobs:
+  `create_local_job`, `mark_local_job_started`, `finish_local_job`;
+- добавлены команды для external TEST/PROD requests:
+  `create_release_external_request`, `update_release_external_request_status`;
+- команды возвращают прочитанные `JobRecord`/`ExternalRequest`, а не только id,
+  чтобы application/web слои не лезли в storage API после записи;
+- низкоуровневые `registry.state` functions оставлены для storage compatibility;
+- SQLite-схема и существующие read/query контракты не менялись.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

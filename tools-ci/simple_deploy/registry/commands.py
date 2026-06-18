@@ -13,6 +13,8 @@ from contextlib import closing
 from dataclasses import dataclass
 
 from simple_deploy.registry import state
+from simple_deploy.types.job import JobKind
+from simple_deploy.types.request import ExternalRequestType
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,39 @@ class ReleaseBundleRecordResult:
     build_version: str
     backend_commit: str
     frontend_commit: str | None
+
+
+@dataclass(frozen=True)
+class LocalJobCommandResult:
+    """Результат registry-команды изменения local job."""
+
+    job: state.JobRecord
+
+
+@dataclass(frozen=True)
+class ExternalRequestCommandResult:
+    """Результат registry-команды изменения external request."""
+
+    request: state.ExternalRequest
+
+
+def _require_job(job: state.JobRecord | None, job_id: int) -> state.JobRecord:
+    """Возвращает job или поднимает ошибку нарушенного storage-инварианта."""
+    if job is None:
+        raise RuntimeError(f"Local job was not found after registry command: id={job_id}")
+    return job
+
+
+def _require_external_request(
+    request: state.ExternalRequest | None,
+    request_id: int,
+) -> state.ExternalRequest:
+    """Возвращает external request или поднимает ошибку нарушенного storage-инварианта."""
+    if request is None:
+        raise RuntimeError(
+            f"External request was not found after registry command: id={request_id}"
+        )
+    return request
 
 
 def record_release_bundle(
@@ -114,6 +149,85 @@ def finish_build_attempt(
     )
 
 
+def create_local_job(
+    kind: JobKind,
+    contour: str = "",
+    build_version: str = "",
+    payload: dict | None = None,
+    log_path: str = "",
+) -> LocalJobCommandResult:
+    """Создает local job в статусе ``queued``."""
+    with closing(state.connect_state_db()) as connection:
+        job_id = state.create_job(
+            connection,
+            kind=kind,
+            contour=contour,
+            build_version=build_version,
+            payload=payload,
+            log_path=log_path,
+        )
+        job = state.get_job(connection, job_id)
+    return LocalJobCommandResult(_require_job(job, job_id))
+
+
+def mark_local_job_started(job_id: int, log_path: str = "") -> LocalJobCommandResult:
+    """Помечает local job как ``running``."""
+    with closing(state.connect_state_db()) as connection:
+        state.mark_job_started(connection, job_id, log_path=log_path)
+        job = state.get_job(connection, job_id)
+    return LocalJobCommandResult(_require_job(job, job_id))
+
+
+def finish_local_job(job_id: int, status: str, error: str = "") -> LocalJobCommandResult:
+    """Помечает local job терминальным статусом."""
+    with closing(state.connect_state_db()) as connection:
+        state.mark_job_finished(connection, job_id, status=status, error=error)
+        job = state.get_job(connection, job_id)
+    return LocalJobCommandResult(_require_job(job, job_id))
+
+
+def create_release_external_request(
+    contour: str,
+    build_version: str,
+    request_type: ExternalRequestType,
+    external_id: str = "",
+    payload: dict | None = None,
+    status: str = "draft",
+) -> ExternalRequestCommandResult:
+    """Создает external TEST/PROD request."""
+    with closing(state.connect_state_db()) as connection:
+        request_id = state.create_external_request(
+            connection,
+            contour=contour,
+            build_version=build_version,
+            request_type=request_type,
+            external_id=external_id,
+            payload=payload,
+            status=status,
+        )
+        request = state.get_external_request(connection, request_id)
+    return ExternalRequestCommandResult(_require_external_request(request, request_id))
+
+
+def update_release_external_request_status(
+    request_id: int,
+    status: str,
+    error: str = "",
+    external_id: str | None = None,
+) -> ExternalRequestCommandResult:
+    """Обновляет статус external TEST/PROD request."""
+    with closing(state.connect_state_db()) as connection:
+        state.update_external_request_status(
+            connection,
+            request_id=request_id,
+            status=status,
+            error=error,
+            external_id=external_id,
+        )
+        request = state.get_external_request(connection, request_id)
+    return ExternalRequestCommandResult(_require_external_request(request, request_id))
+
+
 def set_contour_baseline(
     contour: str,
     build_version: str,
@@ -155,11 +269,18 @@ def record_deployment_failed(
 __all__ = [
     "BuildAttemptResult",
     "DeploymentMarkResult",
+    "ExternalRequestCommandResult",
+    "LocalJobCommandResult",
     "ReleaseBundleRecordResult",
+    "create_local_job",
+    "create_release_external_request",
     "finish_build_attempt",
+    "finish_local_job",
+    "mark_local_job_started",
     "record_deployment_applied",
     "record_deployment_failed",
     "record_release_bundle",
     "set_contour_baseline",
     "start_build_attempt",
+    "update_release_external_request_status",
 ]

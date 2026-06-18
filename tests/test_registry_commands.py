@@ -20,18 +20,25 @@ PREVIOUS_BACKEND_COMMIT = "prev123"
 sys.path.insert(0, str(TOOLS_CI_ROOT))
 
 from simple_deploy.registry.commands import (
+    create_local_job,
+    create_release_external_request,
     finish_build_attempt,
+    finish_local_job,
+    mark_local_job_started,
     record_deployment_applied,
     record_deployment_failed,
     record_release_bundle,
     set_contour_baseline,
     start_build_attempt,
+    update_release_external_request_status,
 )
 from simple_deploy.registry.state import (
     connect_state_db,
     get_contour_state,
     list_build_attempts,
     list_deployment_attempts,
+    list_external_requests,
+    list_jobs,
     list_releases,
 )
 
@@ -162,6 +169,60 @@ class RegistryCommandTests(unittest.TestCase):
         self.assertEqual(releases[0]["backend_commit"], TEST_BACKEND_COMMIT)
         self.assertEqual(releases[0]["frontend_commit"], "front-final")
         self.assertEqual(releases[0]["artifacts_json"], '{"backend": "backend.tar.gz"}')
+
+    def test_local_job_commands_record_lifecycle(self):
+        """Local job commands создают queued job и двигают его lifecycle."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / STATE_DB_NAME
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
+                created = create_local_job(
+                    "DEPLOY",
+                    contour="DEV",
+                    build_version=TEST_BUILD_VERSION,
+                    payload={"latest": True},
+                )
+                started = mark_local_job_started(created.job.id, log_path="logs/deploy.log")
+                finished = finish_local_job(created.job.id, "SUCCESS")
+
+            with closing(connect_state_db(db_path)) as connection:
+                jobs = list_jobs(connection)
+
+        self.assertEqual(created.job.status, "queued")
+        self.assertEqual(started.job.status, "running")
+        self.assertEqual(started.job.log_path, "logs/deploy.log")
+        self.assertEqual(finished.job.status, "success")
+        self.assertEqual(finished.job.kind, "deploy")
+        self.assertEqual(finished.job.contour, "dev")
+        self.assertEqual(finished.job.build_version, TEST_BUILD_VERSION)
+        self.assertEqual(jobs[0].id, created.job.id)
+
+    def test_external_request_commands_record_lifecycle(self):
+        """External request commands создают request и обновляют его статус."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / STATE_DB_NAME
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
+                created = create_release_external_request(
+                    "TEST",
+                    TEST_BUILD_VERSION,
+                    "DEPLOY",
+                    payload={"package": "release.tar.gz"},
+                )
+                updated = update_release_external_request_status(
+                    created.request.id,
+                    "SUBMITTED",
+                    external_id="REQ-123",
+                )
+
+            with closing(connect_state_db(db_path)) as connection:
+                requests = list_external_requests(connection, contour="test")
+
+        self.assertEqual(created.request.status, "draft")
+        self.assertEqual(created.request.request_type, "deploy")
+        self.assertEqual(updated.request.status, "submitted")
+        self.assertEqual(updated.request.external_id, "REQ-123")
+        self.assertEqual(updated.request.contour, "test")
+        self.assertEqual(updated.request.build_version, TEST_BUILD_VERSION)
+        self.assertEqual(requests[0].id, created.request.id)
 
 
 if __name__ == "__main__":
