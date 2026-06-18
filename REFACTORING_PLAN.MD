@@ -456,7 +456,7 @@ steps, healthcheck, email и summary. Механический перенос э
 Порядок шага 6:
 
 1. Начать с `types` для контуров, статусов, artifact scope/kind, компонентов,
-   target roles, trigger types и базовых строковых идентификаторов.
+   deploy entrypoint roles, trigger types и базовых строковых идентификаторов.
 2. Добавить read-only `models` поверх текущего SQLite state/API без изменения
    поведения.
 3. Добавить `dto` для внешнего read-only API/dashboard и держать response DTO
@@ -698,10 +698,76 @@ implementation:
 - тестовые patch paths для build/mark переведены на новых владельцев, а старые
   `tools.windows_pipeline.*` compatibility names сохранены для внешних imports.
 
-Следующий практический срез: убрать `_runner_module` из `processes.dry_run`, вынося
-dry-run-specific checks из `windows_pipeline.py` только по мере необходимости.
-`processes.deploy` и `processes.data_sql` остаются зависимыми от runner-а до переноса
-SSH/DB/app deploy helper-ов.
+### Статус шестнадцатого среза шага 6
+
+Шестнадцатый безопасный срез убрал оставшиеся обратные зависимости process layer от `windows_pipeline`:
+
+- загрузка runtime config перенесена в `config.runtime_loader`;
+- построение SSH/SCP-команд, DB psql-команд, форматирование email и `run_or_raise` перенесены в `core`;
+- dry-run проверки перенесены в `processes.dry_run_checks`, а `processes.dry_run` больше не содержит `_runner_module`;
+- process-код DB schema/data SQL импортирует `core` helper-ы напрямую и больше не импортирует compatibility runner;
+- helper-ы app deploy, HTTP healthcheck и Outlook-уведомлений перенесены в `processes.app_deploy`,
+  `processes.healthcheck` и `processes.notifications`;
+- `processes.deploy` импортирует process/core/release/registry зависимости напрямую, без `simple_deploy.windows_pipeline`;
+- `simple_deploy.windows_pipeline` остается CLI/logging compatibility-модулем и re-export host-ом для старых
+  import paths `tools.windows_pipeline.*`.
+
+Следующий практический срез: дальше уменьшать compatibility-модуль, переводя re-export-only test patch paths
+на прямых владельцев и перенося оставшиеся CLI/logging детали в сторону `simple_deploy.cli.windows_pipeline`,
+без изменения публичной точки входа `tools-ci/tools/windows_pipeline.py`.
+
+### Статус семнадцатого среза шага 6
+
+Семнадцатый безопасный срез зафиксировал правило для доменных справочников:
+
+- доменный тип справочника представлен только enum-классом: `ArtifactKindEnum`,
+  `JobKindEnum`, `ReleaseTriggerTypeEnum` и аналогичными `*Enum`;
+- alias-типы без `Enum` вроде `ArtifactKind`, `JobKind` и
+  `ReleaseTriggerType` удалены, чтобы в коде не было второго имени для того же
+  доменного понятия;
+- tuples вроде `RELEASE_TRIGGER_TYPES`, `JOB_STATUSES` и
+  `SERVICE_STEP_PHASES` строятся через `Enum.get_values()` и содержат строковые
+  значения для CLI choices, ручных storage-проверок и документации допустимых
+  значений;
+- `Literal[...]` не используется как доменный тип; он допустим только на
+  границах примитивного ввода, где модель принимает строку, например
+  `JobContourScope` для contour scope local job;
+- enum-like значения больше не нормализуются через `strip`/`lower`: вход обязан
+  совпадать со значением справочника точно;
+- отсутствие технического release trigger фиксируется значением
+  `ReleaseTriggerTypeEnum.UNDEFINED`, а не `None`.
+
+### Статус восемнадцатого среза шага 6
+
+Восемнадцатый безопасный срез описал смысловые строковые primitive-поля:
+
+- добавлен модуль `simple_deploy.types.fields` с `Annotated[..., Field(description=...)]`
+  для timestamp-ов, JSON payload/artifacts, log path, external id, source refs,
+  artifact paths и текстов ошибок/вывода;
+- `ReleaseVersionString`, `OptionalBuildVersionString`, `CommitShaString`,
+  `OptionalCommitShaString` и `RepoId` получили `Field(description=...)`
+  поверх уже существующих `StringConstraints`;
+- read/API-модели state, release entities, registry records, command results и
+  artifact records используют описанные primitive aliases вместо голых `str`
+  там, где поле является частью контракта;
+- строковые `*Id` aliases документируют ожидаемый формат и смысл: например,
+  `RepoId` - это стабильный slug логического repository (`backend`,
+  `frontend-app`), а не числовой database id, URL или filesystem path;
+- `ReleaseVersionString` и `BuildVersionString` имеют одинаковый строковый
+  формат, но разный смысл: release version идентифицирует release resource, а
+  build version является техническим ключом собранного release bundle; сам
+  bundle - отдельная структура с artifacts, source snapshot и metadata;
+- `DeploymentTargetRoleEnum` документируется как справочник ролей deploy
+  entrypoint-ов: это VM/server targets внутри landscape, а не компоненты и не
+  CLI entrypoints;
+- `JobContourScope` заменяет прежний optional contour: пустая строка означает
+  unscoped local job, например build без deploy-контура, а contour-scoped jobs
+  вроде deploy/set_baseline/mark_* требуют реальный contour;
+- enum-поля не заменялись на `Annotated[str, ...]`: справочники остаются
+  `*Enum`, а `Literal[...]` используется только для примитивных boundary-случаев
+  вроде contour scope в local job;
+- добавлены тесты, которые проверяют, что descriptions реально попадают в
+  JSON schema Pydantic-моделей и `TypeAdapter`.
 
 ### Отложенное улучшение: data SQL set_default artifacts
 

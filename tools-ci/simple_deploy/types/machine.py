@@ -6,7 +6,6 @@ from typing import Annotated
 
 from pydantic import StringConstraints
 
-
 MACHINE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
 
 

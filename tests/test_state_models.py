@@ -88,6 +88,25 @@ class StateModelTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             release.backend_commit = "654321"
 
+    def test_state_read_model_schema_contains_field_descriptions(self):
+        """Read-модели отдают описания смысловых строковых полей."""
+        release_schema = ReleaseBundleReadModel.model_json_schema()
+        job_schema = JobReadModel.model_json_schema()
+        request_schema = ExternalRequestReadModel.model_json_schema()
+
+        self.assertIn(
+            "UTC timestamp",
+            release_schema["properties"]["created_at"]["description"],
+        )
+        self.assertIn(
+            "log-файлу",
+            job_schema["properties"]["log_path"]["description"],
+        )
+        self.assertIn(
+            "Строковый идентификатор",
+            request_schema["properties"]["external_id"]["description"],
+        )
+
     def test_state_snapshot_read_model_converts_to_api_dto(self):
         """Снимок состояния конвертируется во внешний DTO без смены формы JSON."""
         snapshot = StateSnapshotReadModel(
@@ -152,7 +171,7 @@ class StateModelTests(unittest.TestCase):
             jobs=[
                 JobReadModel(
                     id=1,
-                    kind="deploy",
+                    kind="build",
                     contour="",
                     build_version="",
                     status="queued",
@@ -186,7 +205,7 @@ class StateModelTests(unittest.TestCase):
         """Модели чтения проверяют справочники заданий и внешних заявок."""
         job = JobReadModel(
             id=1,
-            kind="DEPLOY",
+            kind="deploy",
             contour="dev",
             build_version=TEST_BUILD_VERSION,
             status="queued",
@@ -201,7 +220,7 @@ class StateModelTests(unittest.TestCase):
             id=1,
             contour="test",
             build_version=TEST_BUILD_VERSION,
-            request_type="DEPLOY",
+            request_type="deploy",
             status="draft",
             external_id="",
             payload_json="{}",
@@ -212,6 +231,33 @@ class StateModelTests(unittest.TestCase):
 
         self.assertEqual(job.kind, "deploy")
         self.assertEqual(request.request_type, "deploy")
+        with self.assertRaises(ValidationError):
+            JobReadModel(
+                id=1,
+                kind="DEPLOY",
+                contour="dev",
+                build_version=TEST_BUILD_VERSION,
+                status="queued",
+                payload_json="{}",
+                log_path="",
+                error="",
+                created_at=TEST_TIMESTAMP,
+                started_at="",
+                finished_at="",
+            )
+        with self.assertRaises(ValidationError):
+            ExternalRequestReadModel(
+                id=1,
+                contour="test",
+                build_version=TEST_BUILD_VERSION,
+                request_type="DEPLOY",
+                status="draft",
+                external_id="",
+                payload_json="{}",
+                error="",
+                created_at=TEST_TIMESTAMP,
+                updated_at=TEST_TIMESTAMP,
+            )
         with self.assertRaises(ValidationError):
             JobReadModel(
                 id=1,

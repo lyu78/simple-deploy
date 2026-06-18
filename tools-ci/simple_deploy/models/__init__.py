@@ -24,10 +24,10 @@ from simple_deploy.models.state import (
     ReleaseBundleReadModel,
     ReleaseModel,
     ReleaseReadModel,
-    ReleaseReferenceModel,
-    ReleaseReferenceReadModel,
     ReleaseRecordModel,
     ReleaseRecordReadModel,
+    ReleaseReferenceModel,
+    ReleaseReferenceReadModel,
     StateSnapshotModel,
     StateSnapshotReadModel,
 )

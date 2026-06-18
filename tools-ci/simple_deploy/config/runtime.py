@@ -1,4 +1,5 @@
-"""Pydantic-модели текущей runtime-конфигурации Windows runner.
+"""
+Pydantic-модели текущей runtime-конфигурации Windows runner.
 
 Runtime config - это operational-параметры запуска уже существующего runner-а.
 Он описывает не "топологию продукта", а конкретные переключатели и команды:
@@ -7,31 +8,39 @@ Runtime config - это operational-параметры запуска уже с�
 
 Минимальный пример смысла полей::
 
-    {
-        "maintenance_stub_enabled": true,
-        "data_sql_enabled": true,
-        "db_update_parallel_max_workers": 4,
-        "service_steps": [
-            {"phase": "after_migrate", "command": "systemctl restart app"}
-        ],
-        "healthcheck_retries": 20
-    }
+{ "maintenance_stub_enabled": true, "data_sql_enabled": true,
+"db_update_parallel_max_workers": 4, "service_steps": [ {"phase":
+"after_migrate", "command": "systemctl restart app"} ], "healthcheck_retries":
+20 }
 
 В отличие от ``config.topology``, этот модуль не знает, какие source
 repositories образуют компонент и на каких deployment targets он размещается.
-Он сохраняет текущий контракт ``windows_pipeline.local.json`` и только добавляет
-typed-валидацию/нормализацию вокруг него.
+Он сохраняет текущий контракт ``windows_pipeline.local.json`` и только
+добавляет typed-валидацию/нормализацию вокруг него.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, StringConstraints
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    StringConstraints,
+)
 
-from simple_deploy.types.runtime import MaintenanceSqlPhase, ServiceStepPhase
+from simple_deploy.types.runtime import (
+    MaintenanceSqlPhaseEnum,
+    ServiceStepPhaseEnum,
+)
 
-NonEmptyString = Annotated[StrictStr, StringConstraints(strip_whitespace=True, min_length=1)]
+NonEmptyString = Annotated[
+    StrictStr, StringConstraints(strip_whitespace=True, min_length=1)
+]
 PositiveStrictInt = Annotated[StrictInt, Field(gt=0)]
 
 
@@ -45,14 +54,14 @@ class SqlScriptConfigModel(_RuntimeConfigBaseModel):
     """Структурное описание SQL script entry из runtime config."""
 
     path: NonEmptyString
-    phase: MaintenanceSqlPhase
+    phase: MaintenanceSqlPhaseEnum
 
 
 class ServiceStepConfigModel(_RuntimeConfigBaseModel):
     """Структурное описание service step entry из runtime config."""
 
     command: NonEmptyString
-    phase: ServiceStepPhase = "after_migrate"
+    phase: ServiceStepPhaseEnum = ServiceStepPhaseEnum.AFTER_MIGRATE
     name: StrictStr | None = None
     permission_check_command: StrictStr | None = None
 
@@ -76,7 +85,7 @@ class RuntimeConfigModel(_RuntimeConfigBaseModel):
     db_maintenance_enabled: StrictBool
     db_psql_bin: NonEmptyString
     db_psql_host: NonEmptyString
-    db_maintenance_sql_phase: MaintenanceSqlPhase
+    db_maintenance_sql_phase: MaintenanceSqlPhaseEnum
     db_maintenance_sql: list[NonEmptyString]
     db_maintenance_sql_timeout_seconds: PositiveStrictInt
     db_data_sql_timeout_seconds: PositiveStrictInt
@@ -103,15 +112,14 @@ class RuntimeConfigModel(_RuntimeConfigBaseModel):
 
 def runtime_config_model(runtime: Mapping[str, object]) -> RuntimeConfigModel:
     """Преобразует mapping из runtime JSON в структурную Pydantic-модель."""
-
     return RuntimeConfigModel.model_validate(runtime)
 
 
 __all__ = [
-    "MaintenanceSqlPhase",
+    "MaintenanceSqlPhaseEnum",
     "RuntimeConfigModel",
     "ServiceStepConfigModel",
-    "ServiceStepPhase",
+    "ServiceStepPhaseEnum",
     "SqlScriptConfigModel",
     "runtime_config_model",
 ]

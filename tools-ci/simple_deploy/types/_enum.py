@@ -5,8 +5,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import TypeVar
 
-
-DomainStringEnumType = TypeVar("DomainStringEnumType", bound="DomainStringEnum")
+DomainStringEnumType = TypeVar(
+    "DomainStringEnumType", bound="DomainStringEnum"
+)
 
 
 class DomainStringEnum(str, Enum):
@@ -14,7 +15,7 @@ class DomainStringEnum(str, Enum):
 
     @classmethod
     def get_values(cls: type[DomainStringEnumType]) -> tuple[str, ...]:
-        """Возвращает значения справочника в порядке объявления."""
+        """Возвращает строковые значения справочника в порядке объявления."""
         return tuple(item.value for item in cls)
 
 

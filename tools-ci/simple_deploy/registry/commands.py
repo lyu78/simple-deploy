@@ -13,17 +13,25 @@ from contextlib import closing
 from dataclasses import dataclass
 
 from simple_deploy.registry import state
-from simple_deploy.types.job import JobKind
-from simple_deploy.types.request import ExternalRequestType
+from simple_deploy.types.contour import ContourCodeEnum
+from simple_deploy.types.fields import ErrorText
+from simple_deploy.types.job import JobKindEnum
+from simple_deploy.types.release import (
+    BuildVersionString,
+    OptionalBuildVersionString,
+)
+from simple_deploy.types.request import ExternalRequestTypeEnum
+from simple_deploy.types.source import CommitShaString, OptionalCommitShaString
+from simple_deploy.types.status import BuildAttemptStatusEnum
 
 
 @dataclass(frozen=True)
 class DeploymentMarkResult:
     """Результат registry-команды фиксации deploy state."""
 
-    contour: str
-    build_version: str
-    backend_commit: str
+    contour: ContourCodeEnum
+    build_version: BuildVersionString
+    backend_commit: CommitShaString
 
 
 @dataclass(frozen=True)
@@ -31,20 +39,20 @@ class BuildAttemptResult:
     """Результат registry-команды фиксации build attempt."""
 
     attempt_id: int
-    build_version: str
-    backend_commit: str
-    frontend_commit: str
-    status: str
-    error: str = ""
+    build_version: OptionalBuildVersionString
+    backend_commit: OptionalCommitShaString
+    frontend_commit: OptionalCommitShaString
+    status: BuildAttemptStatusEnum
+    error: ErrorText = ""
 
 
 @dataclass(frozen=True)
 class ReleaseBundleRecordResult:
     """Результат registry-команды записи успешного release bundle."""
 
-    build_version: str
-    backend_commit: str
-    frontend_commit: str | None
+    build_version: BuildVersionString
+    backend_commit: CommitShaString
+    frontend_commit: OptionalCommitShaString
 
 
 @dataclass(frozen=True)
@@ -64,7 +72,9 @@ class ExternalRequestCommandResult:
 def _require_job(job: state.JobRecord | None, job_id: int) -> state.JobRecord:
     """Возвращает job или поднимает ошибку нарушенного storage-инварианта."""
     if job is None:
-        raise RuntimeError(f"Local job was not found after registry command: id={job_id}")
+        raise RuntimeError(
+            f"Local job was not found after registry command: id={job_id}"
+        )
     return job
 
 
@@ -72,10 +82,14 @@ def _require_external_request(
     request: state.ExternalRequest | None,
     request_id: int,
 ) -> state.ExternalRequest:
-    """Возвращает external request или поднимает ошибку нарушенного storage-инварианта."""
+    """
+    Возвращает external request или поднимает ошибку нарушенного storage-
+    инварианта.
+    """
     if request is None:
         raise RuntimeError(
-            f"External request was not found after registry command: id={request_id}"
+            "External request was not found after registry command: "
+            f"id={request_id}"
         )
     return request
 
@@ -95,7 +109,9 @@ def record_release_bundle(
             frontend_commit=frontend_commit,
             artifacts=artifacts,
         )
-    return ReleaseBundleRecordResult(build_version, backend_commit, frontend_commit)
+    return ReleaseBundleRecordResult(
+        build_version, backend_commit, frontend_commit or ""
+    )
 
 
 def start_build_attempt(
@@ -116,7 +132,7 @@ def start_build_attempt(
         build_version=build_version,
         backend_commit=backend_commit,
         frontend_commit=frontend_commit,
-        status="started",
+        status=BuildAttemptStatusEnum.STARTED,
     )
 
 
@@ -130,6 +146,7 @@ def finish_build_attempt(
 ) -> BuildAttemptResult:
     """Фиксирует терминальный статус build attempt."""
     status = state.validate_status(status, {"success", "failed"})
+    status_enum = BuildAttemptStatusEnum(status)
     with closing(state.connect_state_db()) as connection:
         state.record_build_attempt_finished(
             connection,
@@ -144,13 +161,13 @@ def finish_build_attempt(
         build_version=build_version,
         backend_commit=backend_commit,
         frontend_commit=frontend_commit,
-        status=status,
+        status=status_enum,
         error=error,
     )
 
 
 def create_local_job(
-    kind: JobKind,
+    kind: JobKindEnum | str,
     contour: str = "",
     build_version: str = "",
     payload: dict | None = None,
@@ -170,7 +187,9 @@ def create_local_job(
     return LocalJobCommandResult(_require_job(job, job_id))
 
 
-def mark_local_job_started(job_id: int, log_path: str = "") -> LocalJobCommandResult:
+def mark_local_job_started(
+    job_id: int, log_path: str = ""
+) -> LocalJobCommandResult:
     """Помечает local job как ``running``."""
     with closing(state.connect_state_db()) as connection:
         state.mark_job_started(connection, job_id, log_path=log_path)
@@ -178,7 +197,9 @@ def mark_local_job_started(job_id: int, log_path: str = "") -> LocalJobCommandRe
     return LocalJobCommandResult(_require_job(job, job_id))
 
 
-def finish_local_job(job_id: int, status: str, error: str = "") -> LocalJobCommandResult:
+def finish_local_job(
+    job_id: int, status: str, error: str = ""
+) -> LocalJobCommandResult:
     """Помечает local job терминальным статусом."""
     with closing(state.connect_state_db()) as connection:
         state.mark_job_finished(connection, job_id, status=status, error=error)
@@ -189,7 +210,7 @@ def finish_local_job(job_id: int, status: str, error: str = "") -> LocalJobComma
 def create_release_external_request(
     contour: str,
     build_version: str,
-    request_type: ExternalRequestType,
+    request_type: ExternalRequestTypeEnum | str,
     external_id: str = "",
     payload: dict | None = None,
     status: str = "draft",
@@ -206,7 +227,9 @@ def create_release_external_request(
             status=status,
         )
         request = state.get_external_request(connection, request_id)
-    return ExternalRequestCommandResult(_require_external_request(request, request_id))
+    return ExternalRequestCommandResult(
+        _require_external_request(request, request_id)
+    )
 
 
 def update_release_external_request_status(
@@ -225,7 +248,9 @@ def update_release_external_request_status(
             external_id=external_id,
         )
         request = state.get_external_request(connection, request_id)
-    return ExternalRequestCommandResult(_require_external_request(request, request_id))
+    return ExternalRequestCommandResult(
+        _require_external_request(request, request_id)
+    )
 
 
 def set_contour_baseline(
@@ -236,8 +261,12 @@ def set_contour_baseline(
     """Двигает baseline контура без записи deployment attempt."""
     contour = state.validate_contour(contour)
     with closing(state.connect_state_db()) as connection:
-        state.upsert_contour_state(connection, contour, build_version, backend_commit)
-    return DeploymentMarkResult(contour, build_version, backend_commit)
+        state.upsert_contour_state(
+            connection, contour, build_version, backend_commit
+        )
+    return DeploymentMarkResult(
+        ContourCodeEnum(contour), build_version, backend_commit
+    )
 
 
 def record_deployment_applied(
@@ -248,9 +277,15 @@ def record_deployment_applied(
     """Фиксирует успешное применение релиза и двигает baseline."""
     contour = state.validate_contour(contour)
     with closing(state.connect_state_db()) as connection:
-        state.upsert_contour_state(connection, contour, build_version, backend_commit)
-        state.record_attempt(connection, contour, build_version, backend_commit, "success")
-    return DeploymentMarkResult(contour, build_version, backend_commit)
+        state.upsert_contour_state(
+            connection, contour, build_version, backend_commit
+        )
+        state.record_attempt(
+            connection, contour, build_version, backend_commit, "success"
+        )
+    return DeploymentMarkResult(
+        ContourCodeEnum(contour), build_version, backend_commit
+    )
 
 
 def record_deployment_failed(
@@ -262,8 +297,17 @@ def record_deployment_failed(
     """Фиксирует неуспешную deploy attempt без изменения baseline."""
     contour = state.validate_contour(contour)
     with closing(state.connect_state_db()) as connection:
-        state.record_attempt(connection, contour, build_version, backend_commit, "failed", error_text)
-    return DeploymentMarkResult(contour, build_version, backend_commit)
+        state.record_attempt(
+            connection,
+            contour,
+            build_version,
+            backend_commit,
+            "failed",
+            error_text,
+        )
+    return DeploymentMarkResult(
+        ContourCodeEnum(contour), build_version, backend_commit
+    )
 
 
 __all__ = [

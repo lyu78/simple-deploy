@@ -11,17 +11,21 @@ from simple_deploy.core.paths import ROOT
 
 def load_dotenv_file(path: Path, required: bool) -> dict[str, str]:
     """Читает dotenv-файл и убирает BOM из ключей."""
-
     if not path.exists():
         if required:
             raise RuntimeError(f"Файл не найден: {path}")
         return {}
-    return {key.lstrip("\ufeff"): value for key, value in dotenv_values(path).items() if value is not None}
+    return {
+        key.lstrip("\ufeff"): value
+        for key, value in dotenv_values(path).items()
+        if value is not None
+    }
 
 
-def load_env(env_file: Path, secrets_file: Path, require_secrets: bool) -> dict[str, str]:
+def load_env(
+    env_file: Path, secrets_file: Path, require_secrets: bool
+) -> dict[str, str]:
     """Собирает runtime env из публичного env-файла и local secrets."""
-
     config = load_dotenv_file(env_file, required=True)
     secrets = load_dotenv_file(secrets_file, required=require_secrets)
     merged = {**config, **secrets}
@@ -30,9 +34,13 @@ def load_env(env_file: Path, secrets_file: Path, require_secrets: bool) -> dict[
         db_user = merged.get("DB_LOGIN_USER", "").strip()
         db_password = merged.get("DB_LOGIN_PASSWORD", "").strip()
         if not db_user:
-            raise RuntimeError("DB_LOGIN_USER must be set in local.secrets.env")
+            raise RuntimeError(
+                "DB_LOGIN_USER must be set in local.secrets.env"
+            )
         if not db_password or db_password == "change-me":
-            raise RuntimeError("DB_LOGIN_PASSWORD must be set in local.secrets.env")
+            raise RuntimeError(
+                "DB_LOGIN_PASSWORD must be set in local.secrets.env"
+            )
 
     if "DB_LOGIN_USER" not in merged:
         merged["DB_LOGIN_USER"] = "postgres"
@@ -43,7 +51,6 @@ def load_env(env_file: Path, secrets_file: Path, require_secrets: bool) -> dict[
 
 def require_value(env: dict[str, str], name: str) -> str:
     """Возвращает обязательное значение runtime env."""
-
     value = env.get(name, "").strip()
     if not value:
         raise RuntimeError(f"Не задана обязательная переменная: {name}")
@@ -52,7 +59,6 @@ def require_value(env: dict[str, str], name: str) -> str:
 
 def wsl_to_windows_path(path: str) -> str:
     """Преобразует ``/mnt/c/...`` в Windows path, если формат распознан."""
-
     if path.startswith("/mnt/") and len(path) > 6:
         drive = path[5].upper()
         rest = path[7:].replace("/", "\\")
@@ -62,7 +68,6 @@ def wsl_to_windows_path(path: str) -> str:
 
 def windows_release_root(env: dict[str, str]) -> Path:
     """Возвращает Windows-корень директории релизов из runtime env."""
-
     explicit = env.get("RELEASE_ROOT_WINDOWS", "").strip()
     if explicit:
         return Path(explicit)
@@ -77,7 +82,6 @@ def windows_release_root(env: dict[str, str]) -> Path:
 
 def to_git_bash_path(path: str | Path) -> str:
     """Преобразует Windows path в path, понятный Git Bash."""
-
     normalized = str(path).replace("\\", "/")
     if len(normalized) >= 2 and normalized[1] == ":":
         drive = normalized[0].lower()

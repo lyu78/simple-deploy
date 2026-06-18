@@ -9,10 +9,10 @@
 from __future__ import annotations
 
 from simple_deploy.registry.state import (
-    JOB_STATUSES,
-    JobRecord,
     create_job,
     get_job,
+    JOB_STATUSES,
+    JobRecord,
     list_jobs,
     mark_job_finished,
     mark_job_started,

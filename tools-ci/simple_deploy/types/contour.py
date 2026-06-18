@@ -1,10 +1,17 @@
-"""Типы deploy-контуров."""
+"""
+Типы deploy-контуров и contour scope для локальных заданий.
+
+Deploy contour - реальная среда продвижения релиза: ``dev``, ``test`` или
+``prod``. Для ``local_jobs`` есть отдельный primitive ``JobContourScope``:
+пустая строка там не означает "контур неизвестен", а фиксирует unscoped job,
+например сборку bundle-а без привязки к конкретному deploy-контуру.
+"""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import AfterValidator, StringConstraints
+from pydantic import Field
 
 from simple_deploy.types._enum import DomainStringEnum
 
@@ -18,41 +25,28 @@ class ContourCodeEnum(DomainStringEnum):
 
 
 CONTOUR_CODES = ContourCodeEnum.get_values()
+JOB_CONTOUR_SCOPE_CODES = ("", *CONTOUR_CODES)
 
 
-def _validate_contour_code(value: str) -> str:
-    """Проверяет, что строка является известным deploy-контуром."""
-
-    if value not in CONTOUR_CODES:
-        raise ValueError(f"Unknown contour: {value}. Expected one of: {', '.join(CONTOUR_CODES)}")
-    return value
-
-
-def _validate_optional_contour_code(value: str) -> str:
-    """Проверяет optional deploy-контур с допустимой пустой строкой."""
-
-    return value if value == "" else _validate_contour_code(value)
-
-
-ContourCode = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, to_lower=True),
-    AfterValidator(_validate_contour_code),
+JobContourScope = Annotated[
+    Literal[JOB_CONTOUR_SCOPE_CODES],
+    Field(
+        description=(
+            "Contour scope локальной job. Пустая строка означает unscoped "
+            "job без привязки к deploy-контуру, а не неизвестный contour."
+        ),
+    ),
 ]
-"""Строковый код deploy-контура."""
+"""
+Contour scope local job.
 
-
-OptionalContourCode = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, to_lower=True),
-    AfterValidator(_validate_optional_contour_code),
-]
-"""Код deploy-контура, который может быть пустым в черновых local job записях."""
+Пустая строка означает unscoped job, иначе ожидается deploy contour.
+"""
 
 
 __all__ = [
     "CONTOUR_CODES",
-    "ContourCode",
     "ContourCodeEnum",
-    "OptionalContourCode",
+    "JOB_CONTOUR_SCOPE_CODES",
+    "JobContourScope",
 ]

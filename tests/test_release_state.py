@@ -187,6 +187,20 @@ class ReleaseStateTests(unittest.TestCase):
         self.assertEqual(job.log_path, "logs/deploy.log")
         self.assertEqual(jobs[0].id, job_id)
 
+    def test_local_job_contour_scope_is_explicit(self):
+        """Unscoped job допустим для build, но deploy требует contour."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / STATE_DB_NAME
+            with closing(connect_state_db(db_path)) as connection:
+                build_job_id = create_job(connection, "BUILD")
+                build_job = get_job(connection, build_job_id)
+
+                with self.assertRaisesRegex(ValueError, "requires contour"):
+                    create_job(connection, "DEPLOY")
+
+        self.assertEqual(build_job.kind, "build")
+        self.assertEqual(build_job.contour, "")
+
     def test_external_request_lifecycle_is_recorded(self):
         """External request для test/prod хранит payload, status и external id."""
         with tempfile.TemporaryDirectory() as tmp:

@@ -16,24 +16,26 @@ from simple_deploy.types._enum import DomainStringEnum
 from simple_deploy.types.artifact import (
     ARTIFACT_KINDS,
     ARTIFACT_SCOPES,
-    ArtifactKind,
     ArtifactKindEnum,
-    ArtifactScope,
     ArtifactScopeEnum,
 )
-from simple_deploy.types.component import COMPONENT_IDS, ComponentId, ComponentIdEnum
+from simple_deploy.types.component import COMPONENT_IDS, ComponentIdEnum
 from simple_deploy.types.contour import (
     CONTOUR_CODES,
-    ContourCode,
     ContourCodeEnum,
-    OptionalContourCode,
+    JOB_CONTOUR_SCOPE_CODES,
+    JobContourScope,
 )
-from simple_deploy.types.job import JOB_KINDS, JobKind, JobKindEnum
+from simple_deploy.types.fields import ResolvedAtString
+from simple_deploy.types.job import JOB_KINDS, JobKindEnum
 from simple_deploy.types.machine import MachineId
-from simple_deploy.types.release import BuildVersionString, OptionalBuildVersionString
+from simple_deploy.types.release import (
+    BuildVersionString,
+    OptionalBuildVersionString,
+    ReleaseVersionString,
+)
 from simple_deploy.types.request import (
     EXTERNAL_REQUEST_TYPES,
-    ExternalRequestType,
     ExternalRequestTypeEnum,
 )
 from simple_deploy.types.runtime import (
@@ -42,11 +44,8 @@ from simple_deploy.types.runtime import (
     NGINX_UNSUPPORTED_ACTIONS,
     SERVICE_STEP_PHASES,
     SYSTEMCTL_ACTIONS,
-    MaintenanceSqlPhase,
     MaintenanceSqlPhaseEnum,
-    ServiceStepPhase,
     ServiceStepPhaseEnum,
-    SystemctlAction,
     SystemctlActionEnum,
 )
 from simple_deploy.types.source import (
@@ -54,7 +53,6 @@ from simple_deploy.types.source import (
     CommitShaString,
     OptionalCommitShaString,
     RepoId,
-    SourceOriginKind,
     SourceOriginKindEnum,
 )
 from simple_deploy.types.status import (
@@ -62,23 +60,17 @@ from simple_deploy.types.status import (
     DEPLOYMENT_ATTEMPT_STATUSES,
     EXTERNAL_REQUEST_STATUSES,
     JOB_STATUSES,
-    BuildAttemptStatus,
     BuildAttemptStatusEnum,
-    DeploymentAttemptStatus,
     DeploymentAttemptStatusEnum,
-    ExternalRequestStatus,
     ExternalRequestStatusEnum,
-    JobStatus,
     JobStatusEnum,
 )
 from simple_deploy.types.target import (
     DEPLOYMENT_TARGET_ROLES,
-    DeploymentTargetRole,
     DeploymentTargetRoleEnum,
 )
 from simple_deploy.types.trigger import (
     RELEASE_TRIGGER_TYPES,
-    ReleaseTriggerType,
     ReleaseTriggerTypeEnum,
 )
 
@@ -139,55 +131,108 @@ class ReleaseTypeTests(unittest.TestCase):
         self.assertEqual(adapter.validate_python("  "), "")
         self.assertEqual(adapter.validate_python("1.2.3"), "1.2.3")
 
-    def test_contour_code_normalizes_known_contours(self):
-        """ContourCode нормализует регистр и принимает только известные контуры."""
-        adapter = TypeAdapter(ContourCode)
+    def test_annotated_string_types_expose_schema_descriptions(self):
+        """Annotated string aliases отдают описания в JSON schema."""
+        build_schema = TypeAdapter(BuildVersionString).json_schema()
+        release_schema = TypeAdapter(ReleaseVersionString).json_schema()
+        repo_schema = TypeAdapter(RepoId).json_schema()
+        resolved_schema = TypeAdapter(ResolvedAtString).json_schema()
 
-        self.assertEqual(adapter.validate_python("DEV"), "dev")
-        self.assertEqual(adapter.validate_python(" test "), "test")
-        self.assertEqual(adapter.validate_python("prod"), "prod")
-        with self.assertRaises(ValidationError):
-            adapter.validate_python("stage")
+        self.assertIn("release resource", release_schema["description"])
+        self.assertIn("release bundle", build_schema["description"])
+        self.assertIn("не сам bundle", build_schema["description"])
+        self.assertIn("Строковый код", repo_schema["description"])
+        self.assertIn("не числовой", repo_schema["description"])
+        self.assertIn("source snapshot", resolved_schema["description"])
 
-    def test_optional_contour_code_allows_empty_job_marker(self):
-        """OptionalContourCode оставляет пустой contour для черновых job записей."""
-        adapter = TypeAdapter(OptionalContourCode)
+    def test_contour_code_accepts_only_exact_known_contours(self):
+        """ContourCodeEnum принимает только точные значения известных контуров."""
+        adapter = TypeAdapter(ContourCodeEnum)
+
+        self.assertIs(adapter.validate_python("dev"), ContourCodeEnum.DEV)
+        self.assertIs(adapter.validate_python("test"), ContourCodeEnum.TEST)
+        self.assertIs(adapter.validate_python("prod"), ContourCodeEnum.PROD)
+        for value in ("DEV", " test ", "stage"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    adapter.validate_python(value)
+
+    def test_job_contour_scope_allows_unscoped_job_marker(self):
+        """JobContourScope допускает unscoped job marker и реальные контуры."""
+        adapter = TypeAdapter(JobContourScope)
 
         self.assertEqual(adapter.validate_python(""), "")
-        self.assertEqual(adapter.validate_python("  "), "")
-        self.assertEqual(adapter.validate_python("TEST"), "test")
-        with self.assertRaises(ValidationError):
-            adapter.validate_python("stage")
+        self.assertEqual(adapter.validate_python("test"), "test")
+        self.assertEqual(
+            JOB_CONTOUR_SCOPE_CODES,
+            ("", *CONTOUR_CODES),
+        )
+        for value in ("  ", "TEST", "stage"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    adapter.validate_python(value)
 
     def test_status_types_accept_only_their_own_dictionaries(self):
         """Status types проверяют значения по своим жизненным циклам."""
-        self.assertEqual(TypeAdapter(BuildAttemptStatus).validate_python("SUCCESS"), "success")
-        self.assertEqual(TypeAdapter(DeploymentAttemptStatus).validate_python(" failed "), "failed")
-        self.assertEqual(TypeAdapter(JobStatus).validate_python("queued"), "queued")
-        self.assertEqual(TypeAdapter(ExternalRequestStatus).validate_python("approved"), "approved")
+        self.assertIs(
+            TypeAdapter(BuildAttemptStatusEnum).validate_python("success"),
+            BuildAttemptStatusEnum.SUCCESS,
+        )
+        self.assertIs(
+            TypeAdapter(BuildAttemptStatusEnum).validate_python("undefined"),
+            BuildAttemptStatusEnum.UNDEFINED,
+        )
+        self.assertIs(
+            TypeAdapter(DeploymentAttemptStatusEnum).validate_python("failed"),
+            DeploymentAttemptStatusEnum.FAILED,
+        )
+        self.assertIs(
+            TypeAdapter(JobStatusEnum).validate_python("queued"),
+            JobStatusEnum.QUEUED,
+        )
+        self.assertIs(
+            TypeAdapter(ExternalRequestStatusEnum).validate_python("approved"),
+            ExternalRequestStatusEnum.APPROVED,
+        )
 
         with self.assertRaises(ValidationError):
-            TypeAdapter(BuildAttemptStatus).validate_python("queued")
+            TypeAdapter(BuildAttemptStatusEnum).validate_python("SUCCESS")
         with self.assertRaises(ValidationError):
-            TypeAdapter(JobStatus).validate_python("submitted")
+            TypeAdapter(DeploymentAttemptStatusEnum).validate_python(" failed ")
         with self.assertRaises(ValidationError):
-            TypeAdapter(ExternalRequestStatus).validate_python("running")
+            TypeAdapter(BuildAttemptStatusEnum).validate_python("queued")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(JobStatusEnum).validate_python("submitted")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ExternalRequestStatusEnum).validate_python("running")
 
     def test_runtime_phase_types_accept_only_pipeline_phases(self):
         """Runtime phase types проверяют фазы SQL, service step и systemctl actions."""
-        self.assertEqual(TypeAdapter(MaintenanceSqlPhase).validate_python(" BEFORE_UNPACK "), "before_unpack")
-        self.assertEqual(
-            TypeAdapter(ServiceStepPhase).validate_python("AFTER_FRONTEND_UNPACK"),
-            "after_frontend_unpack",
+        self.assertIs(
+            TypeAdapter(MaintenanceSqlPhaseEnum).validate_python("before_unpack"),
+            MaintenanceSqlPhaseEnum.BEFORE_UNPACK,
         )
-        self.assertEqual(TypeAdapter(SystemctlAction).validate_python("TRY-RESTART"), "try-restart")
+        self.assertIs(
+            TypeAdapter(ServiceStepPhaseEnum).validate_python("after_frontend_unpack"),
+            ServiceStepPhaseEnum.AFTER_FRONTEND_UNPACK,
+        )
+        self.assertIs(
+            TypeAdapter(SystemctlActionEnum).validate_python("try-restart"),
+            SystemctlActionEnum.TRY_RESTART,
+        )
 
         with self.assertRaises(ValidationError):
-            TypeAdapter(MaintenanceSqlPhase).validate_python("during_deploy")
+            TypeAdapter(MaintenanceSqlPhaseEnum).validate_python(" BEFORE_UNPACK ")
         with self.assertRaises(ValidationError):
-            TypeAdapter(ServiceStepPhase).validate_python("before_migrate")
+            TypeAdapter(ServiceStepPhaseEnum).validate_python("AFTER_FRONTEND_UNPACK")
         with self.assertRaises(ValidationError):
-            TypeAdapter(SystemctlAction).validate_python("enable")
+            TypeAdapter(SystemctlActionEnum).validate_python("TRY-RESTART")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(MaintenanceSqlPhaseEnum).validate_python("during_deploy")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ServiceStepPhaseEnum).validate_python("before_migrate")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(SystemctlActionEnum).validate_python("enable")
 
     def test_nginx_action_policy_sets_are_backed_by_systemctl_enum(self):
         """Nginx action policy sets собираются из SystemctlActionEnum values."""
@@ -214,27 +259,58 @@ class ReleaseTypeTests(unittest.TestCase):
         )
 
     def test_job_and_request_types_accept_current_operation_dictionaries(self):
-        """JobKind и ExternalRequestType проверяют текущие операционные словари."""
-        self.assertEqual(TypeAdapter(JobKind).validate_python("MARK_APPLIED"), "mark_applied")
-        self.assertEqual(TypeAdapter(JobKind).validate_python(" deploy "), "deploy")
-        self.assertEqual(TypeAdapter(ExternalRequestType).validate_python(" DEPLOY "), "deploy")
+        """JobKindEnum и ExternalRequestTypeEnum проверяют операционные словари."""
+        self.assertIs(
+            TypeAdapter(JobKindEnum).validate_python("mark_applied"),
+            JobKindEnum.MARK_APPLIED,
+        )
+        self.assertIs(
+            TypeAdapter(JobKindEnum).validate_python("deploy"),
+            JobKindEnum.DEPLOY,
+        )
+        self.assertIs(
+            TypeAdapter(ExternalRequestTypeEnum).validate_python("deploy"),
+            ExternalRequestTypeEnum.DEPLOY,
+        )
 
         with self.assertRaises(ValidationError):
-            TypeAdapter(JobKind).validate_python("rollback")
+            TypeAdapter(JobKindEnum).validate_python("MARK_APPLIED")
         with self.assertRaises(ValidationError):
-            TypeAdapter(ExternalRequestType).validate_python("rollback")
+            TypeAdapter(JobKindEnum).validate_python(" deploy ")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ExternalRequestTypeEnum).validate_python(" DEPLOY ")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(JobKindEnum).validate_python("rollback")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ExternalRequestTypeEnum).validate_python("rollback")
 
     def test_release_trigger_type_accepts_current_trigger_dictionary(self):
-        """ReleaseTriggerType проверяет текущий словарь technical release triggers."""
-        self.assertEqual(TypeAdapter(ReleaseTriggerType).validate_python("MANUAL"), "manual")
-        self.assertEqual(
-            TypeAdapter(ReleaseTriggerType).validate_python(" backend_branch_push "),
-            "backend_branch_push",
+        """ReleaseTriggerTypeEnum проверяет словарь technical release triggers."""
+        self.assertIs(
+            TypeAdapter(ReleaseTriggerTypeEnum).validate_python("manual"),
+            ReleaseTriggerTypeEnum.MANUAL,
         )
-        self.assertEqual(TypeAdapter(ReleaseTriggerType).validate_python("SCHEDULED"), "scheduled")
+        self.assertIs(
+            TypeAdapter(ReleaseTriggerTypeEnum).validate_python("backend_branch_push"),
+            ReleaseTriggerTypeEnum.BACKEND_BRANCH_PUSH,
+        )
+        self.assertIs(
+            TypeAdapter(ReleaseTriggerTypeEnum).validate_python("scheduled"),
+            ReleaseTriggerTypeEnum.SCHEDULED,
+        )
+        self.assertIs(
+            TypeAdapter(ReleaseTriggerTypeEnum).validate_python("undefined"),
+            ReleaseTriggerTypeEnum.UNDEFINED,
+        )
 
         with self.assertRaises(ValidationError):
-            TypeAdapter(ReleaseTriggerType).validate_python("frontend_branch_push")
+            TypeAdapter(ReleaseTriggerTypeEnum).validate_python("MANUAL")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ReleaseTriggerTypeEnum).validate_python(" backend_branch_push ")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ReleaseTriggerTypeEnum).validate_python("SCHEDULED")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(ReleaseTriggerTypeEnum).validate_python("frontend_branch_push")
 
     def test_commit_sha_accepts_short_and_full_hex_values(self):
         """CommitShaString принимает короткий и полный Git SHA."""
@@ -264,16 +340,28 @@ class ReleaseTypeTests(unittest.TestCase):
         self.assertEqual(adapter.validate_python("DEF456"), "def456")
 
     def test_source_origin_kind_accepts_current_origin_dictionary(self):
-        """SourceOriginKind проверяет словарь источников Git-данных."""
-        self.assertEqual(TypeAdapter(SourceOriginKind).validate_python("PRIMARY_REMOTE"), "primary_remote")
-        self.assertEqual(TypeAdapter(SourceOriginKind).validate_python(" mirror "), "mirror")
-        self.assertEqual(
-            TypeAdapter(SourceOriginKind).validate_python("LOCAL_BARE_CLONE"),
-            "local_bare_clone",
+        """SourceOriginKindEnum проверяет словарь источников Git-данных."""
+        self.assertIs(
+            TypeAdapter(SourceOriginKindEnum).validate_python("primary_remote"),
+            SourceOriginKindEnum.PRIMARY_REMOTE,
+        )
+        self.assertIs(
+            TypeAdapter(SourceOriginKindEnum).validate_python("mirror"),
+            SourceOriginKindEnum.MIRROR,
+        )
+        self.assertIs(
+            TypeAdapter(SourceOriginKindEnum).validate_python("local_bare_clone"),
+            SourceOriginKindEnum.LOCAL_BARE_CLONE,
         )
 
         with self.assertRaises(ValidationError):
-            TypeAdapter(SourceOriginKind).validate_python("ftp_remote")
+            TypeAdapter(SourceOriginKindEnum).validate_python("PRIMARY_REMOTE")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(SourceOriginKindEnum).validate_python(" mirror ")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(SourceOriginKindEnum).validate_python("LOCAL_BARE_CLONE")
+        with self.assertRaises(ValidationError):
+            TypeAdapter(SourceOriginKindEnum).validate_python("ftp_remote")
 
     def test_repo_id_accepts_stable_repository_identifiers(self):
         """RepoId принимает стабильные идентификаторы репозиториев без path-синтаксиса."""
@@ -301,38 +389,49 @@ class ReleaseTypeTests(unittest.TestCase):
                     adapter.validate_python(value)
 
     def test_component_id_accepts_initial_domain_components(self):
-        """ComponentId принимает начальный словарь DDD components."""
-        adapter = TypeAdapter(ComponentId)
+        """ComponentIdEnum принимает начальный словарь DDD components."""
+        adapter = TypeAdapter(ComponentIdEnum)
 
-        self.assertEqual(adapter.validate_python("BACKEND"), "backend")
-        self.assertEqual(adapter.validate_python(" frontend "), "frontend")
-        self.assertEqual(adapter.validate_python("database"), "database")
-        with self.assertRaises(ValidationError):
-            adapter.validate_python("cache")
+        self.assertIs(adapter.validate_python("backend"), ComponentIdEnum.BACKEND)
+        self.assertIs(adapter.validate_python("frontend"), ComponentIdEnum.FRONTEND)
+        self.assertIs(adapter.validate_python("database"), ComponentIdEnum.DATABASE)
+        for value in ("BACKEND", " frontend ", "cache"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    adapter.validate_python(value)
 
     def test_artifact_types_accept_kind_and_scope_dictionaries(self):
-        """ArtifactKind и ArtifactScope проверяют DDD-справочники артефактов."""
-        kind_adapter = TypeAdapter(ArtifactKind)
-        scope_adapter = TypeAdapter(ArtifactScope)
+        """ArtifactKindEnum и ArtifactScopeEnum проверяют справочники артефактов."""
+        kind_adapter = TypeAdapter(ArtifactKindEnum)
+        scope_adapter = TypeAdapter(ArtifactScopeEnum)
 
-        self.assertEqual(kind_adapter.validate_python("DB_SCHEMA"), "db_schema")
-        self.assertEqual(kind_adapter.validate_python("manifest"), "manifest")
-        self.assertEqual(scope_adapter.validate_python("CONTOUR_SPECIFIC"), "contour_specific")
-        self.assertEqual(scope_adapter.validate_python("shared"), "shared")
+        self.assertIs(kind_adapter.validate_python("db_schema"), ArtifactKindEnum.DB_SCHEMA)
+        self.assertIs(kind_adapter.validate_python("manifest"), ArtifactKindEnum.MANIFEST)
+        self.assertIs(
+            scope_adapter.validate_python("contour_specific"),
+            ArtifactScopeEnum.CONTOUR_SPECIFIC,
+        )
+        self.assertIs(scope_adapter.validate_python("shared"), ArtifactScopeEnum.SHARED)
+        with self.assertRaises(ValidationError):
+            kind_adapter.validate_python("DB_SCHEMA")
+        with self.assertRaises(ValidationError):
+            scope_adapter.validate_python("CONTOUR_SPECIFIC")
         with self.assertRaises(ValidationError):
             kind_adapter.validate_python("db_insert")
         with self.assertRaises(ValidationError):
             scope_adapter.validate_python("global")
 
     def test_deployment_target_role_accepts_initial_role_dictionary(self):
-        """DeploymentTargetRole принимает роли target-ов, а не components."""
-        adapter = TypeAdapter(DeploymentTargetRole)
+        """DeploymentTargetRoleEnum принимает роли deploy entrypoints."""
+        adapter = TypeAdapter(DeploymentTargetRoleEnum)
 
-        self.assertEqual(adapter.validate_python("DATABASE"), "database")
-        self.assertEqual(adapter.validate_python(" reporting "), "reporting")
-        self.assertEqual(adapter.validate_python("s3"), "s3")
-        with self.assertRaises(ValidationError):
-            adapter.validate_python("worker")
+        self.assertIs(adapter.validate_python("database"), DeploymentTargetRoleEnum.DATABASE)
+        self.assertIs(adapter.validate_python("reporting"), DeploymentTargetRoleEnum.REPORTING)
+        self.assertIs(adapter.validate_python("s3"), DeploymentTargetRoleEnum.S3)
+        for value in ("DATABASE", " reporting ", "worker"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValidationError):
+                    adapter.validate_python(value)
 
 
 if __name__ == "__main__":

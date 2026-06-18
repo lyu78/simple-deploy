@@ -21,6 +21,10 @@ from simple_deploy.entities.release import (
     SourceRepositoryRevision,
     SourceSnapshot,
 )
+from simple_deploy.types.artifact import ArtifactKindEnum, ArtifactScopeEnum
+from simple_deploy.types.contour import ContourCodeEnum
+from simple_deploy.types.status import DeploymentAttemptStatusEnum
+from simple_deploy.types.trigger import ReleaseTriggerTypeEnum
 
 
 class ReleaseEntityTests(unittest.TestCase):
@@ -37,7 +41,7 @@ class ReleaseEntityTests(unittest.TestCase):
                 ),
             ),
             resolved_at=TEST_TIMESTAMP,
-            trigger_type="manual",
+            trigger_type=ReleaseTriggerTypeEnum.MANUAL,
         )
 
     def _bundle(self, build_version: str = TEST_BUILD_VERSION) -> ReleaseBundle:
@@ -47,8 +51,8 @@ class ReleaseEntityTests(unittest.TestCase):
             artifacts=(
                 ReleaseArtifactRef(
                     artifact_id="backend.tar.gz",
-                    kind="backend",
-                    scope="shared",
+                    kind=ArtifactKindEnum.BACKEND,
+                    scope=ArtifactScopeEnum.SHARED,
                 ),
             ),
             created_at=TEST_TIMESTAMP,
@@ -103,8 +107,8 @@ class ReleaseEntityTests(unittest.TestCase):
             release.with_placement(
                 ReleasePlacement(
                     build_version="1.2.5",
-                    contour="dev",
-                    status="success",
+                    contour=ContourCodeEnum.DEV,
+                    status=DeploymentAttemptStatusEnum.SUCCESS,
                     updated_at=TEST_TIMESTAMP,
                 )
             )
@@ -117,15 +121,15 @@ class ReleaseEntityTests(unittest.TestCase):
         placed = release.with_placement(
             ReleasePlacement(
                 build_version=TEST_BUILD_VERSION,
-                contour="dev",
-                status="success",
+                contour=ContourCodeEnum.DEV,
+                status=DeploymentAttemptStatusEnum.SUCCESS,
                 updated_at=TEST_TIMESTAMP,
                 deployment_attempt_id=1,
             )
         )
 
         self.assertEqual(placed.successful_bundle, bundle)
-        self.assertEqual(placed.placements[0].contour, "dev")
+        self.assertIs(placed.placements[0].contour, ContourCodeEnum.DEV)
         self.assertEqual(release.placements, ())
 
     def test_source_snapshot_requires_non_empty_unique_revisions(self):
@@ -140,6 +144,25 @@ class ReleaseEntityTests(unittest.TestCase):
                 ),
                 resolved_at=TEST_TIMESTAMP,
             )
+
+    def test_source_snapshot_uses_undefined_trigger_by_default(self):
+        """SourceSnapshot хранит отсутствие trigger type через enum-значение."""
+        snapshot = SourceSnapshot(
+            revisions=(
+                SourceRepositoryRevision(
+                    "backend",
+                    "dev",
+                    "abc123",
+                    "origin",
+                ),
+            ),
+            resolved_at=TEST_TIMESTAMP,
+        )
+
+        self.assertIs(
+            snapshot.trigger_type,
+            ReleaseTriggerTypeEnum.UNDEFINED,
+        )
 
     def test_release_bundle_requires_positive_build_attempt_id(self):
         """ReleaseBundle ссылается на реальную build attempt."""

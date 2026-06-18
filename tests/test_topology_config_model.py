@@ -19,13 +19,13 @@ class TopologyConfigModelTests(unittest.TestCase):
     """Проверяет структурные модели будущей topology config без runtime effects."""
 
     def test_topology_config_model_accepts_domain_vocabulary(self):
-        """Topology config model нормализует известные domain values."""
+        """Topology config model принимает точные domain values."""
         model = runtime_topology_config_model(
             {
                 "source_origins": [
                     {
                         "origin_id": "backend-primary",
-                        "kind": "PRIMARY_REMOTE",
+                        "kind": "primary_remote",
                         "remote_url": "git@example.local/backend.git",
                     }
                 ],
@@ -39,7 +39,7 @@ class TopologyConfigModelTests(unittest.TestCase):
                 ],
                 "components": [
                     {
-                        "component_id": "BACKEND",
+                        "component_id": "backend",
                         "source_repository_ids": ["backend"],
                         "target_roles": ["backend"],
                     }
@@ -54,11 +54,11 @@ class TopologyConfigModelTests(unittest.TestCase):
                 ],
                 "landscapes": [
                     {
-                        "contour": "DEV",
+                        "contour": "dev",
                         "targets": [
                             {
                                 "target_id": "dev-backend",
-                                "role": "BACKEND",
+                                "role": "backend",
                                 "machine_id": "dev-app-01",
                                 "remote_path": "/opt/app/backend",
                             }

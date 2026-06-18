@@ -1,9 +1,10 @@
-"""Web/API поверхность только для чтения над локальным registry state.
+"""
+Web/API поверхность только для чтения над локальным registry state.
 
 Модуль предоставляет FastAPI-приложение и HTML dashboard для просмотра той же
 SQLite-базы, которую используют CLI и builder. Read projections собираются в
-``simple_deploy.registry.queries``; здесь остаются HTTP routes, DTO conversion и
-HTML rendering. Текущий v1 слой ничего не запускает и не меняет состояние
+``simple_deploy.registry.queries``; здесь остаются HTTP routes, DTO conversion
+и HTML rendering. Текущий v1 слой ничего не запускает и не меняет состояние
 релизов.
 """
 
@@ -15,33 +16,39 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from simple_deploy.dto.state import (
+    dto_dump,
     ExternalRequestDto,
     JobDto,
     ReleaseDto,
     StateSnapshotDto,
-    dto_dump,
 )
 from simple_deploy.models.state import StateSnapshotReadModel
-from simple_deploy.registry.queries import (
-    external_request_read_models_from_state as _external_request_read_models_from_state,
-    job_read_models_from_state as _job_read_models_from_state,
-    release_read_models_from_state as _release_read_models_from_state,
-    state_snapshot_read_model as _state_snapshot_read_model,
-)
+from simple_deploy.registry import queries as _registry_queries
 
+_external_request_read_models_from_state = (
+    _registry_queries.external_request_read_models_from_state
+)
+_job_read_models_from_state = _registry_queries.job_read_models_from_state
+_release_read_models_from_state = (
+    _registry_queries.release_read_models_from_state
+)
+_state_snapshot_read_model = _registry_queries.state_snapshot_read_model
 
 app = FastAPI(title="simple-deploy", version="0.1.0")
 
 
 def state_snapshot_model(limit: int = 50) -> StateSnapshotReadModel:
-    """Возвращает внутреннюю модель чтения снимка состояния для старых импортов."""
+    """
+    Возвращает внутреннюю модель чтения снимка состояния для старых импортов.
+    """
     return _state_snapshot_read_model(limit=limit)
 
 
 def state_snapshot_dto(limit: int = 50) -> StateSnapshotDto:
     """Преобразует внутренний снимок состояния во внешний DTO."""
-
-    return StateSnapshotDto.model_validate(_state_snapshot_read_model(limit=limit))
+    return StateSnapshotDto.model_validate(
+        _state_snapshot_read_model(limit=limit)
+    )
 
 
 def state_snapshot(limit: int = 50) -> dict:
@@ -96,9 +103,29 @@ def dashboard() -> str:
 
 def render_dashboard(snapshot: dict) -> str:
     """Рендерит полный HTML-документ панели из готового снимка."""
-    release_columns = ["build_version", "build_status", "backend_commit", "frontend_commit"]
-    build_attempt_columns = ["id", "build_version", "status", "started_at", "finished_at", "error"]
-    deployment_attempt_columns = ["id", "contour", "build_version", "status", "started_at", "finished_at", "error"]
+    release_columns = [
+        "build_version",
+        "build_status",
+        "backend_commit",
+        "frontend_commit",
+    ]
+    build_attempt_columns = [
+        "id",
+        "build_version",
+        "status",
+        "started_at",
+        "finished_at",
+        "error",
+    ]
+    deployment_attempt_columns = [
+        "id",
+        "contour",
+        "build_version",
+        "status",
+        "started_at",
+        "finished_at",
+        "error",
+    ]
     job_columns = [
         "id",
         "kind",
@@ -120,6 +147,21 @@ def render_dashboard(snapshot: dict) -> str:
         "updated_at",
         "error",
     ]
+    build_attempts_html = render_table(
+        "Build attempts",
+        snapshot["build_attempts"],
+        build_attempt_columns,
+    )
+    deploy_attempts_html = render_table(
+        "Deploy attempts",
+        snapshot["deployment_attempts"],
+        deployment_attempt_columns,
+    )
+    external_requests_html = render_table(
+        "External requests",
+        snapshot["external_requests"],
+        external_request_columns,
+    )
     return f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -231,10 +273,10 @@ def render_dashboard(snapshot: dict) -> str:
   <main>
     {render_contours(snapshot["contours"])}
     {render_table("Releases", snapshot["releases"], release_columns)}
-    {render_table("Build attempts", snapshot["build_attempts"], build_attempt_columns)}
-    {render_table("Deploy attempts", snapshot["deployment_attempts"], deployment_attempt_columns)}
+    {build_attempts_html}
+    {deploy_attempts_html}
     {render_table("Jobs", snapshot["jobs"], job_columns)}
-    {render_table("External requests", snapshot["external_requests"], external_request_columns)}
+    {external_requests_html}
   </main>
 </body>
 </html>"""
@@ -249,11 +291,17 @@ def render_contours(contours: dict) -> str:
             {
                 "contour": contour,
                 "last_success_release": (
-                    release_ref["build_version"] if release_ref else state["last_success_release"]
+                    release_ref["build_version"]
+                    if release_ref
+                    else state["last_success_release"]
                 )
                 if state
                 else "",
-                "last_success_build_status": release_ref.get("build_status", "") if release_ref else "",
+                "last_success_build_status": release_ref.get(
+                    "build_status", ""
+                )
+                if release_ref
+                else "",
                 "last_success_backend_commit": (
                     release_ref["backend_commit"]
                     if release_ref
@@ -280,18 +328,21 @@ def render_contours(contours: dict) -> str:
 def render_table(title: str, rows: list[dict], columns: list[str]) -> str:
     """Рендерит одну HTML-таблицу панели."""
     if not rows:
-        return f"<section><h2>{escape(title)}</h2><p class=\"empty\">No records</p></section>"
+        return (
+            f"<section><h2>{escape(title)}</h2>"
+            """<p class="empty">No records</p></section>"""
+        )
     head = "".join(f"<th>{escape(column)}</th>" for column in columns)
     body_rows = []
     for row in rows:
         cells = []
         for column in columns:
             value = "" if row.get(column) is None else str(row.get(column, ""))
-            css_class = " class=\"error\"" if column == "error" and value else ""
+            css_class = ' class="error"' if column == "error" and value else ""
             cells.append(f"<td{css_class}>{escape(value)}</td>")
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
     return (
-        f"<section><h2>{escape(title)}</h2><div class=\"table-wrap\">"
+        f'<section><h2>{escape(title)}</h2><div class="table-wrap">'
         f"<table><thead><tr>{head}</tr></thead><tbody>"
         + "".join(body_rows)
         + "</tbody></table></div></section>"

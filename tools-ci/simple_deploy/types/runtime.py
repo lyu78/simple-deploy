@@ -1,16 +1,28 @@
-"""Типы runtime-фаз deploy pipeline."""
+"""
+Типы runtime-фаз deploy pipeline и управления systemd units.
+
+Модуль описывает два соседних словаря runtime config:
+
+- фазы, в которые pipeline может выполнить maintenance SQL или service steps;
+- допустимые ``systemctl`` actions, которыми service steps управляют systemd
+  units на APP/DB VM: запуск, остановка, перезапуск, reload и чтение status.
+
+Эти типы не запускают команды сами. Они только фиксируют vocabulary для
+runtime config, validation и dry-run permission checks.
+"""
 
 from __future__ import annotations
-
-from typing import Annotated
-
-from pydantic import AfterValidator, StringConstraints
 
 from simple_deploy.types._enum import DomainStringEnum
 
 
 class MaintenanceSqlPhaseEnum(DomainStringEnum):
-    """Справочник фаз выполнения maintenance SQL."""
+    """
+    Справочник фаз выполнения maintenance SQL.
+
+    Значения определяют, в какой момент deploy pipeline запускает SQL-скрипты
+    обслуживания относительно распаковки и миграций.
+    """
 
     BEFORE_UNPACK = "before_unpack"
     BEFORE_MIGRATE = "before_migrate"
@@ -18,7 +30,14 @@ class MaintenanceSqlPhaseEnum(DomainStringEnum):
 
 
 class ServiceStepPhaseEnum(DomainStringEnum):
-    """Справочник фаз выполнения service step команд."""
+    """
+    Справочник фаз выполнения service step команд.
+
+    Service steps - это runtime-команды оператора, которые pipeline выполняет
+    в заданной фазе deploy. На практике через них часто управляются systemd
+    units приложения: nginx, backend services, workers и другие unit-ы,
+    доступные на APP/DB VM.
+    """
 
     BEFORE_UNPACK = "before_unpack"
     AFTER_UNPACK = "after_unpack"
@@ -27,7 +46,14 @@ class ServiceStepPhaseEnum(DomainStringEnum):
 
 
 class SystemctlActionEnum(DomainStringEnum):
-    """Справочник поддерживаемых systemctl actions для service step policy."""
+    """
+    Справочник поддерживаемых ``systemctl`` actions для service step policy.
+
+    Значения соответствуют действиям systemd unit management: ``start`` и
+    ``stop`` меняют состояние unit-а, ``restart``/``try-restart`` перезапускают
+    его, ``reload``-варианты перечитывают конфигурацию, а ``status`` нужен для
+    read-only проверки доступности unit-а.
+    """
 
     START = "start"
     STOP = "stop"
@@ -59,70 +85,13 @@ NGINX_UNSUPPORTED_ACTIONS = frozenset(
 )
 
 
-def _validate_maintenance_sql_phase(value: str) -> str:
-    """Проверяет фазу выполнения maintenance SQL."""
-
-    if value not in MAINTENANCE_SQL_PHASES:
-        raise ValueError(
-            f"Unknown maintenance SQL phase: {value}. Expected one of: {', '.join(MAINTENANCE_SQL_PHASES)}"
-        )
-    return value
-
-
-def _validate_service_step_phase(value: str) -> str:
-    """Проверяет фазу выполнения service step команды."""
-
-    if value not in SERVICE_STEP_PHASES:
-        raise ValueError(
-            f"Unknown service step phase: {value}. Expected one of: {', '.join(SERVICE_STEP_PHASES)}"
-        )
-    return value
-
-
-def _validate_systemctl_action(value: str) -> str:
-    """Проверяет action команды systemctl."""
-
-    if value not in SYSTEMCTL_ACTIONS:
-        raise ValueError(
-            f"Unknown systemctl action: {value}. Expected one of: {', '.join(SYSTEMCTL_ACTIONS)}"
-        )
-    return value
-
-
-MaintenanceSqlPhase = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, to_lower=True),
-    AfterValidator(_validate_maintenance_sql_phase),
-]
-"""Фаза выполнения maintenance SQL."""
-
-
-ServiceStepPhase = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, to_lower=True),
-    AfterValidator(_validate_service_step_phase),
-]
-"""Фаза выполнения service step команды."""
-
-
-SystemctlAction = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, to_lower=True),
-    AfterValidator(_validate_systemctl_action),
-]
-"""Action команды systemctl."""
-
-
 __all__ = [
     "MAINTENANCE_SQL_PHASES",
     "NGINX_STOP_START_ACTIONS",
     "NGINX_UNSUPPORTED_ACTIONS",
     "SERVICE_STEP_PHASES",
     "SYSTEMCTL_ACTIONS",
-    "MaintenanceSqlPhase",
     "MaintenanceSqlPhaseEnum",
-    "ServiceStepPhase",
     "ServiceStepPhaseEnum",
-    "SystemctlAction",
     "SystemctlActionEnum",
 ]

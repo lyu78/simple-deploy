@@ -7,7 +7,6 @@ legacy import path для старого builder/test/process кода и вне
 """
 
 from simple_deploy.registry import state as _registry_state
-from simple_deploy.registry.state import *  # noqa: F403
-
+from simple_deploy.registry.state import *  # noqa: F401,F403
 
 __all__ = list(_registry_state.__all__)

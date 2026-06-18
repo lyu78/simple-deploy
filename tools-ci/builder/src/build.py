@@ -16,7 +16,6 @@ def _update_vite_build_version(repo_path: str, build_version: str):
     :param env_path: Путь к .env файлу.
     :param new_version: Новое значение версии (например, "1.2.3").
     """
-
     env_path = Path(repo_path) / ".env"
 
     if not env_path.is_file():
@@ -202,7 +201,6 @@ def get_building_archive_dev(
     build_version: str,
 ):
     """Формирует build для dev контура ЦПС."""
-
     if not copy_file_to_repo2(
         repo2_path=repo2_path,
         file_relative_path=r"settings\frontend_dev\.gitignore"

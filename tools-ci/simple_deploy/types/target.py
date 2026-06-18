@@ -1,16 +1,18 @@
-"""Типы deployment target."""
+"""Типы deploy entrypoints на VM/серверах."""
 
 from __future__ import annotations
-
-from typing import Annotated
-
-from pydantic import AfterValidator, StringConstraints
 
 from simple_deploy.types._enum import DomainStringEnum
 
 
 class DeploymentTargetRoleEnum(DomainStringEnum):
-    """Справочник ролей технических точек размещения."""
+    """
+    Справочник ролей deploy entrypoint-ов внутри landscape.
+
+    Deploy entrypoint здесь - это серверный target для размещения релиза:
+    роль на VM/сервере или внешнем ресурсе, например backend slot на app VM,
+    database slot на DB VM или S3 target.
+    """
 
     BACKEND = "backend"
     FRONTEND = "frontend"
@@ -23,26 +25,7 @@ class DeploymentTargetRoleEnum(DomainStringEnum):
 DEPLOYMENT_TARGET_ROLES = DeploymentTargetRoleEnum.get_values()
 
 
-def _validate_deployment_target_role(value: str) -> str:
-    """Проверяет роль deployment target."""
-
-    if value not in DEPLOYMENT_TARGET_ROLES:
-        raise ValueError(
-            f"Unknown deployment target role: {value}. Expected one of: {', '.join(DEPLOYMENT_TARGET_ROLES)}"
-        )
-    return value
-
-
-DeploymentTargetRole = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, to_lower=True),
-    AfterValidator(_validate_deployment_target_role),
-]
-"""Роль технической точки размещения."""
-
-
 __all__ = [
     "DEPLOYMENT_TARGET_ROLES",
-    "DeploymentTargetRole",
     "DeploymentTargetRoleEnum",
 ]

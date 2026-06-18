@@ -1,62 +1,29 @@
-"""Pydantic-модели целевой runtime topology конфигурации.
+"""
+Pydantic-модели целевой runtime topology конфигурации.
 
 Runtime topology - это карта системы, а не набор флагов запуска runner-а. Она
 описывает, откуда берутся исходники, какие логические компоненты есть в
-продукте, какие VM доступны, какие deployment targets находятся в каждом
-контуре и какие execution environments можно использовать для deploy или
-validation pipeline.
+продукте, какие VM доступны, какие deploy entrypoints/targets находятся в
+каждом контуре и какие execution environments можно использовать для deploy
+или validation pipeline.
 
 Упрощенный пример DEV topology::
 
-    {
-        "source_origins": [
-            {
-                "origin_id": "backend-primary",
-                "kind": "primary_remote",
-                "remote_url": "git@example.local/backend.git"
-            }
-        ],
-        "source_repositories": [
-            {
-                "repo_id": "backend",
-                "role": "backend",
-                "default_origin_id": "backend-primary",
-                "default_branch": "dev"
-            }
-        ],
-        "components": [
-            {
-                "component_id": "backend",
-                "source_repository_ids": ["backend"],
-                "target_roles": ["backend"]
-            }
-        ],
-        "machines": [
-            {
-                "machine_id": "dev-app-01",
-                "role": "app",
-                "hostname": "dev-app.example.local",
-                "ssh_user": "deploy"
-            }
-        ],
-        "landscapes": [
-            {
-                "contour": "dev",
-                "targets": [
-                    {
-                        "target_id": "dev-backend",
-                        "role": "backend",
-                        "machine_id": "dev-app-01",
-                        "remote_path": "/opt/app/backend"
-                    }
-                ]
-            }
-        ]
-    }
+{ "source_origins": [ { "origin_id": "backend-primary", "kind":
+"primary_remote", "remote_url": "git@example.local/backend.git" } ],
+"source_repositories": [ { "repo_id": "backend", "role": "backend",
+"default_origin_id": "backend-primary", "default_branch": "dev" } ],
+"components": [ { "component_id": "backend", "source_repository_ids":
+["backend"], "target_roles": ["backend"] } ], "machines": [ { "machine_id":
+"dev-app-01", "role": "app", "hostname": "dev-app.example.local", "ssh_user":
+"deploy" } ], "landscapes": [ { "contour": "dev", "targets": [ { "target_id":
+"dev-backend", "role": "backend", "machine_id": "dev-app-01", "remote_path":
+"/opt/app/backend" } ] } ] }
 
 На текущем этапе эти модели фиксируют typed target form для следующих срезов.
-Они не являются loader-ом текущего ``windows_pipeline.local.json`` и не содержат
-process-policy вроде порядка остановки сервисов или выбора SQL artifacts.
+Они не являются loader-ом текущего ``windows_pipeline.local.json`` и не
+содержат process-policy вроде порядка остановки сервисов или выбора SQL
+artifacts.
 """
 
 from __future__ import annotations
@@ -65,14 +32,15 @@ from typing import Annotated, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, StringConstraints
 
-from simple_deploy.types.component import ComponentId
-from simple_deploy.types.contour import ContourCode
+from simple_deploy.types.component import ComponentIdEnum
+from simple_deploy.types.contour import ContourCodeEnum
 from simple_deploy.types.machine import MachineId
-from simple_deploy.types.source import RepoId, SourceOriginKind
-from simple_deploy.types.target import DeploymentTargetRole
+from simple_deploy.types.source import RepoId, SourceOriginKindEnum
+from simple_deploy.types.target import DeploymentTargetRoleEnum
 
-
-NonEmptyString = Annotated[StrictStr, StringConstraints(strip_whitespace=True, min_length=1)]
+NonEmptyString = Annotated[
+    StrictStr, StringConstraints(strip_whitespace=True, min_length=1)
+]
 
 
 class _TopologyConfigModel(BaseModel):
@@ -82,20 +50,27 @@ class _TopologyConfigModel(BaseModel):
 
 
 class SourceOriginConfigModel(_TopologyConfigModel):
-    """Конкретный источник Git-данных: primary remote, mirror или local clone."""
+    """
+    Конкретный источник Git-данных: primary remote, mirror или local clone.
+    """
 
     origin_id: NonEmptyString
-    kind: SourceOriginKind
+    kind: SourceOriginKindEnum
     remote_url: NonEmptyString
     auth_profile: StrictStr = ""
 
 
 class SourceRepositoryConfigModel(_TopologyConfigModel):
-    """Логический исходный репозиторий продукта.
+    """
+    Логический исходный репозиторий продукта.
 
     Source repository не равен VM, deployment target или компоненту. Один repo
     может давать несколько компонентов, а один компонент может со временем
     собираться из нескольких repo.
+
+    ``repo_id`` - строковый стабильный код этого repository внутри
+    simple-deploy topology. Это не числовой id, не remote URL и не filesystem
+    path; ожидаются slug-значения вроде ``backend`` или ``frontend-app``.
     """
 
     repo_id: RepoId
@@ -106,11 +81,24 @@ class SourceRepositoryConfigModel(_TopologyConfigModel):
 
 
 class ComponentConfigModel(_TopologyConfigModel):
-    """Логическая часть продукта и ее связи с source repo и target roles."""
+    """
+    Логическая часть продукта и ее связи с source repo и deploy entrypoints.
+    """
 
-    component_id: ComponentId
-    source_repository_ids: list[RepoId] = Field(default_factory=list)
-    target_roles: list[DeploymentTargetRole] = Field(default_factory=list)
+    component_id: ComponentIdEnum
+    source_repository_ids: list[RepoId] = Field(
+        default_factory=list,
+        description=(
+            "Список repo_id логических source repositories, из которых "
+            "собирается компонент."
+        ),
+    )
+    target_roles: list[DeploymentTargetRoleEnum] = Field(
+        default_factory=list,
+        description=(
+            "Роли deploy entrypoints, на которые раскладывается компонент."
+        ),
+    )
 
 
 class VirtualMachineConfigModel(_TopologyConfigModel):
@@ -129,14 +117,17 @@ class VirtualMachineConfigModel(_TopologyConfigModel):
 
 
 class DeploymentTargetConfigModel(_TopologyConfigModel):
-    """Техническая точка размещения внутри deployment landscape.
+    """
+    Deploy entrypoint внутри deployment landscape.
 
-    Target связывает роль размещения, машину и удаленный путь. Например,
-    ``dev-backend`` может указывать на backend slot на ``dev-app-01``.
+    Это не компонент и не CLI entrypoint, а конкретный серверный target:
+    роль размещения на VM/сервере или внешнем ресурсе. Запись связывает роль,
+    машину и удаленный путь. Например, ``dev-backend`` может указывать на
+    backend slot на ``dev-app-01``.
     """
 
     target_id: NonEmptyString
-    role: DeploymentTargetRole
+    role: DeploymentTargetRoleEnum
     machine_id: MachineId
     remote_path: StrictStr = ""
 
@@ -144,25 +135,30 @@ class DeploymentTargetConfigModel(_TopologyConfigModel):
 class DeploymentLandscapeConfigModel(_TopologyConfigModel):
     """Фактическая форма размещения одного deploy-контура.
 
-    Landscape отвечает за "куда раскладывать release на dev/test/prod", но не
-    хранит историю успешных применений. История и baseline живут в registry.
+    Landscape отвечает за "куда раскладывать release на dev/test/prod": какие
+    deploy entrypoints доступны в контуре и на каких VM/серверах они живут.
+    Историю успешных применений он не хранит. История и baseline живут в
+    registry.
     """
 
-    contour: ContourCode
+    contour: ContourCodeEnum
     targets: list[DeploymentTargetConfigModel] = Field(default_factory=list)
 
 
 class ExecutionEnvironmentConfigModel(_TopologyConfigModel):
-    """Окружение выполнения pipeline-операций над bundle-ом.
+    """
+    Окружение выполнения pipeline-операций над bundle-ом.
 
-    Execution environment может совпадать с contour landscape или быть отдельной
-    sandbox/validation площадкой, которая не двигает baseline контура.
+    Execution environment может совпадать с contour landscape или быть
+    отдельной sandbox/validation площадкой, которая не двигает baseline
+    контура.
+
     """
 
     environment_id: NonEmptyString
     kind: NonEmptyString
     machine_ids: list[MachineId] = Field(default_factory=list)
-    contour: ContourCode | None = None
+    contour: ContourCodeEnum | None = None
     target_ids: list[NonEmptyString] = Field(default_factory=list)
 
 
@@ -170,16 +166,21 @@ class RuntimeTopologyConfigModel(_TopologyConfigModel):
     """Агрегированная read/config модель source и deployment topology."""
 
     source_origins: list[SourceOriginConfigModel] = Field(default_factory=list)
-    source_repositories: list[SourceRepositoryConfigModel] = Field(default_factory=list)
+    source_repositories: list[SourceRepositoryConfigModel] = Field(
+        default_factory=list
+    )
     components: list[ComponentConfigModel] = Field(default_factory=list)
     machines: list[VirtualMachineConfigModel] = Field(default_factory=list)
-    landscapes: list[DeploymentLandscapeConfigModel] = Field(default_factory=list)
-    execution_environments: list[ExecutionEnvironmentConfigModel] = Field(default_factory=list)
+    landscapes: list[DeploymentLandscapeConfigModel] = Field(
+        default_factory=list
+    )
+    execution_environments: list[ExecutionEnvironmentConfigModel] = Field(
+        default_factory=list
+    )
 
 
 def runtime_topology_config_model(config: dict) -> RuntimeTopologyConfigModel:
     """Преобразует mapping topology config в структурную Pydantic-модель."""
-
     return RuntimeTopologyConfigModel.model_validate(config)
 
 
@@ -197,7 +198,9 @@ def _source_origin_config(repo_id: str, local_path: str) -> dict:
     }
 
 
-def runtime_topology_from_legacy_env(env: Mapping[str, object]) -> RuntimeTopologyConfigModel:
+def runtime_topology_from_legacy_env(
+    env: Mapping[str, object],
+) -> RuntimeTopologyConfigModel:
     """Строит read-only DEV topology из текущего env-контракта runner-а.
 
     Adapter не меняет формат ``.env``/``local.secrets.env`` и не используется
@@ -211,8 +214,12 @@ def runtime_topology_from_legacy_env(env: Mapping[str, object]) -> RuntimeTopolo
     app_user = _env_value(env, "APP_VM_USER")
     db_host = _env_value(env, "DB_VM_HOST")
     db_user = _env_value(env, "DB_VM_USER")
-    app_auth = _env_value(env, "APP_SSH_KEY_PATH") or _env_value(env, "SSH_KEY_PATH")
-    db_auth = _env_value(env, "DB_SSH_KEY_PATH") or _env_value(env, "SSH_KEY_PATH")
+    app_auth = _env_value(env, "APP_SSH_KEY_PATH") or _env_value(
+        env, "SSH_KEY_PATH"
+    )
+    db_auth = _env_value(env, "DB_SSH_KEY_PATH") or _env_value(
+        env, "SSH_KEY_PATH"
+    )
 
     source_origins = []
     source_repositories = []
@@ -227,7 +234,9 @@ def runtime_topology_from_legacy_env(env: Mapping[str, object]) -> RuntimeTopolo
             }
         )
     if frontend_source:
-        source_origins.append(_source_origin_config("frontend", frontend_source))
+        source_origins.append(
+            _source_origin_config("frontend", frontend_source)
+        )
         source_repositories.append(
             {
                 "repo_id": "frontend",
@@ -299,7 +308,9 @@ def runtime_topology_from_legacy_env(env: Mapping[str, object]) -> RuntimeTopolo
             },
             {
                 "component_id": "frontend",
-                "source_repository_ids": ["frontend"] if frontend_source else [],
+                "source_repository_ids": ["frontend"]
+                if frontend_source
+                else [],
                 "target_roles": ["frontend"],
             },
             {
@@ -309,7 +320,9 @@ def runtime_topology_from_legacy_env(env: Mapping[str, object]) -> RuntimeTopolo
             },
         ],
         "machines": machines,
-        "landscapes": [{"contour": "dev", "targets": targets}] if targets else [],
+        "landscapes": [{"contour": "dev", "targets": targets}]
+        if targets
+        else [],
         "execution_environments": [
             {
                 "environment_id": "dev-contour",

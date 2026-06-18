@@ -36,7 +36,7 @@ CLI, web/API, builder-интеграции и будущим локальным 
   `core/release_paths.py` - общие helper-ы, уже используемые build/mark процессами
   без импорта `windows_pipeline`.
 - `types/` - первые constrained primitives для release/build version, commit SHA,
-  contour, status, component, artifact и deployment target справочников.
+  contour, status, component, artifact и deploy entrypoint справочников.
 - `models/state.py` - внутренние модели чтения над SQLite state/API.
 - `config/runtime.py` - первая Pydantic-модель текущего `windows_pipeline.local.json`
   без изменения старого loader-контракта.

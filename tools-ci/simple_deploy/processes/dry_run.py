@@ -13,16 +13,32 @@ import argparse
 from pathlib import Path
 import sys
 
-
-def _runner_module():
-    """Возвращает compatibility runner с preflight helper-ами.
-
-    Ленивый импорт нужен для сохранения старого public API
-    ``tools.windows_pipeline.dry_run`` и старых patch paths тестов.
-    """
-    from simple_deploy import windows_pipeline
-
-    return windows_pipeline
+from simple_deploy.config.runtime_loader import (
+    check_runtime_config,
+    DEFAULT_RUNTIME_CONFIG,
+    load_runtime_config,
+    runtime_default_preview,
+)
+from simple_deploy.core.build_env import data_sql_artifacts_enabled
+from simple_deploy.core.env import load_env
+from simple_deploy.processes.dry_run_checks import (
+    check_app_deploy_directories,
+    check_app_manage_py,
+    check_backend_build_inputs,
+    check_backend_data_insert_idempotency,
+    check_command,
+    check_db_psql_login,
+    check_http,
+    check_maintenance_stub_archive,
+    check_origin_network,
+    check_outlook_email_config,
+    check_repo,
+    check_service_permissions,
+    check_ssh_key_files,
+    check_ssh_runtime,
+    check_windows_command,
+    Reporter,
+)
 
 
 def dry_run(args: argparse.Namespace) -> bool:
@@ -32,12 +48,13 @@ def dry_run(args: argparse.Namespace) -> bool:
     SQLite state, release artifacts и remote VM state, кроме read-only SSH/HTTP
     проверок, которые уже были частью старого runner contract.
     """
-    runner = _runner_module()
-    reporter = runner.Reporter()
+    reporter = Reporter()
     app_only = bool(getattr(args, "app_only", False))
     try:
-        env = runner.load_env(args.env_file, args.secrets_file, require_secrets=not app_only)
-        runtime, defaulted_runtime_keys = runner.load_runtime_config(args.config_file)
+        env = load_env(
+            args.env_file, args.secrets_file, require_secrets=not app_only
+        )
+        runtime, defaulted_runtime_keys = load_runtime_config(args.config_file)
         reporter.pass_("config files", f"{args.env_file}, {args.secrets_file}")
     except Exception as exc:
         reporter.fail("config files", str(exc))
@@ -47,7 +64,7 @@ def dry_run(args: argparse.Namespace) -> bool:
         reporter.warn(
             f"runtime {key}",
             f"missing in {args.config_file}; using default "
-            f"{runner.runtime_default_preview(runner.DEFAULT_RUNTIME_CONFIG[key])}",
+            f"{runtime_default_preview(DEFAULT_RUNTIME_CONFIG[key])}",
         )
 
     for key in required_env_keys(app_only=app_only):
@@ -56,20 +73,20 @@ def dry_run(args: argparse.Namespace) -> bool:
         else:
             reporter.fail(f"env {key}", "значение не задано")
 
-    runtime_config_ok = runner.check_runtime_config(reporter, runtime)
+    runtime_config_ok = check_runtime_config(reporter, runtime)
     if app_only:
         reporter.skip("maintenance stub archive", "app-only mode")
     elif runtime_config_ok:
-        runner.check_maintenance_stub_archive(reporter, runtime)
+        check_maintenance_stub_archive(reporter, runtime)
     else:
         reporter.skip("maintenance stub archive", "runtime config invalid")
 
-    runner.check_command(reporter, "Python", [sys.executable, "--version"])
-    runner.check_windows_command(reporter, "git", "git --version")
-    runner.check_windows_command(reporter, "node", "node --version")
-    runner.check_windows_command(reporter, "npm", "npm --version")
-    runner.check_windows_command(reporter, "ssh", "ssh -V")
-    runner.check_windows_command(reporter, "scp", "where scp")
+    check_command(reporter, "Python", [sys.executable, "--version"])
+    check_windows_command(reporter, "git", "git --version")
+    check_windows_command(reporter, "node", "node --version")
+    check_windows_command(reporter, "npm", "npm --version")
+    check_windows_command(reporter, "ssh", "ssh -V")
+    check_windows_command(reporter, "scp", "where scp")
 
     git_bash = Path(env.get("GIT_BASH_PATH", ""))
     if git_bash.exists():
@@ -77,7 +94,7 @@ def dry_run(args: argparse.Namespace) -> bool:
     else:
         reporter.fail("Git Bash", f"не найден: {git_bash}")
 
-    runner.check_ssh_key_files(reporter, env, app_only=app_only)
+    check_ssh_key_files(reporter, env, app_only=app_only)
 
     origins = [
         ("backend source repo", env.get("BACKEND_SOURCE_REPO_PATH", "")),
@@ -86,41 +103,55 @@ def dry_run(args: argparse.Namespace) -> bool:
         ("frontend target repo", env.get("FRONTEND_TARGET_REPO_PATH", "")),
     ]
     for name, path in origins:
-        origin_url = runner.check_repo(reporter, name, path)
-        runner.check_origin_network(reporter, f"{name} origin network", origin_url)
+        origin_url = check_repo(reporter, name, path)
+        check_origin_network(reporter, f"{name} origin network", origin_url)
 
-    runner.check_backend_build_inputs(reporter, env)
-    if runner.data_sql_artifacts_enabled(args):
-        runner.check_backend_data_insert_idempotency(reporter, env)
+    check_backend_build_inputs(reporter, env)
+    if data_sql_artifacts_enabled(args):
+        check_backend_data_insert_idempotency(reporter, env)
     else:
-        reporter.skip("backend data INSERT idempotency", "data SQL artifacts disabled by --skip-data-sql-artifacts")
+        reporter.skip(
+            "backend data INSERT idempotency",
+            "data SQL artifacts disabled by --skip-data-sql-artifacts",
+        )
     if runtime_config_ok:
-        runner.check_outlook_email_config(reporter, runtime)
+        check_outlook_email_config(reporter, runtime)
     else:
         reporter.skip("Outlook email", "runtime config invalid")
 
     try:
-        ssh_state = runner.check_ssh_runtime(reporter, env, app_only=app_only)
+        ssh_state = check_ssh_runtime(reporter, env, app_only=app_only)
     except Exception as exc:
         reporter.fail("SSH runtime checks", str(exc))
         ssh_state = {"app": False, "db": False}
-        reporter.skip("app VM deploy checks", "SSH runtime checks завершились ошибкой")
-        reporter.skip("DB SQL checks", "SSH runtime checks завершились ошибкой")
+        reporter.skip(
+            "app VM deploy checks", "SSH runtime checks завершились ошибкой"
+        )
+        reporter.skip(
+            "DB SQL checks", "SSH runtime checks завершились ошибкой"
+        )
 
     if not ssh_state["app"]:
         reporter.skip("app VM directory checks", "app VM unavailable")
         reporter.skip("service permission checks", "app VM unavailable")
-        reporter.skip("DEV HTTP endpoint", "app VM недоступна, healthcheck неинформативен")
+        reporter.skip(
+            "DEV HTTP endpoint",
+            "app VM недоступна, healthcheck неинформативен",
+        )
     elif not runtime_config_ok:
         reporter.skip("app VM directory checks", "runtime config invalid")
         reporter.skip("service permission checks", "runtime config invalid")
         reporter.skip("DEV HTTP endpoint", "runtime config invalid")
     else:
-        runner.check_app_deploy_directories(reporter, env, runtime)
-        runner.check_app_manage_py(reporter, env)
-        runner.check_service_permissions(reporter, env, runtime)
+        check_app_deploy_directories(reporter, env, runtime)
+        check_app_manage_py(reporter, env)
+        check_service_permissions(reporter, env, runtime)
         if runtime.get("healthcheck_enabled", True):
-            runner.check_http(reporter, env, bool(runtime.get("healthcheck_validate_certs", False)))
+            check_http(
+                reporter,
+                env,
+                bool(runtime.get("healthcheck_validate_certs", False)),
+            )
         else:
             reporter.skip("DEV HTTP endpoint", "healthcheck disabled")
 
@@ -129,7 +160,7 @@ def dry_run(args: argparse.Namespace) -> bool:
     elif not runtime_config_ok:
         reporter.skip("DB psql login", "runtime config invalid")
     elif ssh_state["db"]:
-        runner.check_db_psql_login(reporter, env, runtime)
+        check_db_psql_login(reporter, env, runtime)
     else:
         reporter.skip("DB psql login", "DB VM SSH/psql unavailable")
 
@@ -169,7 +200,11 @@ def required_env_keys(app_only: bool = False) -> list[str]:
         "FRONTEND_PROD_SERVER_NAME",
     ]
     if app_only:
-        return [key for key in keys if key not in {"DB_VM_HOST", "DB_VM_USER", "DB_PORT", "DB_NAME"}]
+        return [
+            key
+            for key in keys
+            if key not in {"DB_VM_HOST", "DB_VM_USER", "DB_PORT", "DB_NAME"}
+        ]
     return keys
 
 

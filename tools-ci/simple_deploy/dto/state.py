@@ -6,16 +6,30 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from simple_deploy.types.contour import ContourCode, OptionalContourCode
-from simple_deploy.types.job import JobKind
-from simple_deploy.types.release import BuildVersionString, OptionalBuildVersionString
-from simple_deploy.types.request import ExternalRequestType
+from simple_deploy.types.contour import ContourCodeEnum, JobContourScope
+from simple_deploy.types.fields import (
+    ArtifactsJsonString,
+    CreatedAtString,
+    ErrorText,
+    ExternalIdString,
+    FinishedAtString,
+    LogPathString,
+    PayloadJsonString,
+    StartedAtString,
+    UpdatedAtString,
+)
+from simple_deploy.types.job import JobKindEnum
+from simple_deploy.types.release import (
+    BuildVersionString,
+    OptionalBuildVersionString,
+)
+from simple_deploy.types.request import ExternalRequestTypeEnum
 from simple_deploy.types.source import CommitShaString, OptionalCommitShaString
 from simple_deploy.types.status import (
-    BuildAttemptStatus,
-    DeploymentAttemptStatus,
-    ExternalRequestStatus,
-    JobStatus,
+    BuildAttemptStatusEnum,
+    DeploymentAttemptStatusEnum,
+    ExternalRequestStatusEnum,
+    JobStatusEnum,
 )
 
 
@@ -29,19 +43,19 @@ class ReleaseReferenceDto(_StateDto):
     """Ссылка на ресурс релиза внутри API-проекции."""
 
     build_version: BuildVersionString
-    build_status: BuildAttemptStatus | None = None
-    backend_commit: OptionalCommitShaString | None = None
-    frontend_commit: OptionalCommitShaString | None = None
+    build_status: BuildAttemptStatusEnum = BuildAttemptStatusEnum.UNDEFINED
+    backend_commit: OptionalCommitShaString = ""
+    frontend_commit: OptionalCommitShaString = ""
 
 
 class ContourStateDto(_StateDto):
     """Текущий успешный baseline одного deploy-контура."""
 
-    contour: ContourCode
+    contour: ContourCodeEnum
     last_success_release: BuildVersionString
     last_success_backend_commit: CommitShaString
     last_success_release_ref: ReleaseReferenceDto | None = None
-    updated_at: str
+    updated_at: UpdatedAtString
 
 
 class ReleaseBundleDto(_StateDto):
@@ -49,9 +63,9 @@ class ReleaseBundleDto(_StateDto):
 
     build_version: BuildVersionString
     backend_commit: CommitShaString
-    frontend_commit: OptionalCommitShaString | None = None
-    artifacts_json: str
-    created_at: str
+    frontend_commit: OptionalCommitShaString = ""
+    artifacts_json: ArtifactsJsonString
+    created_at: CreatedAtString
 
 
 class BuildAttemptDto(_StateDto):
@@ -59,65 +73,65 @@ class BuildAttemptDto(_StateDto):
 
     id: int
     build_version: BuildVersionString
-    status: BuildAttemptStatus
-    backend_commit: OptionalCommitShaString | None = None
-    frontend_commit: OptionalCommitShaString | None = None
-    error: str | None = None
-    started_at: str
-    finished_at: str
+    status: BuildAttemptStatusEnum
+    backend_commit: OptionalCommitShaString = ""
+    frontend_commit: OptionalCommitShaString = ""
+    error: ErrorText = ""
+    started_at: StartedAtString
+    finished_at: FinishedAtString
 
 
 class DeploymentAttemptDto(_StateDto):
     """Строка журнала попытки деплоя для API."""
 
     id: int
-    contour: ContourCode
+    contour: ContourCodeEnum
     build_version: BuildVersionString
-    backend_commit: OptionalCommitShaString | None = None
-    status: DeploymentAttemptStatus
-    error: str | None = None
-    started_at: str
-    finished_at: str
+    backend_commit: OptionalCommitShaString = ""
+    status: DeploymentAttemptStatusEnum
+    error: ErrorText = ""
+    started_at: StartedAtString
+    finished_at: FinishedAtString
 
 
 class JobDto(_StateDto):
     """Запись локальной долгой операции для API."""
 
     id: int
-    kind: JobKind
-    contour: OptionalContourCode
+    kind: JobKindEnum
+    contour: JobContourScope
     build_version: OptionalBuildVersionString
-    status: JobStatus
-    payload_json: str
-    log_path: str
-    error: str
-    created_at: str
-    started_at: str
-    finished_at: str
+    status: JobStatusEnum
+    payload_json: PayloadJsonString
+    log_path: LogPathString
+    error: ErrorText
+    created_at: CreatedAtString
+    started_at: StartedAtString
+    finished_at: FinishedAtString
 
 
 class ExternalRequestDto(_StateDto):
     """Запись внешней TEST/PROD заявки на релиз для API."""
 
     id: int
-    contour: ContourCode
+    contour: ContourCodeEnum
     build_version: BuildVersionString
-    request_type: ExternalRequestType
-    status: ExternalRequestStatus
-    external_id: str
-    payload_json: str
-    error: str
-    created_at: str
-    updated_at: str
+    request_type: ExternalRequestTypeEnum
+    status: ExternalRequestStatusEnum
+    external_id: ExternalIdString
+    payload_json: PayloadJsonString
+    error: ErrorText
+    created_at: CreatedAtString
+    updated_at: UpdatedAtString
 
 
 class ReleaseDto(_StateDto):
     """Ресурс релиза для API."""
 
     build_version: BuildVersionString
-    build_status: BuildAttemptStatus | None = None
-    backend_commit: OptionalCommitShaString | None = None
-    frontend_commit: OptionalCommitShaString | None = None
+    build_status: BuildAttemptStatusEnum = BuildAttemptStatusEnum.UNDEFINED
+    backend_commit: OptionalCommitShaString = ""
+    frontend_commit: OptionalCommitShaString = ""
     bundle: ReleaseBundleDto | None = None
     build_attempts: list[BuildAttemptDto]
     deployment_attempts: list[DeploymentAttemptDto]
@@ -137,7 +151,6 @@ class StateSnapshotDto(_StateDto):
 
 def dto_dump(model: BaseModel) -> dict[str, Any]:
     """Сериализует DTO в текущую JSON-совместимую форму API."""
-
     return model.model_dump(mode="json")
 
 

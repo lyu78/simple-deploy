@@ -535,17 +535,19 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - registry write/read границы вынесены в `simple_deploy.registry.commands` и
   `simple_deploy.registry.queries`;
 - SQLite schema расширена таблицами `local_jobs` и `external_requests` для будущего запуска долгих операций из web/API и учета заявок TEST/PROD;
-- `simple_deploy.core.paths`, `core.commands`, `core.env`, `core.build_env` и
-  `core.release_paths` уже вынесены из `windows_pipeline.py`;
-- `processes.build` и `processes.mark` больше не импортируют `simple_deploy.windows_pipeline`;
-- `processes.dry_run`, `processes.data_sql` и `processes.deploy` пока зависят от
-  `windows_pipeline` как от compatibility host для оставшихся dry-run, SSH, DB и
-  deploy helper-ов;
+- `simple_deploy.core.paths`, `core.commands`, `core.env`, `core.build_env`,
+  `core.release_paths`, `core.ssh`, `core.db`, `core.email` и runtime loader теперь вынесены из `windows_pipeline.py`;
+- `processes.build`, `processes.mark`, `processes.dry_run`, `processes.data_sql` и
+  `processes.deploy` больше не импортируют `simple_deploy.windows_pipeline`;
+- dry-run проверки живут в `simple_deploy.processes.dry_run_checks`;
+- helper-ы app deploy, HTTP healthcheck и Outlook-уведомлений живут в
+  `processes.app_deploy`, `processes.healthcheck` и `processes.notifications`;
+- `windows_pipeline.py` теперь является compatibility runner-ом для CLI/logging и re-export host для старых
+  import paths `tools.windows_pipeline.*`;
 - read-only web/API v1 доступен как `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000`;
 - Ansible перенесен из корня в `legacy/ansible-ci`, дефолтные пути legacy Ansible поправлены на новую глубину каталога;
 - текущий CLI-контракт не менялся.
 
-Следующий рефакторинг-срез: убрать `_runner_module` из `processes.dry_run`.
-Критерий прогресса - уменьшать число process modules, которые импортируют
-`simple_deploy.windows_pipeline`, а не добавлять новые фасады без удаления
-обратных зависимостей.
+Следующий срез рефакторинга: продолжить сжимать `simple_deploy.windows_pipeline` до более тонкого
+CLI/logging compatibility-модуля и переводить оставшиеся re-export-only patch paths на прямых
+владельцев там, где внешний compatibility-контракт уже не нужен.

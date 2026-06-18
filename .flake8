@@ -1,0 +1,40 @@
+[flake8]
+max-line-length = 79
+import-order-style = google
+application-import-names =
+    simple_deploy
+    src
+inline-quotes = double
+extend-ignore =
+    A003
+    A005
+    D100
+    D101
+    D102
+    D103
+    D104
+    D105
+    D106
+    D107
+    D200
+    D205
+    D400
+    D401
+    E203
+    W503
+    R504
+    R505
+    R507
+exclude =
+    .git
+    .pytest_cache
+    .ruff_cache
+    .venv
+    .venv-ansible
+    __pycache__
+    legacy
+    local_state
+    logs
+    releases
+per-file-ignores =
+    tools-ci/simple_deploy/windows_pipeline.py: E402,F401,I100,I101,I202

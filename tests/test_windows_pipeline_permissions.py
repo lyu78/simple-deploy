@@ -303,7 +303,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         }
 
         with patch(
-            "tools.windows_pipeline.read_http_text",
+            "simple_deploy.processes.healthcheck.read_http_text",
             return_value="<html><h1>Плановые технические работы</h1></html>",
         ) as read_mock:
             verify_maintenance_stub_http(env, runtime)
@@ -321,7 +321,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             "healthcheck_validate_certs": False,
         }
 
-        with patch("tools.windows_pipeline.read_http_text", return_value="<html><h1>Основной портал</h1></html>"):
+        with patch("simple_deploy.processes.healthcheck.read_http_text", return_value="<html><h1>Основной портал</h1></html>"):
             with self.assertRaisesRegex(RuntimeError, "maintenance stub HTTP check failed"):
                 verify_maintenance_stub_http(env, runtime)
 
@@ -331,9 +331,9 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             local_path = Path(tmp) / "db_schema.tar.gz"
             local_path.write_text("", encoding="utf-8")
 
-            with patch("tools.windows_pipeline.ssh_key_args", return_value=["DB_KEY"]) as key_mock:
+            with patch("simple_deploy.core.ssh.ssh_key_args", return_value=["DB_KEY"]) as key_mock:
                 with patch(
-                    "tools.windows_pipeline.run_command",
+                    "simple_deploy.core.ssh.run_command",
                     return_value=CommandResult(0, "", ""),
                 ) as run_mock:
                     scp_file({}, local_path, "db-user", "db.example.local", "/tmp/db_schema.tar.gz", scope="DB")
@@ -362,8 +362,8 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             "DB_LOGIN_PASSWORD": "secret",
         }
 
-        with patch("tools.windows_pipeline.scp_file", return_value=CommandResult(0, "", "")):
-            with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
+        with patch("simple_deploy.processes.data_sql.scp_file", return_value=CommandResult(0, "", "")):
+            with patch("simple_deploy.processes.data_sql.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
                 run_db_schema_summary(env, {}, artifact)
 
         final_command = ssh_mock.call_args_list[-1].args[3]
@@ -391,9 +391,9 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         }
         runtime = {"db_data_sql_timeout_seconds": 21600}
 
-        with patch("tools.windows_pipeline.upload_unpack_db_sql_artifact"):
+        with patch("simple_deploy.processes.data_sql.upload_unpack_db_sql_artifact"):
             with patch(
-                "tools.windows_pipeline.ssh_command",
+                "simple_deploy.processes.data_sql.ssh_command",
                 return_value=CommandResult(0, "DB data insert SQL completed in 26s\n", ""),
             ) as ssh_mock:
                 with patch("builtins.print") as print_mock:
@@ -423,7 +423,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         }
         runtime = {"db_psql_bin": "psql", "db_psql_host": "localhost"}
 
-        with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "ok\n", "")) as ssh_mock:
+        with patch("simple_deploy.processes.data_sql.ssh_command", return_value=CommandResult(0, "ok\n", "")) as ssh_mock:
             cleanup_db_data_update_leftovers(env, runtime)
 
         process_call = ssh_mock.call_args_list[0]
@@ -470,8 +470,8 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             "db_update_parallel_status_interval_seconds": 15,
         }
 
-        with patch("tools.windows_pipeline.upload_unpack_db_sql_artifact"):
-            with patch("tools.windows_pipeline.stream_ssh_command", return_value=CommandResult(0, "", "")) as stream_mock:
+        with patch("simple_deploy.processes.data_sql.upload_unpack_db_sql_artifact"):
+            with patch("simple_deploy.processes.data_sql.stream_ssh_command", return_value=CommandResult(0, "", "")) as stream_mock:
                 run_db_data_update_parallel(env, runtime, artifact)
 
         command = stream_mock.call_args.args[3]
@@ -508,8 +508,8 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             "DB_LOGIN_PASSWORD": "secret",
         }
 
-        with patch("tools.windows_pipeline.upload_unpack_db_sql_artifact"):
-            with patch("tools.windows_pipeline.stream_ssh_command", return_value=CommandResult(0, "", "")) as stream_mock:
+        with patch("simple_deploy.processes.data_sql.upload_unpack_db_sql_artifact"):
+            with patch("simple_deploy.processes.data_sql.stream_ssh_command", return_value=CommandResult(0, "", "")) as stream_mock:
                 run_db_data_update_parallel(env, {}, artifact, include_set_default_sql=True)
 
         command = stream_mock.call_args.args[3]
@@ -532,7 +532,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             "sql_scripts": [],
         }
 
-        with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
+        with patch("simple_deploy.processes.data_sql.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
             run_db_maintenance(env, runtime, "before_unpack")
 
         self.assertEqual(ssh_mock.call_args.kwargs["timeout"], 900)
@@ -558,7 +558,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             ],
         }
 
-        with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
+        with patch("simple_deploy.processes.data_sql.ssh_command", return_value=CommandResult(0, "", "")) as ssh_mock:
             run_db_maintenance(env, runtime, "before_unpack")
 
         self.assertEqual(ssh_mock.call_args.kwargs["timeout"], 900)
@@ -738,7 +738,10 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             "APP_VM_HOST": APP_VM_HOST,
         }
 
-        with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "ok\n", "")) as ssh_mock:
+        with patch(
+            "simple_deploy.processes.dry_run_checks.ssh_command",
+            return_value=CommandResult(0, "ok\n", ""),
+        ) as ssh_mock:
             result = check_ssh_runtime(reporter, env, app_only=True)
 
         self.assertEqual(result, {"app": True, "db": False})
@@ -764,7 +767,10 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         status_output = "keydb_local.service - Key DB local\nActive: inactive (dead)\n"
 
         with patch.object(reporter, "pass_", wraps=reporter.pass_) as pass_mock:
-            with patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(3, status_output, "")):
+            with patch(
+                "simple_deploy.processes.dry_run_checks.ssh_command",
+                return_value=CommandResult(3, status_output, ""),
+            ):
                 check_service_permissions(reporter, env, runtime)
 
         self.assertEqual(reporter.issues, [])
@@ -1167,11 +1173,11 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         env = {"DEV_DOMAIN": DEV_DOMAIN}
         release_dir = Path("releases") / TEST_BUILD_VERSION
 
-        with patch("tools.windows_pipeline.load_env", return_value=env):
-            with patch("tools.windows_pipeline.load_runtime_config", return_value=({}, [])):
-                with patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)):
+        with patch("simple_deploy.processes.deploy.load_env", return_value=env):
+            with patch("simple_deploy.processes.deploy.load_runtime_config", return_value=({}, [])):
+                with patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)):
                     with patch(
-                        "tools.windows_pipeline.resolve_artifacts",
+                        "simple_deploy.processes.deploy.resolve_artifacts",
                         side_effect=RuntimeError("artifact missing"),
                     ):
                         with patch("simple_deploy.processes.mark.mark_contour_failed") as mark_failed_mock:
@@ -1209,23 +1215,25 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         )
 
         with ExitStack() as stack:
-            load_env_mock = stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
-            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[artifact]))
-            cleanup_mock = stack.enter_context(patch("tools.windows_pipeline.cleanup_db_data_update_leftovers"))
-            resolve_db_mock = stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact"))
-            db_maintenance_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance"))
-            db_schema_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_schema_summary"))
-            service_mock = stack.enter_context(patch("tools.windows_pipeline.run_service_steps"))
+            load_env_mock = stack.enter_context(patch("simple_deploy.processes.deploy.load_env", return_value=env))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_artifacts", return_value=[artifact]))
+            cleanup_mock = stack.enter_context(patch("simple_deploy.processes.deploy.cleanup_db_data_update_leftovers"))
+            resolve_db_mock = stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_schema_artifact"))
+            db_maintenance_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance"))
+            db_schema_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_schema_summary"))
+            service_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_service_steps"))
             stack.enter_context(
-                patch("tools.windows_pipeline.management_commands", return_value=["python manage.py migrate --fake"])
+                patch("simple_deploy.processes.deploy.management_commands", return_value=["python manage.py migrate --fake"])
             )
-            stack.enter_context(patch("tools.windows_pipeline.ssh_command", return_value=CommandResult(0, "", "")))
-            stack.enter_context(patch("tools.windows_pipeline.scp_file", return_value=CommandResult(0, "", "")))
-            healthcheck_mock = stack.enter_context(patch("tools.windows_pipeline.healthcheck"))
-            mark_applied_mock = stack.enter_context(patch("tools.windows_pipeline.mark_contour_applied"))
-            stack.enter_context(patch("tools.windows_pipeline.send_outlook_success_email"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.upload_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.backup_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.unpack_app_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.ssh_command", return_value=CommandResult(0, "", "")))
+            healthcheck_mock = stack.enter_context(patch("simple_deploy.processes.deploy.healthcheck"))
+            mark_applied_mock = stack.enter_context(patch("simple_deploy.processes.deploy.mark_contour_applied"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.send_outlook_success_email"))
 
             self.assertEqual(deploy(args), 0)
 
@@ -1256,25 +1264,25 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         db_schema = DbSqlArtifact("db_schema_dev", Path("schema.tar.gz"), "", "", ".", "summary_sql_dev_*.sql")
 
         with ExitStack() as stack:
-            stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
-            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[backend, frontend]))
-            stack.enter_context(patch("tools.windows_pipeline.cleanup_db_data_update_leftovers"))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact", return_value=db_schema))
-            resolve_data_mock = stack.enter_context(patch("tools.windows_pipeline.resolve_db_data_artifact"))
-            resolve_stub_mock = stack.enter_context(patch("tools.windows_pipeline.resolve_maintenance_stub_artifact"))
-            upload_mock = stack.enter_context(patch("tools.windows_pipeline.upload_app_artifacts"))
-            stack.enter_context(patch("tools.windows_pipeline.backup_app_artifacts"))
-            stack.enter_context(patch("tools.windows_pipeline.run_service_steps"))
-            stack.enter_context(patch("tools.windows_pipeline.unpack_app_artifact"))
-            db_schema_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_schema_summary"))
-            db_insert_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_data_insert"))
-            db_update_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_data_update_parallel"))
-            stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance"))
-            stack.enter_context(patch("tools.windows_pipeline.management_commands", return_value=[]))
-            mark_mock = stack.enter_context(patch("tools.windows_pipeline.mark_contour_applied"))
-            stack.enter_context(patch("tools.windows_pipeline.send_outlook_success_email"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_env", return_value=env))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.cleanup_db_data_update_leftovers"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_schema_artifact", return_value=db_schema))
+            resolve_data_mock = stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_data_artifact"))
+            resolve_stub_mock = stack.enter_context(patch("simple_deploy.processes.deploy.resolve_maintenance_stub_artifact"))
+            upload_mock = stack.enter_context(patch("simple_deploy.processes.deploy.upload_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.backup_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_service_steps"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.unpack_app_artifact"))
+            db_schema_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_schema_summary"))
+            db_insert_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_insert"))
+            db_update_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_update_parallel"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.management_commands", return_value=[]))
+            mark_mock = stack.enter_context(patch("simple_deploy.processes.deploy.mark_contour_applied"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.send_outlook_success_email"))
 
             self.assertEqual(deploy(args), 0)
 
@@ -1306,26 +1314,26 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             return {"insert": db_insert, "update_parallel": db_update}[kind]
 
         with ExitStack() as stack:
-            stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
-            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[backend, frontend]))
-            stack.enter_context(patch("tools.windows_pipeline.cleanup_db_data_update_leftovers"))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact", return_value=db_schema))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_db_data_artifact", side_effect=data_artifact_side_effect))
-            resolve_stub_mock = stack.enter_context(patch("tools.windows_pipeline.resolve_maintenance_stub_artifact"))
-            verify_stub_mock = stack.enter_context(patch("tools.windows_pipeline.verify_maintenance_stub_http"))
-            upload_mock = stack.enter_context(patch("tools.windows_pipeline.upload_app_artifacts"))
-            stack.enter_context(patch("tools.windows_pipeline.backup_app_artifacts"))
-            stack.enter_context(patch("tools.windows_pipeline.run_service_steps"))
-            unpack_mock = stack.enter_context(patch("tools.windows_pipeline.unpack_app_artifact"))
-            stack.enter_context(patch("tools.windows_pipeline.run_db_schema_summary"))
-            db_insert_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_data_insert"))
-            db_update_mock = stack.enter_context(patch("tools.windows_pipeline.run_db_data_update_parallel"))
-            stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance"))
-            stack.enter_context(patch("tools.windows_pipeline.management_commands", return_value=[]))
-            stack.enter_context(patch("tools.windows_pipeline.mark_contour_applied"))
-            stack.enter_context(patch("tools.windows_pipeline.send_outlook_success_email"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_env", return_value=env))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.cleanup_db_data_update_leftovers"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_schema_artifact", return_value=db_schema))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_data_artifact", side_effect=data_artifact_side_effect))
+            resolve_stub_mock = stack.enter_context(patch("simple_deploy.processes.deploy.resolve_maintenance_stub_artifact"))
+            verify_stub_mock = stack.enter_context(patch("simple_deploy.processes.deploy.verify_maintenance_stub_http"))
+            upload_mock = stack.enter_context(patch("simple_deploy.processes.deploy.upload_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.backup_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_service_steps"))
+            unpack_mock = stack.enter_context(patch("simple_deploy.processes.deploy.unpack_app_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_schema_summary"))
+            db_insert_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_insert"))
+            db_update_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_update_parallel"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.management_commands", return_value=[]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.mark_contour_applied"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.send_outlook_success_email"))
 
             self.assertEqual(deploy(args), 0)
 
@@ -1352,25 +1360,25 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         events = []
 
         with ExitStack() as stack:
-            stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
-            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[backend, frontend]))
-            stack.enter_context(patch("tools.windows_pipeline.cleanup_db_data_update_leftovers"))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact", return_value=db_schema))
-            stack.enter_context(patch("tools.windows_pipeline.upload_app_artifacts"))
-            stack.enter_context(patch("tools.windows_pipeline.backup_app_artifacts"))
-            stack.enter_context(patch("tools.windows_pipeline.run_service_steps"))
-            stack.enter_context(patch("tools.windows_pipeline.unpack_app_artifact"))
-            stack.enter_context(patch("tools.windows_pipeline.run_db_schema_summary"))
-            stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance"))
-            stack.enter_context(patch("tools.windows_pipeline.management_commands", return_value=[]))
-            stack.enter_context(patch("tools.windows_pipeline.healthcheck", side_effect=lambda *_args: events.append("healthcheck")))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_env", return_value=env))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.cleanup_db_data_update_leftovers"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_schema_artifact", return_value=db_schema))
+            stack.enter_context(patch("simple_deploy.processes.deploy.upload_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.backup_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_service_steps"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.unpack_app_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_schema_summary"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.management_commands", return_value=[]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.healthcheck", side_effect=lambda *_args: events.append("healthcheck")))
             stack.enter_context(
-                patch("tools.windows_pipeline.mark_contour_applied", side_effect=lambda *_args: events.append("mark"))
+                patch("simple_deploy.processes.deploy.mark_contour_applied", side_effect=lambda *_args: events.append("mark"))
             )
             stack.enter_context(
-                patch("tools.windows_pipeline.send_outlook_success_email", side_effect=lambda *_args: events.append("email"))
+                patch("simple_deploy.processes.deploy.send_outlook_success_email", side_effect=lambda *_args: events.append("email"))
             )
 
             self.assertEqual(deploy(args), 0)
@@ -1441,55 +1449,55 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             return {"insert": db_insert, "update_parallel": db_update}[kind]
 
         with ExitStack() as stack:
-            stack.enter_context(patch("tools.windows_pipeline.load_env", return_value=env))
-            stack.enter_context(patch("tools.windows_pipeline.load_runtime_config", return_value=(runtime, [])))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_artifacts", return_value=[backend, frontend]))
-            stack.enter_context(patch("tools.windows_pipeline.resolve_db_schema_artifact", return_value=db_schema))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_env", return_value=env))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_schema_artifact", return_value=db_schema))
             stack.enter_context(
-                patch("tools.windows_pipeline.resolve_db_data_artifact", side_effect=data_artifact_side_effect)
+                patch("simple_deploy.processes.deploy.resolve_db_data_artifact", side_effect=data_artifact_side_effect)
             )
-            stack.enter_context(patch("tools.windows_pipeline.resolve_maintenance_stub_artifact", return_value=stub))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_maintenance_stub_artifact", return_value=stub))
             stack.enter_context(
                 patch(
-                    "tools.windows_pipeline.cleanup_db_data_update_leftovers",
+                    "simple_deploy.processes.deploy.cleanup_db_data_update_leftovers",
                     side_effect=lambda *_args: events.append("cleanup:update"),
                 )
             )
             stack.enter_context(
-                patch("tools.windows_pipeline.upload_app_artifacts", side_effect=lambda *_args: events.append("upload"))
+                patch("simple_deploy.processes.deploy.upload_app_artifacts", side_effect=lambda *_args: events.append("upload"))
             )
             stack.enter_context(
-                patch("tools.windows_pipeline.backup_app_artifacts", side_effect=lambda *_args: events.append("backup"))
+                patch("simple_deploy.processes.deploy.backup_app_artifacts", side_effect=lambda *_args: events.append("backup"))
             )
-            stack.enter_context(patch("tools.windows_pipeline.run_service_steps", side_effect=service_side_effect))
-            stack.enter_context(patch("tools.windows_pipeline.unpack_app_artifact", side_effect=unpack_side_effect))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_service_steps", side_effect=service_side_effect))
+            stack.enter_context(patch("simple_deploy.processes.deploy.unpack_app_artifact", side_effect=unpack_side_effect))
             stack.enter_context(
-                patch("tools.windows_pipeline.verify_maintenance_stub_http", side_effect=lambda *_args: events.append("stub:http"))
-            )
-            stack.enter_context(
-                patch("tools.windows_pipeline.run_db_schema_summary", side_effect=lambda *_args: events.append("db:schema"))
+                patch("simple_deploy.processes.deploy.verify_maintenance_stub_http", side_effect=lambda *_args: events.append("stub:http"))
             )
             stack.enter_context(
-                patch("tools.windows_pipeline.run_db_data_insert", side_effect=lambda *_args: events.append("db:insert"))
+                patch("simple_deploy.processes.deploy.run_db_schema_summary", side_effect=lambda *_args: events.append("db:schema"))
+            )
+            stack.enter_context(
+                patch("simple_deploy.processes.deploy.run_db_data_insert", side_effect=lambda *_args: events.append("db:insert"))
             )
             stack.enter_context(
                 patch(
-                    "tools.windows_pipeline.run_db_data_update_parallel",
+                    "simple_deploy.processes.deploy.run_db_data_update_parallel",
                     side_effect=lambda *_args, **_kwargs: events.append("db:update_parallel"),
                 )
             )
-            stack.enter_context(patch("tools.windows_pipeline.run_db_maintenance", side_effect=maintenance_side_effect))
-            stack.enter_context(patch("tools.windows_pipeline.management_commands", return_value=["python manage.py migrate"]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance", side_effect=maintenance_side_effect))
+            stack.enter_context(patch("simple_deploy.processes.deploy.management_commands", return_value=["python manage.py migrate"]))
             stack.enter_context(
                 patch(
-                    "tools.windows_pipeline.ssh_command",
+                    "simple_deploy.processes.deploy.ssh_command",
                     side_effect=lambda *_args, **_kwargs: events.append("management") or CommandResult(0, "", ""),
                 )
             )
-            stack.enter_context(patch("tools.windows_pipeline.healthcheck", side_effect=lambda *_args: events.append("healthcheck")))
-            stack.enter_context(patch("tools.windows_pipeline.mark_contour_applied"))
-            stack.enter_context(patch("tools.windows_pipeline.send_outlook_success_email"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.healthcheck", side_effect=lambda *_args: events.append("healthcheck")))
+            stack.enter_context(patch("simple_deploy.processes.deploy.mark_contour_applied"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.send_outlook_success_email"))
 
             self.assertEqual(deploy(args), 0)
 
@@ -1521,11 +1529,11 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         )
         release_dir = Path("releases") / TEST_BUILD_VERSION
 
-        with patch("tools.windows_pipeline.load_env", return_value={}):
-            with patch("tools.windows_pipeline.load_runtime_config", return_value=({}, [])):
-                with patch("tools.windows_pipeline.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)):
+        with patch("simple_deploy.processes.deploy.load_env", return_value={}):
+            with patch("simple_deploy.processes.deploy.load_runtime_config", return_value=({}, [])):
+                with patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)):
                     with patch(
-                        "tools.windows_pipeline.resolve_artifacts",
+                        "simple_deploy.processes.deploy.resolve_artifacts",
                         side_effect=RuntimeError("artifact missing"),
                     ):
                         with patch(
@@ -1582,7 +1590,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
             with patch.dict("os.environ", {}, clear=True):
                 with patch(
-                    "tools.windows_pipeline.run_command",
+                    "simple_deploy.processes.dry_run_checks.run_command",
                     return_value=CommandResult(0, f"{BACKEND_APP_ROOT}.settings.base\n", ""),
                 ) as run_mock:
                     check_backend_build_inputs(
@@ -1819,9 +1827,9 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
                 )
             ]
 
-            with patch("tools.windows_pipeline.release_changelog_text", return_value="none"):
+            with patch("simple_deploy.processes.notifications.release_changelog_text", return_value="none"):
                 with patch(
-                    "tools.windows_pipeline.run_command",
+                    "simple_deploy.processes.notifications.run_command",
                     return_value=CommandResult(0, "sent", ""),
                 ) as run_mock:
                     send_outlook_success_email(env, runtime, TEST_BUILD_VERSION, release_dir, artifacts)

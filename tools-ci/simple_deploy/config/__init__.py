@@ -1,4 +1,5 @@
-"""Пакет typed-конфигурации simple-deploy.
+"""
+Пакет typed-конфигурации simple-deploy.
 
 Здесь живут Pydantic-модели для двух разных, но связанных вещей.
 
@@ -14,32 +15,33 @@ landscapes и execution environments. Это отвечает на вопрос 
 
 Пример различия:
 
-* runtime config: ``data_sql_enabled=True`` и ``db_update_parallel_max_workers=4``;
+* runtime config: ``data_sql_enabled=True`` и
+  ``db_update_parallel_max_workers=4``;
 * runtime topology: ``backend`` собирается из repo ``backend`` и размещается на
-  target-е роли ``backend`` в landscape ``dev``.
+target-е роли ``backend`` в landscape ``dev``.
 
-На текущем этапе ``RuntimeConfigModel`` является typed-оберткой над рабочим JSON,
-а ``RuntimeTopologyConfigModel`` фиксирует целевую форму для следующих срезов и
-пока не заменяет существующий loader.
+На текущем этапе ``RuntimeConfigModel`` является typed-оберткой над рабочим
+JSON, а ``RuntimeTopologyConfigModel`` фиксирует целевую форму для следующих
+срезов и пока не заменяет существующий loader.
 """
 
 from simple_deploy.config.runtime import (
+    runtime_config_model,
     RuntimeConfigModel,
     ServiceStepConfigModel,
     SqlScriptConfigModel,
-    runtime_config_model,
 )
 from simple_deploy.config.topology import (
     ComponentConfigModel,
     DeploymentLandscapeConfigModel,
     DeploymentTargetConfigModel,
     ExecutionEnvironmentConfigModel,
+    runtime_topology_config_model,
+    runtime_topology_from_legacy_env,
     RuntimeTopologyConfigModel,
     SourceOriginConfigModel,
     SourceRepositoryConfigModel,
     VirtualMachineConfigModel,
-    runtime_topology_config_model,
-    runtime_topology_from_legacy_env,
 )
 from simple_deploy.config.validation import check_runtime_config
 

@@ -1,8 +1,10 @@
-"""Read/query слой поверх registry state.
+"""
+Read/query слой поверх registry state.
 
 Модуль собирает внутренние read models для dashboard/API из локального SQLite
 registry. Он не меняет состояние, не запускает процессы и не знает про HTTP.
-Web/API получает отсюда готовые проекции, а затем преобразует их во внешние DTO.
+Web/API получает отсюда готовые проекции, а затем преобразует их во внешние
+DTO.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from simple_deploy.registry.state import (
     list_jobs,
     list_releases,
 )
+from simple_deploy.types.status import BuildAttemptStatusEnum
 
 
 def bounded_limit(limit: int) -> int:
@@ -39,8 +42,12 @@ def bounded_limit(limit: int) -> int:
 def release_sort_key(release: ReleaseReadModel) -> tuple[str, str]:
     """Возвращает ключ сортировки ресурса релиза для API/read models."""
     timestamps = [attempt.finished_at for attempt in release.build_attempts]
-    timestamps.extend(attempt.finished_at for attempt in release.deployment_attempts)
-    timestamps.extend(request.updated_at for request in release.external_requests)
+    timestamps.extend(
+        attempt.finished_at for attempt in release.deployment_attempts
+    )
+    timestamps.extend(
+        request.updated_at for request in release.external_requests
+    )
     if release.bundle is not None:
         timestamps.append(release.bundle.created_at)
     return (max(timestamps, default=""), release.build_version)
@@ -80,10 +87,14 @@ def release_read_models(
     releases = []
     for build_version, record in records.items():
         bundle = record["bundle"]
-        attempts = sorted(record["build_attempts"], key=lambda attempt: attempt.id, reverse=True)
+        attempts = sorted(
+            record["build_attempts"],
+            key=lambda attempt: attempt.id,
+            reverse=True,
+        )
         latest_attempt = attempts[0] if attempts else None
         if bundle is not None:
-            build_status = "success"
+            build_status = BuildAttemptStatusEnum.SUCCESS
             backend_commit = bundle.backend_commit
             frontend_commit = bundle.frontend_commit
         elif latest_attempt is not None:
@@ -91,9 +102,9 @@ def release_read_models(
             backend_commit = latest_attempt.backend_commit
             frontend_commit = latest_attempt.frontend_commit
         else:
-            build_status = None
-            backend_commit = None
-            frontend_commit = None
+            build_status = BuildAttemptStatusEnum.UNDEFINED
+            backend_commit = ""
+            frontend_commit = ""
         releases.append(
             ReleaseReadModel(
                 build_version=build_version,
@@ -148,7 +159,9 @@ def release_read_models_from_state(limit: int = 50) -> list[ReleaseReadModel]:
     )
 
 
-def release_reference_read_model(release: ReleaseReadModel) -> ReleaseReferenceReadModel:
+def release_reference_read_model(
+    release: ReleaseReadModel,
+) -> ReleaseReferenceReadModel:
     """Строит компактную ссылку на ресурс релиза для вложенных проекций."""
     return ReleaseReferenceReadModel(
         build_version=release.build_version,
@@ -177,7 +190,7 @@ def contour_state_read_models(
         if release_ref is None:
             release_ref = ReleaseReferenceReadModel(
                 build_version=model.last_success_release,
-                build_status="success",
+                build_status=BuildAttemptStatusEnum.SUCCESS,
                 backend_commit=model.last_success_backend_commit,
             )
         contours[contour] = model.model_copy(
@@ -195,12 +208,16 @@ def job_read_models_from_state(limit: int = 50) -> list[JobReadModel]:
         ]
 
 
-def external_request_read_models_from_state(limit: int = 50) -> list[ExternalRequestReadModel]:
+def external_request_read_models_from_state(
+    limit: int = 50,
+) -> list[ExternalRequestReadModel]:
     """Читает последние external TEST/PROD requests из registry state."""
     with closing(connect_state_db()) as connection:
         return [
             ExternalRequestReadModel.model_validate(request)
-            for request in list_external_requests(connection, limit=bounded_limit(limit))
+            for request in list_external_requests(
+                connection, limit=bounded_limit(limit)
+            )
         ]
 
 

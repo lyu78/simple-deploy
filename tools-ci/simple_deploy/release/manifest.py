@@ -13,7 +13,6 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-
 RELEASE_MANIFEST_NAME = "release_manifest.json"
 
 
@@ -76,23 +75,35 @@ def load_release_manifest(release_dir: Path) -> dict | None:
 
 
 def release_backend_commit(release_dir: Path) -> str:
-    """Возвращает backend commit из manifest релиза.
-
-    Функция используется командами mark/deploy для записи результата в registry.
-    Она только читает переносимый manifest и не двигает baseline сама;
-    изменение baseline выполняет ``registry.commands`` после успешного применения
-    релиза.
     """
+    Возвращает backend commit из manifest релиза.
+
+    Функция используется командами mark/deploy для записи результата в
+    registry. Она только читает переносимый manifest и не двигает baseline
+    сама; изменение baseline выполняет ``registry.commands`` после успешного
+    применения релиза.
+
+    """
+    manifest_path = release_dir / RELEASE_MANIFEST_NAME
     manifest = load_release_manifest(release_dir)
     if not manifest:
-        raise RuntimeError(f"Release manifest not found: {release_dir / RELEASE_MANIFEST_NAME}")
-    commit = str(manifest.get("repositories", {}).get("backend", {}).get("commit_sha", "")).strip()
+        raise RuntimeError(f"Release manifest not found: {manifest_path}")
+    commit = str(
+        manifest.get("repositories", {})
+        .get("backend", {})
+        .get("commit_sha", "")
+    ).strip()
     if not commit:
-        raise RuntimeError(f"Backend commit is missing in release manifest: {release_dir / RELEASE_MANIFEST_NAME}")
+        raise RuntimeError(
+            "Backend commit is missing in release manifest: "
+            f"{manifest_path}"
+        )
     return commit
 
 
-def find_previous_release_manifest(release_dir: Path) -> tuple[Path, dict] | None:
+def find_previous_release_manifest(
+    release_dir: Path,
+) -> tuple[Path, dict] | None:
     """Ищет предыдущий релиз с manifest рядом с текущей директорией релиза.
 
     Поиск идет по соседним директориям в release root и выбирает самый свежий
@@ -106,9 +117,13 @@ def find_previous_release_manifest(release_dir: Path) -> tuple[Path, dict] | Non
     candidates = [
         path
         for path in release_root.iterdir()
-        if path.is_dir() and path.resolve() != release_dir.resolve() and (path / RELEASE_MANIFEST_NAME).exists()
+        if path.is_dir()
+        and path.resolve() != release_dir.resolve()
+        and (path / RELEASE_MANIFEST_NAME).exists()
     ]
-    for candidate in sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True):
+    for candidate in sorted(
+        candidates, key=lambda path: path.stat().st_mtime, reverse=True
+    ):
         manifest = load_release_manifest(candidate)
         if manifest:
             return candidate, manifest

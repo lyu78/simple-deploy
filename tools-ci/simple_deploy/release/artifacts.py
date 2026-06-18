@@ -13,10 +13,18 @@ import fnmatch
 from pathlib import Path
 
 from simple_deploy.registry.state import validate_contour
-
+from simple_deploy.types.fields import (
+    ArtifactEntrypointDirString,
+    ArtifactEntrypointPatternString,
+    ArtifactExtractPathString,
+    ArtifactNameString,
+    ArtifactRemoteArchiveString,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MAINTENANCE_STUB_ARCHIVE = "tools-ci/maintenance_stub/maintenance_stub.tar.gz"
+DEFAULT_MAINTENANCE_STUB_ARCHIVE = (
+    "tools-ci/maintenance_stub/maintenance_stub.tar.gz"
+)
 
 
 @dataclass
@@ -28,10 +36,10 @@ class Artifact:
     который будет очищен и заполнен на этапе deploy.
     """
 
-    name: str
+    name: ArtifactNameString
     local_path: Path
-    remote_archive: str
-    extract_path: str
+    remote_archive: ArtifactRemoteArchiveString
+    extract_path: ArtifactExtractPathString
 
 
 @dataclass
@@ -44,21 +52,23 @@ class DbSqlArtifact:
     runner.
     """
 
-    name: str
+    name: ArtifactNameString
     local_path: Path
-    remote_archive: str
-    remote_extract_path: str
-    entrypoint_dir: str
-    entrypoint_pattern: str
+    remote_archive: ArtifactRemoteArchiveString
+    remote_extract_path: ArtifactExtractPathString
+    entrypoint_dir: ArtifactEntrypointDirString
+    entrypoint_pattern: ArtifactEntrypointPatternString
 
 
 def require_value(env: dict[str, str], name: str) -> str:
-    """Возвращает обязательное значение runtime-окружения.
+    """
+    Возвращает обязательное значение runtime-окружения.
 
     Функция принимает словарь окружения, нормализует значение через ``strip`` и
-    падает с явной ошибкой, если переменная отсутствует или пуста. Она не читает
-    ``os.environ`` напрямую: источником истины остается уже собранный runtime
-    env, переданный вызывающим процессом.
+    падает с явной ошибкой, если переменная отсутствует или пуста. Она не
+    читает ``os.environ`` напрямую: источником истины остается уже собранный
+    runtime env, переданный вызывающим процессом.
+
     """
     value = env.get(name, "").strip()
     if not value:
@@ -80,7 +90,9 @@ def runtime_local_path(path_value: object) -> Path:
     return ROOT / path
 
 
-def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path) -> list[Artifact]:
+def resolve_artifacts(
+    env: dict[str, str], build_version: str, release_dir: Path
+) -> list[Artifact]:
     """Находит backend/frontend архивы для deploy приложения.
 
     Функция принимает runtime env, версию релиза и директорию релиза, затем
@@ -92,7 +104,10 @@ def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path
     if not release_dir.is_dir():
         raise RuntimeError(f"Директория релиза не существует: {release_dir}")
 
-    remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    remote_dir = (
+        f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    )
+    dev_domain = require_value(env, "DEV_DOMAIN")
     patterns = [
         (
             "backend",
@@ -102,7 +117,7 @@ def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path
         ),
         (
             "frontend",
-            f"frontend_r_{build_version}-bf_dev-env_{require_value(env, 'DEV_DOMAIN')}.tar.gz",
+            f"frontend_r_{build_version}-bf_dev-env_{dev_domain}.tar.gz",
             f"{remote_dir}/frontend.tar.gz",
             require_value(env, "FRONTEND_RELEASE_PATH"),
         ),
@@ -110,11 +125,20 @@ def resolve_artifacts(env: dict[str, str], build_version: str, release_dir: Path
 
     artifacts: list[Artifact] = []
     for name, pattern, remote_archive, extract_path in patterns:
-        matches = [path for path in release_dir.iterdir() if path.is_file() and fnmatch.fnmatch(path.name, pattern)]
+        matches = [
+            path
+            for path in release_dir.iterdir()
+            if path.is_file() and fnmatch.fnmatch(path.name, pattern)
+        ]
         if not matches:
-            raise RuntimeError(f"В {release_dir} не найден архив по шаблону {pattern}")
+            raise RuntimeError(
+                f"В {release_dir} не найден архив по шаблону {pattern}"
+            )
         newest = max(matches, key=lambda path: path.stat().st_mtime)
-        print(f"RESOLVE artifact {name}: {newest.name} -> {extract_path}", flush=True)
+        print(
+            f"RESOLVE artifact {name}: {newest.name} -> {extract_path}",
+            flush=True,
+        )
         artifacts.append(Artifact(name, newest, remote_archive, extract_path))
     return artifacts
 
@@ -138,12 +162,20 @@ def resolve_db_schema_artifact(
         raise RuntimeError(f"Директория релиза не существует: {release_dir}")
 
     pattern = f"db_schema_{contour}_r_{build_version}-c_*.tar.gz"
-    matches = [path for path in release_dir.iterdir() if path.is_file() and fnmatch.fnmatch(path.name, pattern)]
+    matches = [
+        path
+        for path in release_dir.iterdir()
+        if path.is_file() and fnmatch.fnmatch(path.name, pattern)
+    ]
     if not matches:
-        raise RuntimeError(f"В {release_dir} не найден DB schema архив по шаблону {pattern}")
+        raise RuntimeError(
+            f"В {release_dir} не найден DB schema архив по шаблону {pattern}"
+        )
 
     newest = max(matches, key=lambda path: path.stat().st_mtime)
-    remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    remote_dir = (
+        f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    )
     artifact = DbSqlArtifact(
         name=f"db_schema_{contour}",
         local_path=newest,
@@ -153,7 +185,8 @@ def resolve_db_schema_artifact(
         entrypoint_pattern=f"summary_sql_{contour}_*.sql",
     )
     print(
-        f"RESOLVE DB schema artifact: {artifact.local_path.name} -> {artifact.remote_extract_path}",
+        "RESOLVE DB schema artifact: "
+        f"{artifact.local_path.name} -> {artifact.remote_extract_path}",
         flush=True,
     )
     return artifact
@@ -193,14 +226,28 @@ def resolve_db_data_artifact(
     if not release_dir.is_dir():
         raise RuntimeError(f"Release directory does not exist: {release_dir}")
 
-    name, pattern, remote_archive_name, remote_extract_name, entrypoint_pattern = specs[kind]
+    (
+        name,
+        pattern,
+        remote_archive_name,
+        remote_extract_name,
+        entrypoint_pattern,
+    ) = specs[kind]
     print(f"RESOLVE DB data artifact {name} in: {release_dir}", flush=True)
-    matches = [path for path in release_dir.iterdir() if path.is_file() and fnmatch.fnmatch(path.name, pattern)]
+    matches = [
+        path
+        for path in release_dir.iterdir()
+        if path.is_file() and fnmatch.fnmatch(path.name, pattern)
+    ]
     if not matches:
-        raise RuntimeError(f"DB data artifact not found in {release_dir} by pattern {pattern}")
+        raise RuntimeError(
+            f"DB data artifact not found in {release_dir} by pattern {pattern}"
+        )
 
     newest = max(matches, key=lambda path: path.stat().st_mtime)
-    remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    remote_dir = (
+        f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    )
     artifact = DbSqlArtifact(
         name=name,
         local_path=newest,
@@ -210,13 +257,16 @@ def resolve_db_data_artifact(
         entrypoint_pattern=entrypoint_pattern,
     )
     print(
-        f"RESOLVE DB data artifact {name}: {artifact.local_path.name} -> {artifact.remote_extract_path}",
+        f"RESOLVE DB data artifact {name}: "
+        f"{artifact.local_path.name} -> {artifact.remote_extract_path}",
         flush=True,
     )
     return artifact
 
 
-def resolve_maintenance_stub_artifact(env: dict[str, str], runtime: dict, build_version: str) -> Artifact:
+def resolve_maintenance_stub_artifact(
+    env: dict[str, str], runtime: dict, build_version: str
+) -> Artifact:
     """Создает описание архива maintenance stub для full deploy.
 
     Локальный путь берется из runtime-конфигурации или default-значения, а
@@ -224,17 +274,27 @@ def resolve_maintenance_stub_artifact(env: dict[str, str], runtime: dict, build_
     наличие локального архива, но не распаковывает его и не проверяет HTTP
     marker заглушки.
     """
-    local_path = runtime_local_path(runtime.get("maintenance_stub_archive_path", DEFAULT_MAINTENANCE_STUB_ARCHIVE))
+    local_path = runtime_local_path(
+        runtime.get(
+            "maintenance_stub_archive_path", DEFAULT_MAINTENANCE_STUB_ARCHIVE
+        )
+    )
     if not local_path.is_file():
         raise RuntimeError(f"Maintenance stub archive not found: {local_path}")
-    remote_dir = f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    remote_dir = (
+        f"{require_value(env, 'REMOTE_TMP_ROOT').rstrip('/')}/{build_version}"
+    )
     artifact = Artifact(
         name="maintenance_stub",
         local_path=local_path,
         remote_archive=f"{remote_dir}/maintenance_stub.tar.gz",
         extract_path=require_value(env, "FRONTEND_RELEASE_PATH"),
     )
-    print(f"RESOLVE maintenance stub: {artifact.local_path} -> {artifact.extract_path}", flush=True)
+    print(
+        "RESOLVE maintenance stub: "
+        f"{artifact.local_path} -> {artifact.extract_path}",
+        flush=True,
+    )
     return artifact
 
 
