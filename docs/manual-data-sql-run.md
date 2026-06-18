@@ -28,10 +28,11 @@ tar -xzf db_update_parallel_r_<release>-c_<commit>.tar.gz \
 
 ```bash
 cd /tmp/data-migrations/manual/db_insert
+touch "$(pwd)/insert.log"
 psql -p 10265 -U pgadmin -d application_test \
   -v ON_ERROR_STOP=1 \
   -f "$(ls -1 run_all_insert_*.sql | tail -n 1)" \
-  > insert.log 2>&1
+  > "$(pwd)/insert.log" 2>&1
 ```
 
 Ориентир по ранее разобранным данным: обычные insert-скрипты занимали около
@@ -87,11 +88,18 @@ sequential SQL содержит `set_default` без runtime-фильтра.
 директорию логов UPDATE:
 
 ```bash
-echo "INSERT log: /tmp/data-migrations/manual/db_insert/insert.log"
-echo "UPDATE logs: /tmp/data-migrations/manual/db_update_parallel/logs/update_parallel/"
+cd /tmp/data-migrations/manual
+
+echo "INSERT log: $(pwd)/db_insert/insert.log"
+echo "UPDATE logs: $(pwd)/db_update_parallel/logs/update_parallel/"
 ```
 
-`insert.log` создается редиректом `> insert.log 2>&1` в команде INSERT.
+`insert.log` явно создается командой `touch "$(pwd)/insert.log"` перед запуском
+INSERT, а затем перезаписывается редиректом `> "$(pwd)/insert.log" 2>&1`.
+Если shell пишет `bash: insert.log: Permission denied`, значит текущий
+пользователь не может создать или перезаписать файл лога в рабочей директории.
+Запускайте команды из директории, созданной этим же пользователем, или удалите
+старую рабочую директорию перед распаковкой.
 Директории `logs/update_parallel/<run_id>/`, `scripts/` и `results/` создаются
 самим `run_all_update_parallel_*.sh`; заранее создавать их не нужно.
 
