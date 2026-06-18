@@ -39,6 +39,7 @@ from simple_deploy.config.topology import (
     SourceRepositoryConfigModel,
     VirtualMachineConfigModel,
     runtime_topology_config_model,
+    runtime_topology_from_legacy_env,
 )
 from simple_deploy.config.validation import check_runtime_config
 
@@ -57,4 +58,5 @@ __all__ = [
     "check_runtime_config",
     "runtime_config_model",
     "runtime_topology_config_model",
+    "runtime_topology_from_legacy_env",
 ]

@@ -659,6 +659,18 @@ implementation:
 - docstring-и manifest/artifacts уточняют, что запись operational state идет
   через registry.
 
+### Статус тринадцатого среза шага 6
+
+Тринадцатый безопасный срез добавил read-only adapter от текущего legacy env к typed topology:
+
+- `runtime_topology_from_legacy_env()` строит DEV topology из уже существующих env-ключей
+  без изменения `.env`, `local.secrets.env` или `windows_pipeline.local.json`;
+- adapter отображает source repo paths, app/db VM, backend/frontend/database targets
+  и contour-bound execution environment для `dev`;
+- частичный env допускается: source topology может быть доступна до заполнения VM-ключей;
+- deploy/build/CLI пока не используют эту topology для принятия решений, поэтому runtime
+  поведение не менялось.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:
