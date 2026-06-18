@@ -1,4 +1,27 @@
-"""Pydantic-модели runtime-конфигурации Windows runner."""
+"""Pydantic-модели текущей runtime-конфигурации Windows runner.
+
+Runtime config - это operational-параметры запуска уже существующего runner-а.
+Он описывает не "топологию продукта", а конкретные переключатели и команды:
+включен ли maintenance stub, сколько раз повторять healthcheck, какие SQL
+скрипты выполнить, какие service steps разрешены и куда отправлять email.
+
+Минимальный пример смысла полей::
+
+    {
+        "maintenance_stub_enabled": true,
+        "data_sql_enabled": true,
+        "db_update_parallel_max_workers": 4,
+        "service_steps": [
+            {"phase": "after_migrate", "command": "systemctl restart app"}
+        ],
+        "healthcheck_retries": 20
+    }
+
+В отличие от ``config.topology``, этот модуль не знает, какие source
+repositories образуют компонент и на каких deployment targets он размещается.
+Он сохраняет текущий контракт ``windows_pipeline.local.json`` и только добавляет
+typed-валидацию/нормализацию вокруг него.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +36,7 @@ PositiveStrictInt = Annotated[StrictInt, Field(gt=0)]
 
 
 class _RuntimeConfigBaseModel(BaseModel):
-    """Базовая модель runtime config без process-policy проверок."""
+    """Базовая immutable-модель runtime config без process-policy проверок."""
 
     model_config = ConfigDict(extra="allow", frozen=True)
 
@@ -35,7 +58,12 @@ class ServiceStepConfigModel(_RuntimeConfigBaseModel):
 
 
 class RuntimeConfigModel(_RuntimeConfigBaseModel):
-    """Структурная модель текущей формы ``windows_pipeline.local.json``."""
+    """Структурная модель текущей формы ``windows_pipeline.local.json``.
+
+    Модель держит legacy-совместимый набор полей runner-а. Она не валидирует
+    бизнес-правила вроде "stop nginx требует последующий start" - такие правила
+    остаются в ``config.validation`` и process/preflight слоях.
+    """
 
     backup_enabled: StrictBool
     maintenance_stub_enabled: StrictBool
@@ -74,7 +102,7 @@ class RuntimeConfigModel(_RuntimeConfigBaseModel):
 
 
 def runtime_config_model(runtime: Mapping[str, object]) -> RuntimeConfigModel:
-    """Преобразует runtime config mapping в структурную Pydantic-модель."""
+    """Преобразует mapping из runtime JSON в структурную Pydantic-модель."""
 
     return RuntimeConfigModel.model_validate(runtime)
 

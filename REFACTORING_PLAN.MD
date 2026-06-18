@@ -509,6 +509,52 @@ models или configs, его можно вынести точечно с сох
 paths. Но уменьшение `windows_pipeline.py` само по себе не является целью
 следующего этапа.
 
+### Статус второго среза шага 6
+
+Второй безопасный срез продолжил config/read границы без изменения runtime
+поведения:
+
+- добавлен модуль `tools-ci/simple_deploy/config/topology.py`;
+- добавлены immutable Pydantic-модели для `SourceOrigin`,
+  `SourceRepository`, `Component`, `VirtualMachine`, `DeploymentTarget`,
+  `DeploymentLandscape`, `ExecutionEnvironment` и агрегированного
+  `RuntimeTopology`;
+- модели используют уже введенные domain types (`RepoId`, `MachineId`,
+  `ComponentId`, `ContourCode`, `SourceOriginKind`, `DeploymentTargetRole`);
+- текущий `.env`, `windows_pipeline.local.json`, CLI, builder/deploy flow и
+  SQLite-схема не менялись;
+- topology models пока не являются loader-ом текущей конфигурации, а фиксируют
+  целевую typed форму для следующих срезов.
+
+### Статус третьего среза шага 6
+
+Третий безопасный срез ввел первые чистые domain entities без подключения к
+runtime flow:
+
+- создан пакет `tools-ci/simple_deploy/entities/`;
+- добавлены immutable entities/value objects `SourceSnapshot`,
+  `SourceRepositoryRevision`, `ReleaseArtifactRef`, `ReleaseBundle`,
+  `ReleasePlacement` и `Release`;
+- зафиксированы базовые инварианты: source snapshot непустой и без дублей
+  `repo_id`, release принимает только bundle/placement своей версии, один
+  release не получает второй отличающийся successful bundle, placement остается
+  отдельным от bundle;
+- entities не импортируются из CLI/build/deploy, не читают SQLite и не являются
+  API DTO или config schema.
+
+### Статус четвертого среза шага 6
+
+Четвертый безопасный срез начал registry boundary без переноса SQLite
+implementation:
+
+- создан пакет `tools-ci/simple_deploy/registry/`;
+- `simple_deploy.registry.state` пока является compatibility boundary поверх
+  текущего `simple_deploy.release.state`;
+- старый import path остается источником реализации, новый path нужен для
+  постепенного перевода будущих application/query слоев;
+- процессы build/deploy/CLI пока не переключались на новый path, чтобы не
+  смешивать boundary introduction и behavior changes.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

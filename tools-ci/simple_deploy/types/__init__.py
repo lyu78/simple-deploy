@@ -1,4 +1,13 @@
-"""Общие типы и ограниченные примитивы simple-deploy."""
+"""Общие типы и ограниченные примитивы simple-deploy.
+
+Types содержат небольшие shared vocabulary элементы: contour codes, release
+version strings, commit SHA strings, artifact kinds/scopes, job kinds/statuses,
+deployment target roles и runtime service phases.
+
+Этот пакет не должен знать про SQLite, CLI, FastAPI или SSH. Его задача -
+нормализовать и ограничить базовые значения, чтобы ``config``, ``models``,
+``dto`` и ``entities`` использовали один словарь вместо произвольных строк.
+"""
 
 from simple_deploy.types.artifact import (
     ARTIFACT_KINDS,
