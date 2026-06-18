@@ -636,6 +636,29 @@ implementation:
   старых imports и тестов;
 - поведение CLI, builder, state schema и публичные функции не менялись.
 
+### Статус одиннадцатого среза шага 6
+
+Одиннадцатый безопасный срез физически перенес SQLite implementation в registry:
+
+- реальная implementation локальной SQLite-базы теперь находится в
+  `tools-ci/simple_deploy/registry/state.py`;
+- `tools-ci/simple_deploy/release/state.py` стал compatibility re-export поверх
+  `registry.state`;
+- старые imports `simple_deploy.release.state` продолжают работать;
+- `release/` больше не считается владельцем baseline, attempts, jobs и external
+  requests.
+
+### Статус двенадцатого среза шага 6
+
+Двенадцатый безопасный срез обновил документацию границ после переноса state:
+
+- docstring `release/__init__.py` теперь описывает только manifest/artifacts и
+  compatibility path `release.state`;
+- docstring `registry/__init__.py` фиксирует registry как владельца SQLite
+  implementation, queries и commands;
+- docstring-и manifest/artifacts уточняют, что запись operational state идет
+  через registry.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

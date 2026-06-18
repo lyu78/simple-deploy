@@ -1,8 +1,10 @@
-"""Пакет состояния релизов, manifest и артефактов.
+"""Пакет release manifest и артефактов.
 
-Слой релизов хранит примитивы, которые должны быть общими для builder,
-Windows runner и web/API: SQLite-состояние, переносимый
-``release_manifest.json`` и резолвинг файлов релиза. Этот пакет не должен
-владеть конкретным процессом deploy; он описывает данные и артефакты, вокруг
-которых процессы работают.
+Release package описывает переносимое содержимое собранного релиза:
+``release_manifest.json``, локальные файлы артефактов и правила их резолвинга.
+Он не владеет SQLite state, baseline-ами контуров, build/deploy attempts, jobs
+или external requests: это область ``simple_deploy.registry``.
+
+Модуль ``release.state`` оставлен только как compatibility import path поверх
+``registry.state`` для старого кода.
 """

@@ -49,7 +49,7 @@ def write_release_manifest_file(release_dir: Path, manifest: dict) -> Path:
     Функция создает директорию релиза при необходимости и сохраняет JSON в
     ``release_manifest.json`` с UTF-8 и стабильным переносом строки в конце.
     Она не обновляет SQLite-состояние: фиксация успешной сборки выполняется
-    отдельным вызовом слоя состояния.
+    отдельным вызовом ``registry.commands``.
     """
     release_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = release_dir / RELEASE_MANIFEST_NAME
@@ -78,9 +78,9 @@ def load_release_manifest(release_dir: Path) -> dict | None:
 def release_backend_commit(release_dir: Path) -> str:
     """Возвращает backend commit из manifest релиза.
 
-    Функция используется командами mark/deploy для записи результата в SQLite.
+    Функция используется командами mark/deploy для записи результата в registry.
     Она только читает переносимый manifest и не двигает baseline сама;
-    изменение baseline выполняет слой состояния после успешного применения
+    изменение baseline выполняет ``registry.commands`` после успешного применения
     релиза.
     """
     manifest = load_release_manifest(release_dir)

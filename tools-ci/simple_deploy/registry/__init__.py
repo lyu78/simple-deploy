@@ -7,15 +7,13 @@ baselines, build/deploy attempts, local jobs и external TEST/PROD requests.
 Пакет разделяет низкоуровневый storage API, read/query проекции и write/use-case
 команды:
 
-* ``registry.state`` - compatibility API текущей SQLite implementation;
+* ``registry.state`` - storage-facing API текущей SQLite implementation;
 * ``registry.queries`` - read models для dashboard/API;
 * ``registry.commands`` - небольшие write-команды поверх state.
 
-Сейчас реализация SQLite еще физически находится в ``simple_deploy.release.state``.
-Этот пакет намеренно переэкспортирует тот же API как compatibility boundary:
-новые query/application слои могут импортировать state из ``simple_deploy.registry``
-уже сейчас, а перенос SQLite implementation в будущем не потребует менять их
-публичные зависимости.
+Реальная SQLite implementation живет в ``simple_deploy.registry.state``. Старый
+путь ``simple_deploy.release.state`` остается compatibility re-export-ом, чтобы
+не ломать существующие локальные imports.
 
 Важно: registry не является доменной сущностью ``Release`` и не выполняет deploy.
 Он хранит факты и проекции локального состояния, над которыми работают CLI,
