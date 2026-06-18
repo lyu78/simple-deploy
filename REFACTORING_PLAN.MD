@@ -555,6 +555,20 @@ implementation:
 - процессы build/deploy/CLI пока не переключались на новый path, чтобы не
   смешивать boundary introduction и behavior changes.
 
+### Статус пятого среза шага 6
+
+Пятый безопасный срез дал практическую роль registry boundary в read/API слое:
+
+- добавлен модуль `tools-ci/simple_deploy/registry/queries.py`;
+- сборка read models для releases, contour state, jobs, external requests и
+  общего state snapshot перенесена из `web.app` в `registry.queries`;
+- `web.app` оставлен HTTP/HTML/DTO adapter-ом и больше не читает
+  `simple_deploy.release.state` напрямую;
+- старые helper imports из `web.app` сохранены через импорт query-функций, чтобы
+  не ломать переходные тесты и возможные локальные imports;
+- SQLite-схема, JSON-контракт FastAPI endpoints и CLI/build/deploy поведение не
+  менялись.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:
