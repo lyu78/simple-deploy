@@ -769,6 +769,62 @@ implementation:
 - добавлены тесты, которые проверяют, что descriptions реально попадают в
   JSON schema Pydantic-моделей и `TypeAdapter`.
 
+### План девятнадцатого среза шага 6: request boundary application layer
+
+Следующий срез убирает `argparse.Namespace` из application layer без
+одновременной переписи всех process modules:
+
+- `argparse.Namespace` остается деталью CLI adapter-а и не проходит за границу
+  `simple_deploy.windows_pipeline`;
+- для каждой операторской команды появляется request DTO в
+  `simple_deploy.application.requests`;
+- CLI adapter преобразует разобранные аргументы в те же request DTO, которые
+  сможет создавать будущий web/API или local job runner;
+- application services принимают request DTO и больше не зависят от `argparse`;
+- текущие process modules временно получают namespace-like объект через
+  приватный adapter внутри `application.services`, пока их собственный контракт
+  не будет переписан на typed input;
+- `pipeline` становится application use case: он явно строит `DryRunRequest`,
+  `BuildRequest` и `DeployRequest`, а не мутирует CLI args;
+- deprecated no-op флаги CLI, например `--include-data-sql`, не становятся
+  частью application request contract; adapter сохраняет CLI-совместимость и
+  протаскивает только реальные переключатели поведения.
+
+Целевая форма слоя после среза:
+
+```text
+CLI argv -> argparse.Namespace -> CLI request adapter
+                               -> application request DTO
+Web/API payload --------------/
+                               -> application service
+                               -> temporary process input adapter
+                               -> current process module
+```
+
+### Статус девятнадцатого среза шага 6
+
+Девятнадцатый безопасный срез применил request boundary для application layer:
+
+- добавлен модуль `simple_deploy.application.requests` с Pydantic request DTO
+  для `dry-run`, `build`, `deploy`, `pipeline`, `set-baseline`,
+  `mark-applied` и `mark-failed`;
+- добавлен `simple_deploy.cli.requests`, который преобразует
+  `argparse.Namespace` в application request DTO;
+- `application.services` больше не импортирует `argparse` и принимает только
+  request DTO;
+- временное преобразование request DTO в namespace-like input для текущих
+  process modules находится внутри приватного `_process_args`;
+- `pipeline` перенесен в application service как use case
+  `dry-run -> build -> deploy latest` и больше не мутирует CLI args;
+- `simple_deploy.windows_pipeline` остался compatibility runner-ом: `main()`
+  собирает request DTO перед dispatch, а старые импортируемые функции
+  `build`, `deploy`, `pipeline`, `set_baseline`, `mark_applied` и
+  `mark_failed` принимают legacy `Namespace` только на этой внешней границе и
+  сразу преобразуют его в DTO;
+- deprecated no-op `--include-data-sql` не включен в application request
+  contract; сохранен только реальный переключатель
+  `skip_data_sql_artifacts`.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

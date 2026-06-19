@@ -12,12 +12,33 @@ import sys
 import time
 from pathlib import Path
 
+from simple_deploy.application.requests import (  # noqa: E402
+    BuildRequest,
+    DeployRequest,
+    DryRunRequest,
+    MarkAppliedRequest,
+    MarkFailedRequest,
+    PipelineRequest,
+    SetBaselineRequest,
+)
 from simple_deploy.application.services import (  # noqa: E402
-    build,
-    deploy,
-    mark_applied,
-    mark_failed,
-    set_baseline,
+    build as _build_service,
+    deploy as _deploy_service,
+    dry_run as _dry_run_service,
+    mark_applied as _mark_applied_service,
+    mark_failed as _mark_failed_service,
+    pipeline as _pipeline_service,
+    set_baseline as _set_baseline_service,
+)
+from simple_deploy.cli.requests import (  # noqa: E402
+    build_request_from_args,
+    deploy_request_from_args,
+    dry_run_request_from_args,
+    mark_applied_request_from_args,
+    mark_failed_request_from_args,
+    pipeline_request_from_args,
+    request_from_args,
+    set_baseline_request_from_args,
 )
 from simple_deploy.config.validation import (  # noqa: E402,F401
     DB_MAINTENANCE_PHASES,
@@ -41,9 +62,6 @@ from simple_deploy.core.paths import (  # noqa: E402
     DEFAULT_ENV_FILE,
     DEFAULT_LOG_DIR,
     DEFAULT_SECRETS_FILE,
-)
-from simple_deploy.processes.dry_run import (  # noqa: E402
-    dry_run,
 )
 from simple_deploy.registry.state import (  # noqa: E402
     CONTOURS,
@@ -97,16 +115,53 @@ def tee_output(command: str):
             sys.stderr = original_stderr
 
 
-def pipeline(args: argparse.Namespace) -> int:
-    """Выполняет dry-run, build и deploy --latest как одну CLI-команду."""
-    if not dry_run(args):
-        return 1
-    build_rc = build(args)
-    if build_rc != 0:
-        return build_rc
-    args.latest = True
-    args.build_version = ""
-    return deploy(args)
+def dry_run(request: DryRunRequest | argparse.Namespace) -> bool:
+    """Запускает dry-run через DTO, сохраняя legacy Namespace wrapper."""
+    if isinstance(request, argparse.Namespace):
+        request = dry_run_request_from_args(request)
+    return _dry_run_service(request)
+
+
+def build(request: BuildRequest | argparse.Namespace) -> int:
+    """Запускает build через DTO, сохраняя legacy Namespace wrapper."""
+    if isinstance(request, argparse.Namespace):
+        request = build_request_from_args(request)
+    return _build_service(request)
+
+
+def deploy(request: DeployRequest | argparse.Namespace) -> int:
+    """Запускает deploy через DTO, сохраняя legacy Namespace wrapper."""
+    if isinstance(request, argparse.Namespace):
+        request = deploy_request_from_args(request)
+    return _deploy_service(request)
+
+
+def pipeline(request: PipelineRequest | argparse.Namespace) -> int:
+    """Выполняет dry-run, build и deploy latest как одну CLI-команду."""
+    if isinstance(request, argparse.Namespace):
+        request = pipeline_request_from_args(request)
+    return _pipeline_service(request)
+
+
+def set_baseline(request: SetBaselineRequest | argparse.Namespace) -> int:
+    """Запускает set-baseline через DTO и legacy Namespace wrapper."""
+    if isinstance(request, argparse.Namespace):
+        request = set_baseline_request_from_args(request)
+    return _set_baseline_service(request)
+
+
+def mark_applied(request: MarkAppliedRequest | argparse.Namespace) -> int:
+    """Запускает mark-applied через DTO и legacy Namespace wrapper."""
+    if isinstance(request, argparse.Namespace):
+        request = mark_applied_request_from_args(request)
+    return _mark_applied_service(request)
+
+
+def mark_failed(request: MarkFailedRequest | argparse.Namespace) -> int:
+    """Запускает mark-failed через DTO и legacy Namespace wrapper."""
+    if isinstance(request, argparse.Namespace):
+        request = mark_failed_request_from_args(request)
+    return _mark_failed_service(request)
 
 
 def parse_args() -> argparse.Namespace:
@@ -227,20 +282,21 @@ def main() -> int:
     args = parse_args()
     with tee_output(args.command):
         try:
+            request = request_from_args(args)
             if args.command == "dry-run":
-                return 0 if dry_run(args) else 1
+                return 0 if dry_run(request) else 1
             if args.command == "build":
-                return build(args)
+                return build(request)
             if args.command == "deploy":
-                return deploy(args)
+                return deploy(request)
             if args.command == "pipeline":
-                return pipeline(args)
+                return pipeline(request)
             if args.command == "set-baseline":
-                return set_baseline(args)
+                return set_baseline(request)
             if args.command == "mark-applied":
-                return mark_applied(args)
+                return mark_applied(request)
             if args.command == "mark-failed":
-                return mark_failed(args)
+                return mark_failed(request)
         except Exception as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1

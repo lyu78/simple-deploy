@@ -14,7 +14,7 @@ from contextlib import ExitStack, closing, nullcontext
 from pathlib import Path
 import sys
 from argparse import Namespace
-from unittest.mock import patch
+from unittest.mock import patch, sentinel
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS_CI_ROOT = ROOT / "tools-ci"
@@ -72,7 +72,7 @@ INSERT_NEW_OBJECTS_SQL_FILE = f"insert_{INSERT_NEW_OBJECTS_TABLE}.sql"
 
 sys.path.insert(0, str(TOOLS_CI_ROOT))
 
-from tools.windows_pipeline import (
+from tools.windows_pipeline import (  # noqa: E402
     Artifact,
     BUILDER_ROOT,
     CommandResult,
@@ -110,13 +110,15 @@ from tools.windows_pipeline import (
     sudo_list_command,
     verify_maintenance_stub_http,
 )
-from simple_deploy.release.manifest import RELEASE_MANIFEST_NAME
-from simple_deploy.release.state import (
+from simple_deploy.application.requests import PipelineRequest  # noqa: E402
+from simple_deploy.release.manifest import RELEASE_MANIFEST_NAME  # noqa: E402
+from simple_deploy.release.state import (  # noqa: E402
     connect_state_db,
     get_contour_state,
     list_deployment_attempts,
     upsert_contour_state,
 )
+from simple_deploy.types import ContourCodeEnum  # noqa: E402
 
 
 class WindowsPipelinePermissionTests(unittest.TestCase):
@@ -341,7 +343,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             key_mock.assert_called_once_with({}, "DB")
             command = run_mock.call_args.args[0]
             self.assertIn("DB_KEY", command)
-            self.assertIn(f"db-user@db.example.local:/tmp/db_schema.tar.gz", command)
+            self.assertIn("db-user@db.example.local:/tmp/db_schema.tar.gz", command)
 
     def test_run_db_schema_summary_uses_single_transaction(self):
         """Фиксирует запуск schema summary через psql в одной транзакции."""
@@ -889,9 +891,13 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
         for command, function_name, function_result, expected_rc in cases:
             args = Namespace(command=command)
+            request = sentinel.request
             with self.subTest(command=command):
                 with ExitStack() as stack:
                     stack.enter_context(patch("tools.windows_pipeline.parse_args", return_value=args))
+                    request_mock = stack.enter_context(
+                        patch("tools.windows_pipeline.request_from_args", return_value=request)
+                    )
                     tee_mock = stack.enter_context(patch("tools.windows_pipeline.tee_output", return_value=nullcontext()))
                     process_mock = stack.enter_context(
                         patch(f"tools.windows_pipeline.{function_name}", return_value=function_result)
@@ -899,17 +905,20 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
                     self.assertEqual(main(), expected_rc)
 
+                request_mock.assert_called_once_with(args)
                 tee_mock.assert_called_once_with(command)
-                process_mock.assert_called_once_with(args)
+                process_mock.assert_called_once_with(request)
 
     def test_main_returns_one_when_process_raises(self):
         """Фиксирует, что main преобразует исключение process function в rc=1."""
         args = Namespace(command="build")
+        request = sentinel.request
 
         with patch("tools.windows_pipeline.parse_args", return_value=args):
             with patch("tools.windows_pipeline.tee_output", return_value=nullcontext()):
-                with patch("tools.windows_pipeline.build", side_effect=RuntimeError("build failed")):
-                    self.assertEqual(main(), 1)
+                with patch("tools.windows_pipeline.request_from_args", return_value=request):
+                    with patch("tools.windows_pipeline.build", side_effect=RuntimeError("build failed")):
+                        self.assertEqual(main(), 1)
 
     def test_prepare_build_env_uses_backend_source_repo_for_archive_root(self):
         """Проверяет, что backend archive строится из source repo, а не target repo."""
@@ -1017,23 +1026,17 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
     def test_pipeline_preserves_app_only_for_deploy(self):
         """Фиксирует, что pipeline передает app-only в deploy после dry-run/build."""
-        args = Namespace(
-            env_file=DEFAULT_ENV_FILE,
-            secrets_file=DEFAULT_SECRETS_FILE,
-            config_file=DEFAULT_CONFIG_FILE,
+        request = PipelineRequest(
             timeout=3600,
-            build_version="",
-            latest=False,
-            contour="dev",
-            include_data_sql=False,
+            contour=ContourCodeEnum.DEV,
             skip_data_sql_artifacts=False,
             app_only=True,
         )
 
-        with patch("tools.windows_pipeline.dry_run", return_value=True):
-            with patch("tools.windows_pipeline.build", return_value=0):
-                with patch("tools.windows_pipeline.deploy", return_value=0) as deploy_mock:
-                    self.assertEqual(pipeline(args), 0)
+        with patch("simple_deploy.application.services._dry_run_process", return_value=True):
+            with patch("simple_deploy.application.services._build_process", return_value=0):
+                with patch("simple_deploy.application.services._deploy_process", return_value=0) as deploy_mock:
+                    self.assertEqual(pipeline(request), 0)
 
         deploy_args = deploy_mock.call_args.args[0]
         self.assertTrue(deploy_args.app_only)
@@ -1041,30 +1044,23 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertEqual(deploy_args.build_version, "")
 
     def test_pipeline_uses_data_sql_artifacts_by_default_without_runtime_mutation(self):
-        """Проверяет, что pipeline не мутирует runtime и сохраняет data SQL defaults."""
-        args = Namespace(
-            env_file=DEFAULT_ENV_FILE,
-            secrets_file=DEFAULT_SECRETS_FILE,
-            config_file=DEFAULT_CONFIG_FILE,
+        """Проверяет, что pipeline сохраняет data SQL defaults в DTO."""
+        request = PipelineRequest(
             timeout=3600,
-            build_version="",
-            latest=False,
-            contour="dev",
-            include_data_sql=False,
+            contour=ContourCodeEnum.DEV,
             skip_data_sql_artifacts=False,
             app_only=False,
         )
 
         with patch("tools.windows_pipeline.load_runtime_config") as load_runtime_mock:
-            with patch("tools.windows_pipeline.dry_run", return_value=True) as dry_run_mock:
-                with patch("tools.windows_pipeline.build", return_value=0) as build_mock:
-                    with patch("tools.windows_pipeline.deploy", return_value=0):
-                        self.assertEqual(pipeline(args), 0)
+            with patch("simple_deploy.application.services._dry_run_process", return_value=True) as dry_run_mock:
+                with patch("simple_deploy.application.services._build_process", return_value=0) as build_mock:
+                    with patch("simple_deploy.application.services._deploy_process", return_value=0):
+                        self.assertEqual(pipeline(request), 0)
 
         load_runtime_mock.assert_not_called()
-        self.assertFalse(args.include_data_sql)
-        self.assertFalse(dry_run_mock.call_args.args[0].include_data_sql)
-        self.assertFalse(build_mock.call_args.args[0].include_data_sql)
+        self.assertFalse(hasattr(dry_run_mock.call_args.args[0], "include_data_sql"))
+        self.assertFalse(hasattr(build_mock.call_args.args[0], "include_data_sql"))
         self.assertFalse(dry_run_mock.call_args.args[0].skip_data_sql_artifacts)
         self.assertFalse(build_mock.call_args.args[0].skip_data_sql_artifacts)
 
