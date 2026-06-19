@@ -75,7 +75,7 @@ def write_release_manifest(
 
 
 def safe_repo_commit(env_name: str) -> str:
-    """Best-effort commit lookup for build attempt metadata."""
+    """Best-effort чтение commit-а для metadata build attempt."""
     try:
         return git_output(get_required_env(env_name), "rev-parse", "HEAD")
     except Exception:
@@ -83,7 +83,7 @@ def safe_repo_commit(env_name: str) -> str:
 
 
 def record_build_failure(attempt_id: int, build_version: str, error: BaseException) -> None:
-    """Best-effort failed build attempt marker that preserves the original build error."""
+    """Best-effort запись failed build attempt без затирания исходной ошибки."""
     try:
         finish_build_attempt(
             attempt_id=attempt_id,

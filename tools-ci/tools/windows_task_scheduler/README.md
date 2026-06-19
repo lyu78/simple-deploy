@@ -5,11 +5,15 @@
 
 ## Файлы
 
-- `run_pipeline.cmd` - запускает `tools-ci\tools\windows_pipeline.py pipeline` из корня
+- `run_pipeline.cmd` - запускает `.venv\Scripts\simple-deploy.exe pipeline` из корня
   проекта и пишет wrapper-лог в `logs\scheduled-pipeline-<timestamp>.log`.
 
 Python runner дополнительно пишет свой отдельный лог запуска в
 `logs\<timestamp>-pipeline.log`.
+
+Перед использованием wrapper-а выполните первичную настройку из
+`tools-ci\README.MD`, включая editable install проекта. Без этого
+`.venv\Scripts\simple-deploy.exe` не будет создан.
 
 ## Рекомендуемое расписание
 

@@ -11,18 +11,17 @@ CLI, web/API, builder-интеграции и будущим локальным 
 
 ## Текущее состояние
 
-Публичный CLI-контракт остается прежним:
+Публичный CLI-контракт теперь публикуется как console script:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
+.venv/Scripts/simple-deploy.exe dry-run
+.venv/Scripts/simple-deploy.exe build
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest
 ```
 
-Исторический путь `tools-ci/tools/windows_pipeline.py` является оберткой
-совместимости. Реальная CLI-реализация находится в
-`simple_deploy/cli/windows_pipeline.py`; `simple_deploy/windows_pipeline.py`
-оставлен только как deprecated compatibility shim для старых Python imports.
+Реальная CLI-реализация находится в `simple_deploy/cli/windows_pipeline.py`.
+Старые package imports через `simple_deploy.windows_pipeline` больше не
+поддерживаются.
 
 Уже вынесены общие примитивы release/deploy toolkit:
 
@@ -62,11 +61,9 @@ CLI, web/API, builder-интеграции и будущим локальным 
   выполнять deploy.
 - `types/` - enum-ы, справочники и custom primitive types без бизнес-логики.
 - `web/` - локальная FastAPI-панель/API поверх той же SQLite-базы.
-- `windows_pipeline.py` - deprecated compatibility shim для старых imports.
 
 ## Правила дальнейшего выноса
 
-Новый код процесса не добавляется в `simple_deploy/windows_pipeline.py`.
 Изменения CLI adapter-а идут в `simple_deploy/cli/windows_pipeline.py`, а
 бизнес-логика остается в `application/`, `processes/`, `release/`, `config/`,
 `core` или `jobs/`.
@@ -89,9 +86,9 @@ CLI, web/API, builder-интеграции и будущим локальным 
 - поведение baseline: он двигается только после подтвержденного успешного
   применения релиза или явной ручной фиксации.
 
-Текущий dependency baseline: process modules больше не импортируют
-`simple_deploy.windows_pipeline`; старый module path сохранен только как
-compatibility shim поверх `simple_deploy.cli.windows_pipeline`.
+Текущий dependency baseline: process modules и внешняя точка запуска используют
+`simple_deploy.cli.windows_pipeline` напрямую; package shim
+`simple_deploy.windows_pipeline` удален.
 
 ## Документация и проверки
 

@@ -72,9 +72,6 @@ INSERT_NEW_OBJECTS_SQL_FILE = f"insert_{INSERT_NEW_OBJECTS_TABLE}.sql"
 
 sys.path.insert(0, str(TOOLS_CI_ROOT))
 
-import tools.windows_pipeline as legacy_windows_pipeline  # noqa: E402
-import simple_deploy.windows_pipeline as legacy_package_windows_pipeline  # noqa: E402
-from simple_deploy.cli import windows_pipeline as cli_windows_pipeline  # noqa: E402
 from simple_deploy.cli.windows_pipeline import (  # noqa: E402
     build,
     deploy,
@@ -184,26 +181,6 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         backend = Artifact("backend", Path("backend.tar.gz"), REMOTE_BACKEND_ARCHIVE, BACKEND_RELEASE_PATH)
         frontend = Artifact("frontend", Path("frontend.tar.gz"), REMOTE_FRONTEND_ARCHIVE, FRONTEND_RELEASE_PATH)
         return backend, frontend
-
-    def test_legacy_tools_windows_pipeline_import_uses_cli_entrypoint(self):
-        """Фиксирует, что старые import paths смотрят на новый CLI module."""
-        self.assertIs(legacy_windows_pipeline.main, cli_windows_pipeline.main)
-        self.assertIs(
-            legacy_package_windows_pipeline.main,
-            cli_windows_pipeline.main,
-        )
-        self.assertIs(
-            legacy_windows_pipeline.parse_args,
-            cli_windows_pipeline.parse_args,
-        )
-        self.assertIs(
-            legacy_package_windows_pipeline.parse_args,
-            cli_windows_pipeline.parse_args,
-        )
-        self.assertIs(
-            legacy_windows_pipeline.pipeline,
-            cli_windows_pipeline.pipeline,
-        )
 
     def test_reporter_warn_does_not_fail_result(self):
         """Фиксирует, что предупреждения Reporter не переводят dry-run в ошибку."""

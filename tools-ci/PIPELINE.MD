@@ -3,8 +3,8 @@
 ## Статус
 
 Это основной операторский путь для рабочей Windows-машины без обязательного WSL
-или Docker. Точка входа - `tools-ci/tools/windows_pipeline.py`; runner использует Windows
-Python, Git, Node/npm, Git Bash и Windows OpenSSH.
+или Docker. Точка входа - `.venv/Scripts/simple-deploy.exe`; runner использует
+Windows Python, Git, Node/npm, Git Bash и Windows OpenSSH.
 
 Общий продуктовый процесс описан в `../PIPELINE.MD`. Legacy-вариант через
 Ansible/WSL описан в `../legacy/ansible-ci/PIPELINE.MD`.
@@ -35,50 +35,50 @@ attempts и deploy attempts: успешные build попадают в `release
 Первичная инициализация baseline:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour dev --backend-commit <dev_backend_commit>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour test --backend-commit <test_backend_commit>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour prod --backend-commit <prod_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour dev --backend-commit <dev_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour test --backend-commit <test_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour prod --backend-commit <prod_backend_commit>
 ```
 
 Если есть локальный manifest уже примененного релиза:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour test --build-version <previous_successful_release_version>
+.venv/Scripts/simple-deploy.exe set-baseline --contour test --build-version <previous_successful_release_version>
 ```
 
 Обычная проверка и сборка:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
+.venv/Scripts/simple-deploy.exe dry-run
+.venv/Scripts/simple-deploy.exe build
 ```
 
 Деплой уже собранного релиза:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --build-version <version>
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest
+.venv/Scripts/simple-deploy.exe deploy --contour dev --build-version <version>
 ```
 
 Полный локальный цикл:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev
+.venv/Scripts/simple-deploy.exe pipeline --contour dev
 ```
 
 `dry-run` проверяет data SQL по умолчанию, а `build` и `pipeline` генерируют
 data SQL-артефакты по умолчанию. Явный schema-only режим для аварийных случаев:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build --skip-data-sql-artifacts
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --skip-data-sql-artifacts
+.venv/Scripts/simple-deploy.exe build --skip-data-sql-artifacts
+.venv/Scripts/simple-deploy.exe pipeline --contour dev --skip-data-sql-artifacts
 ```
 
 Фиксация внешнего TEST/PROD результата:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-applied --contour test --build-version <successful_release_version>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
+.venv/Scripts/simple-deploy.exe mark-applied --contour test --build-version <successful_release_version>
+.venv/Scripts/simple-deploy.exe mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
 ```
 
 ## Dry-run

@@ -21,10 +21,13 @@
 Основной поддерживаемый runtime - Windows/Python runner:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
+.venv/Scripts/simple-deploy.exe dry-run
+.venv/Scripts/simple-deploy.exe build
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest
 ```
+
+Команда `simple-deploy.exe` создается при первичной настройке из
+`tools-ci/README.MD` через editable install проекта.
 
 Web/API v1 для просмотра локального состояния запускается отдельно и не заменяет CLI:
 
@@ -74,14 +77,14 @@ Schema SQL генерируется offline по Git-диапазону backend 
    применения оператор фиксирует результат:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-applied --contour test --build-version <successful_release_version>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-applied --contour prod --build-version <successful_release_version>
+.venv/Scripts/simple-deploy.exe mark-applied --contour test --build-version <successful_release_version>
+.venv/Scripts/simple-deploy.exe mark-applied --contour prod --build-version <successful_release_version>
 ```
 
 Если применение завершилось ошибкой, попытка фиксируется без сдвига baseline:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
+.venv/Scripts/simple-deploy.exe mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
 ```
 
 Локальный реестр `local_state/simple_deploy.sqlite3` ведет историю попыток:

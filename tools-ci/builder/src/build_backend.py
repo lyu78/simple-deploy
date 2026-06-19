@@ -1,4 +1,4 @@
-"""Backend source sync and release artifact build."""
+"""Синхронизация backend source и сборка release artifacts."""
 
 from contextlib import closing
 from datetime import datetime
@@ -119,13 +119,13 @@ def _schema_baselines_json() -> str:
         raise RuntimeError(
             "Missing schema SQL baselines for contours: "
             f"{', '.join(missing)}. Run "
-            "`tools-ci/tools/windows_pipeline.py set-baseline --contour <contour> --build-version <version>` first."
+            "`simple-deploy set-baseline --contour <contour> --build-version <version>` first."
         )
     return json.dumps(baselines, ensure_ascii=False)
 
 
 def _prepare_build_scripts(repo_path: Path) -> Path:
-    """Create a clean transient directory with build-only helper scripts."""
+    """Создает чистую временную директорию с build-only helper scripts."""
     builder_root = Path(__file__).resolve().parents[1]
     source_dir = builder_root / "scripts" / "additional_artifacts"
     target_dir = repo_path / BUILD_SCRIPTS_DIR_NAME
@@ -169,7 +169,7 @@ def _log_matching_files(root: Path, pattern: str, label: str) -> None:
 
 
 def _ensure_backend_build_venv(source_repo_path: Path) -> Path:
-    """Return source backend venv activation path, creating venv when absent."""
+    """Возвращает activation path backend venv, создавая venv при отсутствии."""
     venv_relative_path = get_required_env("BACKEND_BUILD_VENV_RELATIVE_PATH")
     venv_activate_path = source_repo_path / Path(venv_relative_path)
 
@@ -268,7 +268,7 @@ def _run_artifact_generator(source_repo_path: Path, python_path: Path, script_na
 
 
 def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_dir: Path) -> None:
-    """Run SQL artifact generators through the backend source virtualenv."""
+    """Запускает SQL artifact generators через backend source virtualenv."""
     python_path = _prepare_backend_build_python(source_repo_path)
     _run_artifact_generator(source_repo_path, python_path, "create_sql_migrations.py")
     if _include_data_sql_artifacts():
@@ -307,7 +307,7 @@ def _validate_db_script_include_path(repo: Path, owner: Path, include_text: str)
 
 
 def _run_all_include_paths(repo: Path, run_all_sql: Path) -> list[Path]:
-    """Return the docs/database/scripts files referenced by a run_all SQL file."""
+    """Возвращает файлы docs/database/scripts, на которые ссылается run_all SQL."""
     include_paths: list[Path] = []
     for line in run_all_sql.read_text(encoding="utf-8").splitlines():
         match = INCLUDE_RE.match(line)
@@ -325,7 +325,7 @@ def _add_run_all_includes_to_tar(archive: tarfile.TarFile, repo: Path, run_all_s
 
 
 def _shell_runner_include_paths(repo: Path, runner: Path) -> list[Path]:
-    """Return the docs/database/scripts files referenced by a generated shell runner."""
+    """Возвращает файлы docs/database/scripts из сгенерированного shell runner-а."""
     include_paths: list[Path] = []
     for line in runner.read_text(encoding="utf-8").splitlines():
         match = SHELL_INCLUDE_RE.match(line)
@@ -358,7 +358,7 @@ def _create_db_sql_artifact(
 
 
 def _create_db_migrations_archives(source_repo_path: str, build_version: str) -> dict[str, object]:
-    """Create separate schema/insert/update DB archives for the current backend commit."""
+    """Создает отдельные schema/insert/update DB archives для текущего backend commit."""
     source_repo = Path(source_repo_path)
     release_dir = Path(get_required_env("RELEASE_ROOT_WINDOWS")) / build_version
     release_dir.mkdir(parents=True, exist_ok=True)
@@ -479,7 +479,7 @@ def build_backend(
     build_version: str,
     branch_name: str,
 ) -> dict[str, object]:
-    """Main backend build function."""
+    """Основная функция сборки backend artifacts."""
     logging.info("Starting backend deployment automation")
 
     repo1_path = get_required_env("BACKEND_SOURCE_REPO_PATH")

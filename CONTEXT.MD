@@ -7,20 +7,21 @@
 
 ## Текущий Windows-only режим
 
-Актуальный рабочий путь для машины без WSL/Docker - `tools-ci/tools/windows_pipeline.py`.
-Runner использует Windows Python, Git, Node/npm, Git Bash и Windows OpenSSH
-(`ssh`, `scp`). Ansible остается в репозитории как legacy-вариант для Linux/WSL
-control node, но основная отладка в последних изменениях велась вокруг
-Windows-only runner.
+Актуальный рабочий путь для машины без WSL/Docker - console script
+`.venv/Scripts/simple-deploy.exe`, который появляется после editable install
+проекта. Runner использует Windows Python, Git, Node/npm, Git Bash и Windows
+OpenSSH (`ssh`, `scp`). Ansible остается в репозитории как legacy-вариант для
+Linux/WSL control node, но основная отладка в последних изменениях велась
+вокруг Windows-only runner.
 
 Команды:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --latest
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --build-version <version>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline
+.venv/Scripts/simple-deploy.exe dry-run
+.venv/Scripts/simple-deploy.exe build
+.venv/Scripts/simple-deploy.exe deploy --latest
+.venv/Scripts/simple-deploy.exe deploy --build-version <version>
+.venv/Scripts/simple-deploy.exe pipeline
 ```
 
 Каждый запуск пишет вывод одновременно в консоль и отдельный файл
@@ -233,7 +234,7 @@ COM. Доступные переменные шаблонов: `{build_version}`
 - `PIPELINE.MD` - продуктовая схема процесса без привязки к runtime, пригодная
   как основа BPMN.
 - `tools-ci/PIPELINE.MD` - основной Windows/Python E2E процесс через
-  `tools-ci/tools/windows_pipeline.py`.
+  `.venv/Scripts/simple-deploy.exe`.
 - `legacy/ansible-ci/PIPELINE.MD` - legacy Ansible/WSL E2E процесс через
   `legacy/ansible-ci/playbooks/pipeline.yml`.
 
@@ -241,7 +242,10 @@ COM. Доступные переменные шаблонов: `{build_version}`
 
 - `tools-ci/builder/` - существующая сборочная подсистема: `create_release.py`, Python-код,
   shell-архиваторы и настройки frontend-сборки.
-- `tools-ci/tools/windows_pipeline.py` - основной Windows/Python runner.
+- `tools-ci/simple_deploy/cli/windows_pipeline.py` - CLI adapter, на который
+  указывает console script `simple-deploy`.
+- `tools-ci/tools/windows_task_scheduler/` - пример запуска pipeline по
+  расписанию через Task Scheduler.
 - `tools-ci/requirements.dev.txt` - Python-зависимости сборщика из `tools-ci/builder/`.
 - `legacy/ansible-ci/requirements.ansible.txt` - Python-зависимости Ansible-слоя.
 - `legacy/ansible-ci/playbooks/` - legacy Ansible pipeline, dry run и внутренние этапы.
@@ -287,7 +291,7 @@ frontend-репозитория и использует только `RELEASE_RO
 - пушит ветки во внутренние репозитории;
 - не знает про VM и раскатку.
 
-`tools-ci/tools/windows_pipeline.py`:
+Console script `simple-deploy` через `simple_deploy.cli.windows_pipeline`:
 
 - является основной операторской точкой входа для Windows-only режима;
 - читает `.env`, `local.secrets.env` и `windows_pipeline.local.json`;
@@ -478,14 +482,14 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 Команды Windows runner:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour dev --backend-commit <dev_backend_commit>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour test --backend-commit <test_backend_commit>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour prod --backend-commit <prod_backend_commit>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour test --build-version <previous_successful_release_version>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest --app-only
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-applied --contour test --build-version <successful_release_version>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
+.venv/Scripts/simple-deploy.exe set-baseline --contour dev --backend-commit <dev_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour test --backend-commit <test_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour prod --backend-commit <prod_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour test --build-version <previous_successful_release_version>
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest --app-only
+.venv/Scripts/simple-deploy.exe mark-applied --contour test --build-version <successful_release_version>
+.venv/Scripts/simple-deploy.exe mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
 ```
 
 DEV обычно идет от предыдущего локально зафиксированного состояния к текущему release commit. После успешного `deploy --contour dev` baseline `dev` двигается автоматически. Если `deploy` или `pipeline` падает после выбора релиза, runner автоматически пишет failed attempt в `deployment_attempts` без сдвига baseline. TEST и PROD собираются как from-to диапазоны от baseline соответствующего контура до commit релиза; после успешного применения на внешнем контуре оператор должен явно выполнить `mark-applied`, иначе следующий релиз снова будет строиться от старого baseline. При ошибке внешнего применения используется `mark-failed`, baseline при этом не меняется.
@@ -526,8 +530,14 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 
 Текущий безопасный срез:
 
-- старая точка запуска `tools-ci/tools/windows_pipeline.py` сохранена как compatibility wrapper;
-- фактическая реализация Windows runner перенесена в `tools-ci/simple_deploy/windows_pipeline.py`;
+- публичная точка запуска переведена на console script `.venv/Scripts/simple-deploy.exe`;
+- старый executable wrapper в `tools-ci/tools/` удален, операторы и Task Scheduler
+  больше не запускают Python-файл напрямую;
+- фактическая реализация Windows runner находится в
+  `tools-ci/simple_deploy/cli/windows_pipeline.py`;
+- package shim `simple_deploy.windows_pipeline` удален: поддерживаемая точка
+  входа только console script `simple-deploy` и CLI adapter
+  `simple_deploy.cli.windows_pipeline`;
 - пакет `tools-ci/simple_deploy/` содержит рабочие области `application`, `cli`, `config`,
   `core`, `registry`, `release`, `contours`, `processes`, `jobs`, `web`;
 - SQLite state implementation принадлежит `simple_deploy.registry.state`; старый
@@ -538,16 +548,13 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - `simple_deploy.core.paths`, `core.commands`, `core.env`, `core.build_env`,
   `core.release_paths`, `core.ssh`, `core.db`, `core.email` и runtime loader теперь вынесены из `windows_pipeline.py`;
 - `processes.build`, `processes.mark`, `processes.dry_run`, `processes.data_sql` и
-  `processes.deploy` больше не импортируют `simple_deploy.windows_pipeline`;
+  `processes.deploy` не импортируют CLI compatibility modules;
 - dry-run проверки живут в `simple_deploy.processes.dry_run_checks`;
 - helper-ы app deploy, HTTP healthcheck и Outlook-уведомлений живут в
   `processes.app_deploy`, `processes.healthcheck` и `processes.notifications`;
-- `windows_pipeline.py` теперь является compatibility runner-ом для CLI/logging и re-export host для старых
-  import paths `tools.windows_pipeline.*`;
 - read-only web/API v1 доступен как `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000`;
 - Ansible перенесен из корня в `legacy/ansible-ci`, дефолтные пути legacy Ansible поправлены на новую глубину каталога;
-- текущий CLI-контракт не менялся.
+- набор CLI-команд и аргументов не менялся, изменилась только точка запуска.
 
-Следующий срез рефакторинга: продолжить сжимать `simple_deploy.windows_pipeline` до более тонкого
-CLI/logging compatibility-модуля и переводить оставшиеся re-export-only patch paths на прямых
-владельцев там, где внешний compatibility-контракт уже не нужен.
+Следующий срез рефакторинга: продолжить перевод process boundary с
+namespace-like input на typed request DTO без изменения операторских команд.

@@ -4,7 +4,7 @@
 
 * CLI adapter отвечает за ``argparse``, лог-файл и dispatch;
 * web/API или local job runner смогут вызывать те же функции без импорта
-  ``tools.windows_pipeline``;
+  CLI-модуля;
 * process modules пока остаются владельцами подробной orchestration-логики
   build/deploy/mark.
 

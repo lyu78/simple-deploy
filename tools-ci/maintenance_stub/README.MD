@@ -7,7 +7,7 @@ tools-ci/maintenance_stub/maintenance_stub.tar.gz
 ```
 
 Архив универсальный и не привязан к версии релиза. Во время полного DEV deploy
-`tools-ci/tools/windows_pipeline.py` загружает его на app VM и распаковывает в
+runner загружает его на app VM и распаковывает в
 `FRONTEND_RELEASE_PATH` до запуска DB scripts. Настоящий frontend
 распаковывается только после успешного выполнения DB scripts, распаковки
 backend, management-команд и запуска сервисов.

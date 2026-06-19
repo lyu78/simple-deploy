@@ -2,7 +2,7 @@
 
 Это практическая инструкция для основного operator flow `simple-deploy` на
 Windows-машине без обязательного WSL или Docker. Точка входа:
-`tools-ci/tools/windows_pipeline.py`.
+`.venv/Scripts/simple-deploy.exe`.
 
 Общая продуктовая схема описана в `../PIPELINE.MD`, технический порядок стадий -
 в `PIPELINE.MD`.
@@ -29,6 +29,7 @@ cd simple-deploy
 
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org -r tools-ci/requirements.dev.txt
+.venv/Scripts/python.exe -m pip install --disable-pip-version-check -e . --no-deps
 
 cp .env.example .env
 cp local.secrets.env.example local.secrets.env
@@ -215,43 +216,43 @@ systemctl status celerybeat_local.service
 Укажите фактические backend commit, которые уже успешно лежат на контурах:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour dev --backend-commit <dev_backend_commit>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour test --backend-commit <test_backend_commit>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour prod --backend-commit <prod_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour dev --backend-commit <dev_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour test --backend-commit <test_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour prod --backend-commit <prod_backend_commit>
 ```
 
 Если есть локальный `release_manifest.json` уже примененного релиза, baseline
 можно поставить по версии:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py set-baseline --contour test --build-version <previous_successful_release_version>
+.venv/Scripts/simple-deploy.exe set-baseline --contour test --build-version <previous_successful_release_version>
 ```
 
 Обычная диагностика:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --app-only
+.venv/Scripts/simple-deploy.exe dry-run
+.venv/Scripts/simple-deploy.exe dry-run --app-only
 ```
 
 Сборка релиза:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
+.venv/Scripts/simple-deploy.exe build
 ```
 
 Деплой уже собранного релиза:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --build-version <version>
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest
+.venv/Scripts/simple-deploy.exe deploy --contour dev --build-version <version>
 ```
 
 Если DB schema SQL уже успешно применился, а deploy упал позже на app VM,
 используйте recovery-режим без подключения к DB VM:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest --app-only
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest --app-only
 ```
 
 `--app-only` пропускает maintenance-заглушку, DB maintenance, DB schema/data
@@ -261,23 +262,23 @@ backend/frontend, Django management, healthcheck и фиксацию baseline.
 Полный локальный цикл:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev
+.venv/Scripts/simple-deploy.exe pipeline --contour dev
 ```
 
 По умолчанию full deploy применяет data insert и update, но пропускает
 `kind=set_default`. Запуск `set_default` требует явного флага:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest --include-set-default-sql
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --include-set-default-sql
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest --include-set-default-sql
+.venv/Scripts/simple-deploy.exe pipeline --contour dev --include-set-default-sql
 ```
 
 `dry-run` проверяет data SQL по умолчанию, а `build` и `pipeline` генерируют
 data SQL-артефакты по умолчанию. Явный schema-only режим для аварийных случаев:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build --skip-data-sql-artifacts
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py pipeline --contour dev --skip-data-sql-artifacts
+.venv/Scripts/simple-deploy.exe build --skip-data-sql-artifacts
+.venv/Scripts/simple-deploy.exe pipeline --contour dev --skip-data-sql-artifacts
 ```
 
 Старый `--include-data-sql` оставлен только для совместимости и больше ничего
@@ -287,8 +288,8 @@ data SQL-артефакты по умолчанию. Явный schema-only ре
 Фиксация внешнего TEST/PROD результата:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-applied --contour test --build-version <successful_release_version>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
+.venv/Scripts/simple-deploy.exe mark-applied --contour test --build-version <successful_release_version>
+.venv/Scripts/simple-deploy.exe mark-failed --contour test --build-version <failed_release_version> --error "описание ошибки"
 ```
 
 ## Dry-run

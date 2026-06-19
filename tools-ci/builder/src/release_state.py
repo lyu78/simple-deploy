@@ -1,8 +1,8 @@
-"""Compatibility shim for the release state module.
+"""Compatibility shim для release state module.
 
-The SQLite state implementation now lives in ``simple_deploy.registry.state``.
-This module keeps historical ``src.release_state`` imports working for the
-builder scripts.
+SQLite state implementation теперь находится в
+``simple_deploy.registry.state``. Этот модуль сохраняет исторические imports
+``src.release_state`` для builder scripts.
 """
 
 from __future__ import annotations

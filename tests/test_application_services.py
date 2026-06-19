@@ -1,4 +1,4 @@
-"""Tests for application service request boundary."""
+"""Тесты request boundary application services."""
 
 import sys
 import unittest
@@ -24,7 +24,7 @@ from simple_deploy.types import ContourCodeEnum  # noqa: E402
 
 
 class ApplicationServiceTests(unittest.TestCase):
-    """Checks that application services expose DTO-based use cases."""
+    """Проверяет, что application services открывают DTO-based use cases."""
 
     def test_build_service_adapts_request_to_process_input(self):
         request = BuildRequest(timeout=77, skip_data_sql_artifacts=True)

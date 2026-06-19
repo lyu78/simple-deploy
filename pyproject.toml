@@ -1,3 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple-deploy"
+version = "0.1.0"
+description = "Local Windows release/deploy runner."
+requires-python = ">=3.10"
+
+[project.scripts]
+simple-deploy = "simple_deploy.cli.windows_pipeline:main"
+
+[tool.setuptools]
+package-dir = {"" = "tools-ci"}
+
+[tool.setuptools.packages.find]
+where = ["tools-ci"]
+include = ["simple_deploy*"]
+
 [tool.ruff]
 line-length = 79
 

@@ -14,9 +14,63 @@
 - проверяет и применяет долгие data update скрипты;
 - фиксирует успешные и неуспешные build/deploy attempts в SQLite.
 
-Из-за этого основной риск теперь не в отдельных функциях, а в форме проекта. Один файл `tools-ci/tools/windows_pipeline.py` содержит конфиг, валидацию, SSH, SQL, deploy, dry-run, состояние релизов, уведомления и CLI. Такой файл сложно расширять под тестовые пайплайны, стресс-тесты, альтернативные команды, заявки на TEST/PROD и простую web-морду.
+Из-за этого основной риск теперь не в отдельных функциях, а в форме проекта. Старый монолитный Windows runner содержал конфиг, валидацию, SSH, SQL, deploy, dry-run, состояние релизов, уведомления и CLI. Такой файл сложно расширять под тестовые пайплайны, стресс-тесты, альтернативные команды, заявки на TEST/PROD и простую web-морду.
 
 Цель рефакторинга - сохранить текущий рабочий CLI, но разложить систему вокруг процессов и контуров.
+
+## Текущий статус на 2026-06-19
+
+Монолитный Windows runner больше не является исполняемым файлом проекта.
+Поддерживаемая операторская точка входа одна:
+
+```bash
+.venv/Scripts/simple-deploy.exe <command>
+```
+
+Она создается через packaging metadata в `pyproject.toml` и вызывает
+`simple_deploy.cli.windows_pipeline:main`. Старые script/package paths удалены:
+
+- `tools-ci/tools/windows_pipeline.py` удален;
+- `tools-ci/simple_deploy/windows_pipeline.py` удален;
+- imports `tools.windows_pipeline` и `simple_deploy.windows_pipeline` больше не
+  являются контрактом совместимости.
+
+Текущая форма проекта:
+
+- CLI adapter живет в `simple_deploy.cli.windows_pipeline`;
+- application boundary принимает Pydantic request DTO из
+  `simple_deploy.application.requests`;
+- process modules `build`, `deploy`, `dry_run`, `mark`, `data_sql` живут в
+  `simple_deploy.processes`;
+- shared infrastructure вынесена в `core`, `config`, `release`, `registry`,
+  `types`, `models` и `dto`;
+- SQLite implementation принадлежит `simple_deploy.registry.state`;
+- read-only web/API v1 уже работает поверх той же SQLite-базы.
+
+## Packaging contract
+
+`pyproject.toml` теперь является источником истины для публикации CLI:
+
+- `[build-system]` использует `setuptools.build_meta`;
+- `[project]` задает имя пакета `simple-deploy`, версию и минимальную версию
+  Python;
+- `[project.scripts]` публикует `simple-deploy =
+  simple_deploy.cli.windows_pipeline:main`;
+- `[tool.setuptools]` указывает package root `tools-ci`;
+- `[tool.setuptools.packages.find]` включает только `simple_deploy*`;
+- `[tool.ruff]` остается местом настройки linting.
+
+Операторская установка:
+
+```bash
+.venv/Scripts/python.exe -m pip install -r tools-ci/requirements.dev.txt
+.venv/Scripts/python.exe -m pip install -e . --no-deps
+```
+
+`--no-deps` сейчас намеренный: зависимости пока управляются через
+`tools-ci/requirements.dev.txt`. Если появится отдельный runtime package
+contract, зависимости нужно переносить в `[project.dependencies]` отдельным
+срезом с проверкой установки на чистой `.venv`.
 
 ## Как пришли к решению
 
@@ -35,7 +89,8 @@
 
 Два интерфейса вызывают одну и ту же прикладную логику:
 
-- CLI: совместимый вход через `tools-ci/tools/windows_pipeline.py`;
+- CLI: console script `simple-deploy`, который делегирует в
+  `simple_deploy.cli.windows_pipeline`;
 - Web/API: простая локальная панель и REST API для просмотра релизов, запусков и статусов.
 
 Общее ядро отвечает за:
@@ -48,56 +103,71 @@
 
 ## Целевая структура
 
-Промежуточная целевая структура внутри `tools-ci`:
+Текущая целевая структура внутри `tools-ci`:
 
 ```text
 tools-ci/
   simple_deploy/
+    application/
+      requests.py
+      services.py
     cli/
+      requests.py
       windows_pipeline.py
     config/
       runtime.py
+      runtime_loader.py
+      topology.py
       validation.py
-    core/
-      commands.py
-      logging.py
-      paths.py
-      ssh.py
-    release/
-      artifacts.py
-      state.py
-      manifest.py
     contours/
       model.py
-      dev.py
-      test.py
-      prod.py
-    processes/
-      dry_run.py
-      build.py
-      deploy.py
-      mark.py
-      data_sql.py
+    core/
+      build_env.py
+      commands.py
+      db.py
+      email.py
+      env.py
+      paths.py
+      release_paths.py
+      ssh.py
+    dto/
+      state.py
     jobs/
       model.py
-      runner.py
-      repository.py
+    models/
+      state.py
+    registry/
+      commands.py
+      queries.py
+      state.py
+    release/
+      artifacts.py
+      manifest.py
+    processes/
+      app_deploy.py
+      build.py
+      data_sql.py
+      deploy.py
+      dry_run.py
+      dry_run_checks.py
+      healthcheck.py
+      mark.py
+      notifications.py
+    types/
     web/
-      api.py
       app.py
       templates/
       static/
-  tools/
-    windows_pipeline.py
 ```
 
-`tools-ci/tools/windows_pipeline.py` остается совместимым wrapper-ом. Он должен импортировать новый CLI entrypoint и не менять публичные команды.
+Операторская точка входа публикуется как packaging console script. Она
+импортирует CLI entrypoint и не меняет публичные команды.
 
-Ansible переносится в legacy-зону:
+Legacy Ansible находится в legacy-зоне:
 
 ```text
 legacy/
-  legacy/ansible-ci/
+  ansible-ci/
 ```
 
 Документация, которая ссылается на Ansible, должна явно называть его legacy-вариантом.
@@ -122,11 +192,11 @@ legacy/
 CLI-команды остаются первичным контрактом:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --contour dev
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py build
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py deploy --contour dev --latest
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-applied --contour test --build-version <version>
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py mark-failed --contour test --build-version <version> --error "<reason>"
+.venv/Scripts/simple-deploy.exe dry-run --contour dev
+.venv/Scripts/simple-deploy.exe build
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest
+.venv/Scripts/simple-deploy.exe mark-applied --contour test --build-version <version>
+.venv/Scripts/simple-deploy.exe mark-failed --contour test --build-version <version> --error "<reason>"
 ```
 
 Новые пайплайны должны добавляться как процессы, а не как новые ветки большого файла:
@@ -178,18 +248,22 @@ REST-контракт для будущих write endpoints должен быт�
 
 ## Порядок реализации
 
-1. Зафиксировать этот план в корне репозитория.
-2. Создать пакет `tools-ci/simple_deploy/`.
-3. Оставить `tools-ci/tools/windows_pipeline.py` как совместимый wrapper.
-4. Вынести release/state/artifact primitives из builder и pipeline в общие модули.
-   Перед шагом 5 допускаются стабилизационные подшаги `4.x`, если они
-   уменьшают риск переноса монолитного pipeline без изменения поведения.
-5. Разложить текущие процессы по модулям `dry_run`, `build`, `deploy`, `mark`, `data_sql`.
-6. Перенести `legacy/ansible-ci/` в `legacy/legacy/ansible-ci/` и обновить ссылки в документации.
-7. Расширить SQLite-модель под jobs и external requests.
-8. Добавить FastAPI API поверх release/job/process слоев.
-9. Добавить простую web-страницу для v1 dashboard.
-10. Обновить документацию и тесты.
+1. Зафиксировать этот план в корне репозитория - выполнено.
+2. Создать пакет `tools-ci/simple_deploy/` - выполнено.
+3. Опубликовать CLI через console script `simple-deploy` - выполнено.
+4. Вынести release/state/artifact primitives из builder и pipeline в общие
+   модули - выполнено в безопасном объеме.
+5. Разложить текущие процессы по модулям `dry_run`, `build`, `deploy`, `mark`,
+   `data_sql` - выполнено.
+6. Перенести legacy Ansible в `legacy/ansible-ci/` и обновить ссылки в
+   документации - выполнено.
+7. Расширить SQLite-модель под jobs и external requests - выполнено.
+8. Добавить FastAPI API поверх release/job/process слоев - выполнено для
+   read-only v1.
+9. Добавить простую web-страницу для v1 dashboard - выполнено для read-only v1.
+10. Обновить документацию и тесты - выполняется на каждом срезе.
+11. Следующий этап: привести оставшиеся process boundaries и storage/read модели
+   к DDD-слоям без изменения операторских команд.
 
 ## Инварианты совместимости
 
@@ -218,7 +292,7 @@ git diff --check
 Для этапов, которые трогают build/deploy:
 
 ```bash
-.venv/Scripts/python.exe tools-ci/tools/windows_pipeline.py dry-run --contour dev
+.venv/Scripts/simple-deploy.exe dry-run --contour dev
 ```
 
 Для web/API этапов дополнительно:
@@ -228,17 +302,103 @@ git diff --check
 .venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci
 ```
 
-## Ближайший безопасный срез
+Для изменений `pyproject.toml` и CLI packaging дополнительно:
 
-Первый кодовый срез после этого документа:
+```bash
+.venv/Scripts/python.exe -m pip install -e . --no-deps --dry-run
+.venv/Scripts/python.exe -m pip install -e . --no-deps
+.venv/Scripts/simple-deploy.exe --help
+```
 
-1. создать пустой пакет `tools-ci/simple_deploy/`;
-2. добавить новый CLI entrypoint;
-3. сделать `tools-ci/tools/windows_pipeline.py` тонким wrapper-ом без изменения поведения;
-4. покрыть wrapper smoke-тестом;
-5. только после этого переносить реальные процессы по одному.
+## DDD-план дальнейшего рефакторинга
 
-Такой порядок позволяет начать рефакторинг без одновременного изменения deploy-логики.
+Цель следующего этапа - не добавлять новые слои ради слоев, а убрать остатки
+скриптовой формы из границ системы. CLI, web/API и Task Scheduler должны быть
+adapters, application layer - use case boundary, а domain/registry/process
+слои должны говорить на языке release/deploy toolkit.
+
+### Bounded contexts
+
+1. Release Registry:
+   - владеет SQLite-состоянием, contour state, build/deploy attempts, local jobs
+     и external requests;
+   - текущие владельцы: `simple_deploy.registry.*`;
+   - следующий шаг: не расширять legacy state rows напрямую, а добавлять command
+     и query boundaries с явными result DTO.
+2. Release Assembly:
+   - владеет source snapshot, release bundle, manifest и build artifacts;
+   - текущие владельцы: `builder`, `release.manifest`, `release.artifacts`;
+   - следующий шаг: отделить build orchestration от artifact domain model и
+     описать release bundle как основной агрегат сборки.
+3. Deployment Orchestration:
+   - владеет порядком DEV deploy, DB/app steps, maintenance stub, healthcheck и
+     фиксацией результата;
+   - текущие владельцы: `processes.deploy`, `processes.data_sql`,
+     `processes.app_deploy`, `processes.healthcheck`;
+   - следующий шаг: заменить namespace-like process input на typed process
+     request/result objects.
+4. Runtime Configuration and Topology:
+   - владеет `.env`, secrets, `windows_pipeline.local.json`, typed runtime model
+     и topology projection;
+   - текущие владельцы: `config.runtime`, `config.runtime_loader`,
+     `config.validation`, `config.topology`;
+   - следующий шаг: сделать topology не read-only справкой, а входом для
+     process boundary там, где это не меняет runtime-поведение.
+5. Interfaces:
+   - CLI, web/API и Task Scheduler не владеют бизнес-логикой;
+   - текущие владельцы: `cli`, `web`, scheduler wrapper;
+   - следующий шаг: web write endpoints должны создавать local jobs и вызывать
+     application use cases, а не дублировать orchestration.
+
+### Ubiquitous language
+
+Дальше в коде и тестах закрепляем эти термины:
+
+- release - продуктовый релиз как ресурс;
+- release bundle - успешно собранный набор артефактов, source snapshot и
+  manifest;
+- build version - технический идентификатор bundle;
+- contour - `dev`, `test`, `prod`;
+- placement - факт размещения release на contour;
+- baseline - последний подтвержденный backend commit contour-а;
+- build attempt / deployment attempt - факт попытки, успешной или неуспешной;
+- local job - локальная долгая операция, запускаемая из CLI или web/API;
+- external request - заявка/ручной процесс для TEST/PROD;
+- runtime topology - представление машин, репозиториев и deploy targets,
+  полученное из legacy env/config.
+
+### Ближайшие безопасные срезы
+
+1. Process request/result boundary:
+   - убрать временный `_process_args` из `application.services`;
+   - перевести `processes.build`, `processes.deploy`, `processes.dry_run`,
+     `processes.mark` и `processes.data_sql` на typed input;
+   - сохранить CLI args, JSON config и runtime behavior без изменений.
+2. Registry command/query hardening:
+   - зафиксировать command result DTO для state mutations;
+   - убрать прямую зависимость application/process code от raw SQLite rows там,
+     где уже есть read models;
+   - покрыть conflict cases для будущих web write endpoints.
+3. Release bundle aggregate:
+   - описать release bundle/source snapshot/artifact list как доменную модель,
+     а не набор dict/dataclass fragments;
+   - сделать manifest serialization adapter-ом вокруг модели;
+   - сохранить текущий `release_manifest.json`.
+4. Local jobs для write API:
+   - добавить запуск существующих use cases через local job runner;
+   - web/API должен создавать job resource и возвращать статус, а не выполнять
+     deploy/build внутри HTTP request;
+   - CLI остается синхронным операторским интерфейсом.
+5. Runtime topology adoption:
+   - начать использовать typed topology в dry-run/build/deploy проверках там,
+     где сейчас вручную читаются env keys;
+   - не менять формат `.env`, `local.secrets.env` и
+     `windows_pipeline.local.json` до отдельной миграции.
+6. Тестовая структура:
+   - разнести большой `tests/test_windows_pipeline_permissions.py` по процессным
+     и доменным областям после typed process boundary;
+   - не переносить тесты раньше, чтобы не смешивать поведенческие изменения и
+     механическую перекладку.
 
 ## Статус первого среза
 
@@ -246,7 +406,7 @@ git diff --check
 
 - создан этот план;
 - создан пакет `tools-ci/simple_deploy/` и начальный каркас подпакетов;
-- `tools-ci/tools/windows_pipeline.py` оставлен как compatibility wrapper;
+- на первом срезе старая точка входа была оставлена как compatibility wrapper;
 - текущая реализация runner перенесена в `tools-ci/simple_deploy/windows_pipeline.py` без изменения CLI-контракта;
 - добавлен facade `simple_deploy.release.state`;
 - SQLite state расширен таблицами `local_jobs` и `external_requests`;
@@ -361,7 +521,7 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 - шаг 5 начинать с `data_sql`, потому что этот участок уже хорошо покрыт
   characterization tests и меньше всего зависит от CLI dispatch;
 - первый срез шага 5 делать как перенос функций с сохранением старых import и
-  patch точек через `tools.windows_pipeline`.
+  patch точек через старый wrapper import.
 
 ## Статус шага 5
 
@@ -374,8 +534,8 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
   `remote_db_schema_unpack_command`, `upload_unpack_db_sql_artifact`,
   `run_db_schema_summary`, `run_db_data_insert`, `run_db_data_update_parallel`,
   `run_db_maintenance`;
-- `windows_pipeline` реэкспортирует эти имена, поэтому старые imports и patch
-  paths через `tools.windows_pipeline` остаются рабочими;
+- `windows_pipeline` реэкспортировал эти имена, поэтому старые imports и patch
+  paths на тот момент оставались рабочими;
 - core/SSH helper-ы пока остаются в монолите и используются из `data_sql`
   лениво, чтобы не смешивать первый process-split с переносом core-слоя.
 
@@ -385,8 +545,8 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 - из монолитного runner-а вынесены `mark_contour_applied`,
   `mark_contour_failed`, `mark_contour_failed_best_effort`, `set_baseline`,
   `mark_applied`, `mark_failed`;
-- ручные команды продолжают работать через старые CLI entrypoints и старые patch
-  paths `tools.windows_pipeline.*`;
+- ручные команды продолжали работать через старые CLI entrypoints и старые patch
+  paths;
 - baseline по-прежнему двигается только для `set-baseline` и `mark-applied`,
   а `mark-failed` пишет failed attempt без изменения baseline.
 
@@ -396,7 +556,7 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 - из монолитного runner-а вынесен процесс `build(args)`;
 - запуск `builder/create_release.py`, `cwd`, timeout, frontend env preparation и
   флаг `SIMPLE_DEPLOY_INCLUDE_DATA_SQL` сохранены через compatibility runner;
-- старый import/patch path `tools.windows_pipeline.build` остается рабочим.
+- старый build compatibility path на тот момент оставался рабочим.
 
 Четвертым безопасным срезом вынесен `dry_run`:
 
@@ -405,8 +565,8 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
 - preflight helper-ы config/runtime/SSH/HTTP/SQL пока остаются в compatibility
   runner-е и вызываются лениво, чтобы не смешивать process-split с переносом
   core-слоя;
-- старые import/patch paths `tools.windows_pipeline.dry_run` и
-  `tools.windows_pipeline.required_env_keys` остаются рабочими.
+- старые dry-run и required-env compatibility paths на тот момент оставались
+  рабочими.
 
 Пятым безопасным срезом вынесен `deploy`:
 
@@ -420,7 +580,7 @@ data SQL/maintenance stub. Поэтому между шагами 4 и 5 доб�
   а после успешного `mark_contour_applied` ошибка логируется без отката state;
 - helper-ы config/runtime, SSH, app/db/service, healthcheck и email пока
   остаются в compatibility runner-е и вызываются лениво из process-модуля;
-- старый import/patch path `tools.windows_pipeline.deploy` остается рабочим.
+- старый deploy compatibility path на тот момент оставался рабочим.
 
 Шаг 5 завершен в текущем безопасном объеме: процессы `data_sql`, `mark`,
 `build`, `dry_run` и `deploy` разложены по модулям `simple_deploy.processes`.
@@ -493,7 +653,7 @@ steps, healthcheck, email и summary. Механический перенос э
   отдельной typed-оберткой над старым loader без изменения формата config;
 - runtime preflight/policy validation вынесена в
   `tools-ci/simple_deploy/config/validation.py`, при этом
-  `tools.windows_pipeline.check_runtime_config` оставлен compatibility wrapper-ом;
+  старый runtime-config compatibility wrapper оставлен compatibility wrapper-ом;
 - FastAPI endpoints `/api/state`, `/api/releases`, `/api/jobs`, `/api/requests`
   используют `response_model` и возвращают DTO вместо сырых `dict`/`asdict`;
 - публичный helper `state_snapshot()` сохраняет прежний JSON-совместимый словарь
@@ -679,7 +839,7 @@ implementation:
 - application services `build`, `deploy`, `set_baseline`, `mark_applied` и
   `mark_failed` делегируют существующим process modules без изменения orchestration;
 - совместимый Windows runner импортирует верхнеуровневые команды из application layer,
-  но сохраняет старые `tools.windows_pipeline.*` patch/import paths;
+  но сохраняет старые старые wrapper patch/import paths;
 - `processes` остаются владельцами текущей CLI-oriented orchestration, а application
   layer становится общей точкой подключения для будущих web/API и local jobs.
 
@@ -696,7 +856,7 @@ implementation:
 - `processes.mark` напрямую использует `core.env`, `core.release_paths`, release
   manifest и registry commands, без импорта `simple_deploy.windows_pipeline`;
 - тестовые patch paths для build/mark переведены на новых владельцев, а старые
-  `tools.windows_pipeline.*` compatibility names сохранены для внешних imports.
+  старые compatibility names сохранены для внешних imports.
 
 ### Статус шестнадцатого среза шага 6
 
@@ -709,12 +869,12 @@ implementation:
 - helper-ы app deploy, HTTP healthcheck и Outlook-уведомлений перенесены в `processes.app_deploy`,
   `processes.healthcheck` и `processes.notifications`;
 - `processes.deploy` импортирует process/core/release/registry зависимости напрямую, без `simple_deploy.windows_pipeline`;
-- `simple_deploy.windows_pipeline` остается CLI/logging compatibility-модулем и re-export host-ом для старых
-  import paths `tools.windows_pipeline.*`.
+- `simple_deploy.windows_pipeline` на тот момент оставался CLI/logging
+  compatibility-модулем и re-export host-ом для старых wrapper import paths.
 
 Следующий практический срез: дальше уменьшать compatibility-модуль, переводя re-export-only test patch paths
 на прямых владельцев и перенося оставшиеся CLI/logging детали в сторону `simple_deploy.cli.windows_pipeline`,
-без изменения публичной точки входа `tools-ci/tools/windows_pipeline.py`.
+без изменения публичной точки входа того среза.
 
 ### Статус семнадцатого среза шага 6
 
@@ -832,7 +992,7 @@ Web/API payload --------------/
 
 - `tests/test_windows_pipeline_permissions.py` переведен с re-export-only
   imports на прямых владельцев в `core`, `config`, `release` и `processes`;
-- через `tools.windows_pipeline` в тестах оставлены только CLI/wrapper
+- через старый wrapper import в тестах оставлены только CLI/wrapper
   контракты: `parse_args`, `main`, process wrappers и dispatch patch paths;
 - `tests/test_runtime_config_model.py` импортирует typed runtime loader из
   `simple_deploy.config.runtime_loader`, а не через старый runner facade;
@@ -848,15 +1008,43 @@ Web/API payload --------------/
 
 - `simple_deploy.cli.windows_pipeline` стал владельцем `parse_args`, `main`,
   `tee_output` и legacy wrappers команд поверх application request DTO;
-- `tools-ci/tools/windows_pipeline.py` остался публичной точкой запуска, но
+- старая executable-точка входа на тот момент осталась публичной точкой запуска, но
   теперь импортирует `simple_deploy.cli.windows_pipeline` напрямую;
 - `simple_deploy.windows_pipeline` превращен в deprecated compatibility shim
   для старых Python imports и больше не содержит собственной runner-логики;
 - CLI behavior tests переведены на `simple_deploy.cli.windows_pipeline`, а
-  `tools.windows_pipeline` покрыт только smoke-проверкой исторического import
+  старый wrapper import покрыт только smoke-проверкой исторического import
   path;
 - поведение CLI-команд, формат аргументов, logging contract и application
   dispatch не менялись.
+
+### Статус двадцать второго среза шага 6
+
+Двадцать второй безопасный срез убрал последний операторский запуск Python-файла
+напрямую:
+
+- добавлена packaging metadata в `pyproject.toml` и console script
+  `simple-deploy = simple_deploy.cli.windows_pipeline:main`;
+- операторские инструкции, контекст проекта и пример Windows Task Scheduler
+  переведены на `.venv/Scripts/simple-deploy.exe`;
+- старая executable-точка входа в `tools-ci/tools/` удалена, чтобы операторы и
+  планировщик больше не зависели от script path;
+- `simple_deploy.windows_pipeline` на этом срезе еще оставлен как package-level
+  compatibility shim для старых Python imports;
+- тест совместимости больше не проверяет старый wrapper import и фиксировал
+  только package shim поверх `simple_deploy.cli.windows_pipeline`.
+
+### Статус двадцать третьего среза шага 6
+
+Двадцать третий безопасный срез удалил последний package shim Windows runner-а:
+
+- файл `tools-ci/simple_deploy/windows_pipeline.py` удален;
+- старые imports `simple_deploy.windows_pipeline` больше не поддерживаются;
+- единственная поддерживаемая CLI-точка входа - console script `simple-deploy`,
+  который вызывает `simple_deploy.cli.windows_pipeline:main`;
+- тест package shim удален, потому что совместимость со старым import path больше
+  не является контрактом;
+- документация пакета и текущий контекст обновлены под прямой CLI adapter.
 
 ### Отложенное улучшение: data SQL set_default artifacts
 

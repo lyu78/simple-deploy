@@ -144,7 +144,7 @@ class DeployRequest(_EnvFilesRequestBase):
 
 
 class PipelineRequest(_TimedEnvFilesRequestBase):
-    """Request use case ``dry-run -> build -> deploy latest``."""
+    """Request для pipeline use case ``dry-run -> build -> deploy latest``."""
 
     config_file: Path = Field(
         default=DEFAULT_CONFIG_FILE,

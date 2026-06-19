@@ -128,7 +128,7 @@ class TopologyConfigModelTests(unittest.TestCase):
         self.assertIn("landscapes", error_text)
 
     def test_runtime_topology_from_legacy_env_builds_dev_topology(self):
-        """Legacy env adapter returns a read-only DEV topology view."""
+        """Legacy env adapter возвращает read-only представление DEV topology."""
         model = runtime_topology_from_legacy_env(
             {
                 "BACKEND_SOURCE_REPO_PATH": " C:/repos/backend ",
@@ -173,7 +173,7 @@ class TopologyConfigModelTests(unittest.TestCase):
         self.assertEqual(environment.target_ids, ["dev-backend", "dev-frontend", "dev-database"])
 
     def test_runtime_topology_from_legacy_env_tolerates_partial_env(self):
-        """Legacy env adapter can expose source topology before VM keys are present."""
+        """Legacy env adapter отдает source topology до появления VM-ключей."""
         model = runtime_topology_from_legacy_env(
             {
                 "BACKEND_SOURCE_REPO_PATH": "C:/repos/backend",

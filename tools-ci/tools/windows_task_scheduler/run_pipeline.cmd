@@ -18,7 +18,7 @@ cd /d "%PROJECT_ROOT%"
 echo [%DATE% %TIME%] Starting simple-deploy pipeline>"%WRAPPER_LOG%"
 echo Project root: %PROJECT_ROOT%>>"%WRAPPER_LOG%"
 
-".venv\Scripts\python.exe" tools-ci\tools\windows_pipeline.py pipeline >>"%WRAPPER_LOG%" 2>&1
+".venv\Scripts\simple-deploy.exe" pipeline >>"%WRAPPER_LOG%" 2>&1
 set "RC=%ERRORLEVEL%"
 
 echo [%DATE% %TIME%] Finished with exit code %RC%>>"%WRAPPER_LOG%"

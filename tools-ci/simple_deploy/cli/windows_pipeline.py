@@ -1,8 +1,8 @@
-"""Windows CLI adapter for simple-deploy.
+"""Windows CLI adapter simple-deploy.
 
-This module owns argparse parsing, command log teeing, and dispatch from the
-operator CLI to application request DTOs. It intentionally delegates build,
-deploy, mark, and dry-run behavior to the application layer.
+Модуль владеет разбором ``argparse``, tee-логированием команд и dispatch-ем
+операторского CLI в application request DTO. Build, deploy, mark и dry-run
+поведение намеренно делегируется application layer.
 """
 
 from __future__ import annotations
