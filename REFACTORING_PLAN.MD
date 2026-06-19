@@ -825,6 +825,22 @@ Web/API payload --------------/
   contract; сохранен только реальный переключатель
   `skip_data_sql_artifacts`.
 
+### Статус двадцатого среза шага 6
+
+Двадцатый безопасный срез уменьшил `simple_deploy.windows_pipeline` до
+тонкого compatibility runner-а:
+
+- `tests/test_windows_pipeline_permissions.py` переведен с re-export-only
+  imports на прямых владельцев в `core`, `config`, `release` и `processes`;
+- через `tools.windows_pipeline` в тестах оставлены только CLI/wrapper
+  контракты: `parse_args`, `main`, process wrappers и dispatch patch paths;
+- `tests/test_runtime_config_model.py` импортирует typed runtime loader из
+  `simple_deploy.config.runtime_loader`, а не через старый runner facade;
+- из `simple_deploy.windows_pipeline` удалены re-export imports helper-ов,
+  которые больше не нужны для внутренних тестов;
+- отдельный `ruff` per-file ignore для `windows_pipeline.py` удален, потому что
+  модуль больше не содержит intentional `F401`/`E402` re-export blocks.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

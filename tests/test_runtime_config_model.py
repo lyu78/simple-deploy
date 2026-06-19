@@ -15,8 +15,10 @@ RUNTIME_EXAMPLE_PATH = TOOLS_CI_ROOT / "windows_pipeline.example.json"
 
 sys.path.insert(0, str(TOOLS_CI_ROOT))
 
-from simple_deploy.config.runtime import runtime_config_model
-from tools.windows_pipeline import load_runtime_config_model
+from simple_deploy.config.runtime import runtime_config_model  # noqa: E402
+from simple_deploy.config.runtime_loader import (  # noqa: E402
+    load_runtime_config_model,
+)
 
 
 class RuntimeConfigModelTests(unittest.TestCase):

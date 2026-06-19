@@ -73,44 +73,58 @@ INSERT_NEW_OBJECTS_SQL_FILE = f"insert_{INSERT_NEW_OBJECTS_TABLE}.sql"
 sys.path.insert(0, str(TOOLS_CI_ROOT))
 
 from tools.windows_pipeline import (  # noqa: E402
-    Artifact,
-    BUILDER_ROOT,
-    CommandResult,
-    DbSqlArtifact,
-    Reporter,
     build,
-    check_backend_data_insert_idempotency,
-    check_backend_build_inputs,
-    check_maintenance_stub_archive,
-    check_runtime_config,
-    check_service_permissions,
-    check_ssh_runtime,
-    cleanup_db_data_update_leftovers,
     deploy,
-    derive_service_permission_check,
-    is_sudo_command,
-    load_runtime_config,
     main,
-    management_commands,
     mark_applied,
     mark_failed,
     parse_args,
     pipeline,
-    prepare_build_env,
+    set_baseline,
+)
+from simple_deploy.application.requests import PipelineRequest  # noqa: E402
+from simple_deploy.config.runtime_loader import (  # noqa: E402
+    check_runtime_config,
+    load_runtime_config,
+)
+from simple_deploy.core.build_env import prepare_build_env  # noqa: E402
+from simple_deploy.core.commands import CommandResult  # noqa: E402
+from simple_deploy.core.paths import BUILDER_ROOT  # noqa: E402
+from simple_deploy.core.ssh import scp_file  # noqa: E402
+from simple_deploy.processes.app_deploy import (  # noqa: E402
+    management_commands,
+)
+from simple_deploy.processes.data_sql import (  # noqa: E402
+    cleanup_db_data_update_leftovers,
+    run_db_data_insert,
+    run_db_data_update_parallel,
+    run_db_maintenance,
+    run_db_schema_summary,
+)
+from simple_deploy.processes.dry_run_checks import (  # noqa: E402
+    Reporter,
+    check_backend_build_inputs,
+    check_backend_data_insert_idempotency,
+    check_maintenance_stub_archive,
+    check_service_permissions,
+    check_ssh_runtime,
+    derive_service_permission_check,
+    is_sudo_command,
+    sudo_list_command,
+)
+from simple_deploy.processes.healthcheck import (  # noqa: E402
+    verify_maintenance_stub_http,
+)
+from simple_deploy.processes.notifications import (  # noqa: E402
+    send_outlook_success_email,
+)
+from simple_deploy.release.artifacts import (  # noqa: E402
+    Artifact,
+    DbSqlArtifact,
     resolve_db_data_artifact,
     resolve_db_schema_artifact,
     resolve_maintenance_stub_artifact,
-    run_db_data_insert,
-    run_db_data_update_parallel,
-    run_db_schema_summary,
-    run_db_maintenance,
-    scp_file,
-    send_outlook_success_email,
-    set_baseline,
-    sudo_list_command,
-    verify_maintenance_stub_http,
 )
-from simple_deploy.application.requests import PipelineRequest  # noqa: E402
 from simple_deploy.release.manifest import RELEASE_MANIFEST_NAME  # noqa: E402
 from simple_deploy.release.state import (  # noqa: E402
     connect_state_db,
@@ -1052,7 +1066,9 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             app_only=False,
         )
 
-        with patch("tools.windows_pipeline.load_runtime_config") as load_runtime_mock:
+        with patch(
+            "simple_deploy.config.runtime_loader.load_runtime_config"
+        ) as load_runtime_mock:
             with patch("simple_deploy.application.services._dry_run_process", return_value=True) as dry_run_mock:
                 with patch("simple_deploy.application.services._build_process", return_value=0) as build_mock:
                     with patch("simple_deploy.application.services._deploy_process", return_value=0):
