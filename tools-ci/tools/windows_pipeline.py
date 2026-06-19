@@ -1,7 +1,7 @@
 """Compatibility wrapper for the Windows pipeline CLI.
 
-The implementation lives in ``simple_deploy.windows_pipeline``. This module
-keeps the historical script path and import path working.
+The implementation lives in ``simple_deploy.cli.windows_pipeline``. This
+module keeps the historical script path and import path working.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ TOOLS_CI_ROOT = Path(__file__).resolve().parents[1]
 if str(TOOLS_CI_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_CI_ROOT))
 
-from simple_deploy import windows_pipeline as _implementation  # noqa: E402
+from simple_deploy.cli import windows_pipeline as _implementation  # noqa: E402
 
 
 if __name__ == "__main__":

@@ -72,7 +72,10 @@ INSERT_NEW_OBJECTS_SQL_FILE = f"insert_{INSERT_NEW_OBJECTS_TABLE}.sql"
 
 sys.path.insert(0, str(TOOLS_CI_ROOT))
 
-from tools.windows_pipeline import (  # noqa: E402
+import tools.windows_pipeline as legacy_windows_pipeline  # noqa: E402
+import simple_deploy.windows_pipeline as legacy_package_windows_pipeline  # noqa: E402
+from simple_deploy.cli import windows_pipeline as cli_windows_pipeline  # noqa: E402
+from simple_deploy.cli.windows_pipeline import (  # noqa: E402
     build,
     deploy,
     main,
@@ -181,6 +184,26 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         backend = Artifact("backend", Path("backend.tar.gz"), REMOTE_BACKEND_ARCHIVE, BACKEND_RELEASE_PATH)
         frontend = Artifact("frontend", Path("frontend.tar.gz"), REMOTE_FRONTEND_ARCHIVE, FRONTEND_RELEASE_PATH)
         return backend, frontend
+
+    def test_legacy_tools_windows_pipeline_import_uses_cli_entrypoint(self):
+        """Фиксирует, что старые import paths смотрят на новый CLI module."""
+        self.assertIs(legacy_windows_pipeline.main, cli_windows_pipeline.main)
+        self.assertIs(
+            legacy_package_windows_pipeline.main,
+            cli_windows_pipeline.main,
+        )
+        self.assertIs(
+            legacy_windows_pipeline.parse_args,
+            cli_windows_pipeline.parse_args,
+        )
+        self.assertIs(
+            legacy_package_windows_pipeline.parse_args,
+            cli_windows_pipeline.parse_args,
+        )
+        self.assertIs(
+            legacy_windows_pipeline.pipeline,
+            cli_windows_pipeline.pipeline,
+        )
 
     def test_reporter_warn_does_not_fail_result(self):
         """Фиксирует, что предупреждения Reporter не переводят dry-run в ошибку."""
@@ -908,13 +931,30 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             request = sentinel.request
             with self.subTest(command=command):
                 with ExitStack() as stack:
-                    stack.enter_context(patch("tools.windows_pipeline.parse_args", return_value=args))
-                    request_mock = stack.enter_context(
-                        patch("tools.windows_pipeline.request_from_args", return_value=request)
+                    stack.enter_context(
+                        patch(
+                            "simple_deploy.cli.windows_pipeline.parse_args",
+                            return_value=args,
+                        )
                     )
-                    tee_mock = stack.enter_context(patch("tools.windows_pipeline.tee_output", return_value=nullcontext()))
+                    request_mock = stack.enter_context(
+                        patch(
+                            "simple_deploy.cli.windows_pipeline.request_from_args",
+                            return_value=request,
+                        )
+                    )
+                    tee_mock = stack.enter_context(
+                        patch(
+                            "simple_deploy.cli.windows_pipeline.tee_output",
+                            return_value=nullcontext(),
+                        )
+                    )
                     process_mock = stack.enter_context(
-                        patch(f"tools.windows_pipeline.{function_name}", return_value=function_result)
+                        patch(
+                            "simple_deploy.cli.windows_pipeline."
+                            f"{function_name}",
+                            return_value=function_result,
+                        )
                     )
 
                     self.assertEqual(main(), expected_rc)
@@ -928,10 +968,22 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         args = Namespace(command="build")
         request = sentinel.request
 
-        with patch("tools.windows_pipeline.parse_args", return_value=args):
-            with patch("tools.windows_pipeline.tee_output", return_value=nullcontext()):
-                with patch("tools.windows_pipeline.request_from_args", return_value=request):
-                    with patch("tools.windows_pipeline.build", side_effect=RuntimeError("build failed")):
+        with patch(
+            "simple_deploy.cli.windows_pipeline.parse_args",
+            return_value=args,
+        ):
+            with patch(
+                "simple_deploy.cli.windows_pipeline.tee_output",
+                return_value=nullcontext(),
+            ):
+                with patch(
+                    "simple_deploy.cli.windows_pipeline.request_from_args",
+                    return_value=request,
+                ):
+                    with patch(
+                        "simple_deploy.cli.windows_pipeline.build",
+                        side_effect=RuntimeError("build failed"),
+                    ):
                         self.assertEqual(main(), 1)
 
     def test_prepare_build_env_uses_backend_source_repo_for_archive_root(self):

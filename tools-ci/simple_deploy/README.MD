@@ -20,9 +20,9 @@ CLI, web/API, builder-интеграции и будущим локальным 
 ```
 
 Исторический путь `tools-ci/tools/windows_pipeline.py` является оберткой
-совместимости. Основная реализация процесса пока остается в
-`simple_deploy/windows_pipeline.py`; это временный монолит, из которого код
-будет выноситься малыми срезами.
+совместимости. Реальная CLI-реализация находится в
+`simple_deploy/cli/windows_pipeline.py`; `simple_deploy/windows_pipeline.py`
+оставлен только как deprecated compatibility shim для старых Python imports.
 
 Уже вынесены общие примитивы release/deploy toolkit:
 
@@ -41,7 +41,7 @@ CLI, web/API, builder-интеграции и будущим локальным 
 - `config/runtime.py` - первая Pydantic-модель текущего `windows_pipeline.local.json`
   без изменения старого loader-контракта.
 - `config/validation.py` - runtime preflight/policy validation, вынесенная из
-  `windows_pipeline.py` с сохранением старого `check_runtime_config()` path.
+  старого runner-а.
 
 ## Карта пакета
 
@@ -52,8 +52,7 @@ CLI, web/API, builder-интеграции и будущим локальным 
   конфигурации времени выполнения.
 - `contours/` - модели и правила контуров `dev`, `test`, `prod`.
 - `core/` - общие вспомогательные функции для команд, путей, env, build-env,
-  release-path resolving; SSH и часть файловых helper-ов еще остаются в
-  compatibility runner-е.
+  release-path resolving и SSH.
 - `dto/` - внешние JSON/API контракты, отделенные от SQLite rows и dataclass state.
 - `jobs/` - модель и будущий runner локальных долгих операций.
 - `models/` - внутренние application/read модели между state/query и DTO.
@@ -63,14 +62,14 @@ CLI, web/API, builder-интеграции и будущим локальным 
   выполнять deploy.
 - `types/` - enum-ы, справочники и custom primitive types без бизнес-логики.
 - `web/` - локальная FastAPI-панель/API поверх той же SQLite-базы.
-- `windows_pipeline.py` - временный монолит текущего Windows runner.
+- `windows_pipeline.py` - deprecated compatibility shim для старых imports.
 
 ## Правила дальнейшего выноса
 
-Новый код процесса не добавляется в `simple_deploy/windows_pipeline.py`, если
-его можно положить в целевой модуль. Монолит можно менять как адаптер: оставить
-публичные команды и делегировать работу в `application/`, `processes/`,
-`release/`, `config/`, `core/` или `jobs/`.
+Новый код процесса не добавляется в `simple_deploy/windows_pipeline.py`.
+Изменения CLI adapter-а идут в `simple_deploy/cli/windows_pipeline.py`, а
+бизнес-логика остается в `application/`, `processes/`, `release/`, `config/`,
+`core` или `jobs/`.
 
 При шаге 5 из `REFACTORING_PLAN.MD` процессы нужно выносить по одному:
 
@@ -90,10 +89,9 @@ CLI, web/API, builder-интеграции и будущим локальным 
 - поведение baseline: он двигается только после подтвержденного успешного
   применения релиза или явной ручной фиксации.
 
-Текущий dependency baseline: `processes.build` и `processes.mark` уже не
-импортируют `simple_deploy.windows_pipeline`; `processes.dry_run`, `processes.data_sql`
-и `processes.deploy` пока используют runner как compatibility host для оставшихся
-dry-run, SSH, DB и deploy helper-ов.
+Текущий dependency baseline: process modules больше не импортируют
+`simple_deploy.windows_pipeline`; старый module path сохранен только как
+compatibility shim поверх `simple_deploy.cli.windows_pipeline`.
 
 ## Документация и проверки
 

@@ -841,6 +841,23 @@ Web/API payload --------------/
 - отдельный `ruff` per-file ignore для `windows_pipeline.py` удален, потому что
   модуль больше не содержит intentional `F401`/`E402` re-export blocks.
 
+### Статус двадцать первого среза шага 6
+
+Двадцать первый безопасный срез перенес оставшийся CLI/logging/dispatch слой в
+целевой CLI package:
+
+- `simple_deploy.cli.windows_pipeline` стал владельцем `parse_args`, `main`,
+  `tee_output` и legacy wrappers команд поверх application request DTO;
+- `tools-ci/tools/windows_pipeline.py` остался публичной точкой запуска, но
+  теперь импортирует `simple_deploy.cli.windows_pipeline` напрямую;
+- `simple_deploy.windows_pipeline` превращен в deprecated compatibility shim
+  для старых Python imports и больше не содержит собственной runner-логики;
+- CLI behavior tests переведены на `simple_deploy.cli.windows_pipeline`, а
+  `tools.windows_pipeline` покрыт только smoke-проверкой исторического import
+  path;
+- поведение CLI-команд, формат аргументов, logging contract и application
+  dispatch не менялись.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:
