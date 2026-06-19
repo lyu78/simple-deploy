@@ -22,9 +22,9 @@ RUNTIME_EXAMPLE_PATH = TOOLS_CI_ROOT / "windows_pipeline.example.json"
 LEGACY_DB_MIGRATIONS_TASKS = ROOT / "legacy" / "ansible-ci" / "roles" / "db_migrations" / "tasks" / "main.yml"
 MISSING_MAINTENANCE_STUB_ARCHIVE = TOOLS_CI_ROOT / "maintenance_stub" / "missing.tar.gz"
 
-DEFAULT_ENV_FILE = Path(".env")
-DEFAULT_SECRETS_FILE = Path("local.secrets.env")
-DEFAULT_CONFIG_FILE = Path("windows_pipeline.local.json")
+DEFAULT_ENV_FILE = TOOLS_CI_ROOT / ".env"
+DEFAULT_SECRETS_FILE = TOOLS_CI_ROOT / "local.secrets.env"
+DEFAULT_CONFIG_FILE = TOOLS_CI_ROOT / "windows_pipeline.local.json"
 
 TEST_BUILD_VERSION = "1.2.3"
 PREVIOUS_BUILD_VERSION = "1.2.2"

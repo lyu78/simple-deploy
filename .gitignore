@@ -401,7 +401,6 @@ fabric.properties
 dump/*.dump
 
 media/
-/.env
 tools-ci/builder/settings/*/.env
 # *.tar.gz
 
@@ -410,12 +409,21 @@ legacy/ansible-ci/group_vars/vault.yml
 .vault-pass
 .venv-ansible/
 
+# Legacy root locations kept ignored during migration
+/.env
+/local.secrets.env
+/windows_pipeline.local.json
+
 # Локальные секреты и настройки Windows-only runner
-local.secrets.env
-windows_pipeline.local.json
+tools-ci/.env
+tools-ci/local.secrets.env
+tools-ci/windows_pipeline.local.json
 
 # Windows-only runner logs
 logs/
+
+# Local release artifacts
+releases/
 
 # Local release and contour state
 local_state/

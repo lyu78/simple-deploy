@@ -35,11 +35,11 @@ def load_env(
         db_password = merged.get("DB_LOGIN_PASSWORD", "").strip()
         if not db_user:
             raise RuntimeError(
-                "DB_LOGIN_USER must be set in local.secrets.env"
+                "DB_LOGIN_USER must be set in tools-ci/local.secrets.env"
             )
         if not db_password or db_password == "change-me":
             raise RuntimeError(
-                "DB_LOGIN_PASSWORD must be set in local.secrets.env"
+                "DB_LOGIN_PASSWORD must be set in tools-ci/local.secrets.env"
             )
 
     if "DB_LOGIN_USER" not in merged:

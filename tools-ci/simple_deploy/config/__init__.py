@@ -3,7 +3,7 @@
 
 Здесь живут Pydantic-модели для двух разных, но связанных вещей.
 
-``runtime.py`` описывает текущий контракт ``windows_pipeline.local.json``:
+``runtime.py`` описывает текущий контракт ``tools-ci/windows_pipeline.local.json``:
 флаги включения maintenance/data SQL/healthcheck, таймауты, service steps,
 management commands, email-настройки и другие параметры, которые отвечают на
 вопрос "как именно выполнить текущий Windows runner".

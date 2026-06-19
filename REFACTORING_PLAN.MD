@@ -270,7 +270,7 @@ REST-контракт для будущих write endpoints должен быт�
 Во время рефакторинга нельзя ломать:
 
 - текущие команды `dry-run`, `build`, `deploy`, `pipeline`, `set-baseline`, `mark-applied`, `mark-failed`;
-- формат локального `windows_pipeline.local.json`, если нет отдельной миграции;
+- формат локального `tools-ci/windows_pipeline.local.json`, если нет отдельной миграции;
 - хранение state в `local_state/simple_deploy.sqlite3`;
 - генерацию build artifacts;
 - порядок full deploy для DEV;
@@ -338,7 +338,7 @@ adapters, application layer - use case boundary, а domain/registry/process
    - следующий шаг: заменить namespace-like process input на typed process
      request/result objects.
 4. Runtime Configuration and Topology:
-   - владеет `.env`, secrets, `windows_pipeline.local.json`, typed runtime model
+   - владеет `tools-ci/.env`, secrets, `tools-ci/windows_pipeline.local.json`, typed runtime model
      и topology projection;
    - текущие владельцы: `config.runtime`, `config.runtime_loader`,
      `config.validation`, `config.topology`;
@@ -392,8 +392,8 @@ adapters, application layer - use case boundary, а domain/registry/process
 5. Runtime topology adoption:
    - начать использовать typed topology в dry-run/build/deploy проверках там,
      где сейчас вручную читаются env keys;
-   - не менять формат `.env`, `local.secrets.env` и
-     `windows_pipeline.local.json` до отдельной миграции.
+   - не менять формат `tools-ci/.env`, `tools-ci/local.secrets.env` и
+     `tools-ci/windows_pipeline.local.json` до отдельной миграции.
 6. Тестовая структура:
    - разнести большой `tests/test_windows_pipeline_permissions.py` по процессным
      и доменным областям после typed process boundary;
@@ -649,7 +649,7 @@ steps, healthcheck, email и summary. Механический перенос э
 - DTO-поля `build_version`, commit SHA, `contour` и `status` подключены к custom
   types без изменения SQLite-схемы;
 - добавлен первый `configs`-срез: Pydantic `RuntimeConfigModel` для текущего
-  `windows_pipeline.local.json`, а `load_runtime_config_model()` оставлен
+  `tools-ci/windows_pipeline.local.json`, а `load_runtime_config_model()` оставлен
   отдельной typed-оберткой над старым loader без изменения формата config;
 - runtime preflight/policy validation вынесена в
   `tools-ci/simple_deploy/config/validation.py`, при этом
@@ -681,7 +681,7 @@ paths. Но уменьшение `windows_pipeline.py` само по себе н
   `RuntimeTopology`;
 - модели используют уже введенные domain types (`RepoId`, `MachineId`,
   `ComponentId`, `ContourCode`, `SourceOriginKind`, `DeploymentTargetRole`);
-- текущий `.env`, `windows_pipeline.local.json`, CLI, builder/deploy flow и
+- текущий `tools-ci/.env`, `tools-ci/windows_pipeline.local.json`, CLI, builder/deploy flow и
   SQLite-схема не менялись;
 - topology models пока не являются loader-ом текущей конфигурации, а фиксируют
   целевую typed форму для следующих срезов.
@@ -824,7 +824,7 @@ implementation:
 Тринадцатый безопасный срез добавил read-only adapter от текущего legacy env к typed topology:
 
 - `runtime_topology_from_legacy_env()` строит DEV topology из уже существующих env-ключей
-  без изменения `.env`, `local.secrets.env` или `windows_pipeline.local.json`;
+  без изменения `tools-ci/.env`, `tools-ci/local.secrets.env` или `tools-ci/windows_pipeline.local.json`;
 - adapter отображает source repo paths, app/db VM, backend/frontend/database targets
   и contour-bound execution environment для `dev`;
 - частичный env допускается: source topology может быть доступна до заполнения VM-ключей;

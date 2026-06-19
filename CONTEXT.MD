@@ -28,7 +28,7 @@ Linux/WSL control node, но основная отладка в последни
 `logs/<timestamp>-<command>.log`; `logs/` игнорируется Git.
 
 SSH-доступ к VM не интерактивный: runner работает в batch-режиме и рассчитан на
-ключ или ssh-agent. В `.env` поддерживаются:
+ключ или ssh-agent. В `tools-ci/.env` поддерживаются:
 
 - `SSH_KEY_PATH` - общий ключ для app/DB VM;
 - `APP_SSH_KEY_PATH` - ключ только для app VM;
@@ -43,7 +43,7 @@ APP_SSH_KEY_PATH=./simple-deploy
 APP_VM_USER=deploy-user
 ```
 
-Секреты PostgreSQL лежат в `local.secrets.env`. Для `dry-run`, `deploy` и
+Секреты PostgreSQL лежат в `tools-ci/local.secrets.env`. Для `dry-run`, `deploy` и
 `pipeline` `DB_LOGIN_USER` и `DB_LOGIN_PASSWORD` обязательны; пустой пароль и
 placeholder `change-me` считаются ошибкой конфигурации. Dry-run проверяет не
 только SSH до DB VM и наличие `psql`, но и реальный PostgreSQL login через
@@ -85,14 +85,14 @@ python "$APP_MANAGE_PY_PATH" migrate --fake
 python "$APP_MANAGE_PY_PATH" sync_action_role
 ```
 
-Если `management_commands` в `windows_pipeline.local.json` пустой, runner строит
-команды из `APP_MANAGE_PY_PATH`. Если локальный `windows_pipeline.local.json`
+Если `management_commands` в `tools-ci/windows_pipeline.local.json` пустой, runner строит
+команды из `APP_MANAGE_PY_PATH`. Если локальный `tools-ci/windows_pipeline.local.json`
 содержит явные `management_commands`, они имеют приоритет. Dry-run проверяет, что
 `APP_MANAGE_PY_PATH` существует и читается относительно `APP_WORKDIR`.
 
 ## Service steps и права
 
-Команды запуска/проверки сервисов задаются в `windows_pipeline.local.json` в
+Команды запуска/проверки сервисов задаются в `tools-ci/windows_pipeline.local.json` в
 `service_steps`. Поддерживаемые фазы: `before_unpack`, `after_unpack`,
 `after_migrate`, `after_frontend_unpack`; шаги без `phase` считаются `after_migrate`. Порядок выполнения
 соответствует порядку в JSON. Если `manage.py` зависит от Redis/KeyDB при
@@ -203,7 +203,7 @@ service step дословно и иначе получает `Interactive authen
 2. если это React и версия не найдена в HTML - в JS assets из `<script src=...>`
    того же origin.
 
-Проверку можно отключить в `windows_pipeline.local.json`:
+Проверку можно отключить в `tools-ci/windows_pipeline.local.json`:
 
 ```json
 "portal_version_check_enabled": false
@@ -213,8 +213,8 @@ service step дословно и иначе получает `Interactive authen
 
 ## Почтовое уведомление Outlook
 
-Письмо об успешном deploy настраивается в `windows_pipeline.local.json`, а не в
-`.env`. Для включения нужно выставить `outlook_email_enabled: true`, задать
+Письмо об успешном deploy настраивается в `tools-ci/windows_pipeline.local.json`, а не в
+`tools-ci/.env`. Для включения нужно выставить `outlook_email_enabled: true`, задать
 непустые `outlook_email_recipients`, `outlook_email_subject` и
 `outlook_email_body`, а также иметь установленный и настроенный desktop Outlook
 для текущего Windows-пользователя. Необязательный `outlook_email_cc` добавляет
@@ -252,15 +252,17 @@ COM. Доступные переменные шаблонов: `{build_version}`
 - `legacy/ansible-ci/roles/` - Ansible-роли доставки артефактов, DB-работ, сервисных команд,
   миграций, healthcheck и отчета.
 - `legacy/ansible-ci/group_vars/dev.yml` - схема DEV-контура и производные значения.
-- `.env` - локальная конфигурация рабочей машины, не хранится в репозитории.
-- `.env.example` - пример `.env` с нереальными, но похожими на боевые значениями.
+- `tools-ci/.env` - локальная конфигурация рабочей машины, не хранится в репозитории.
+- `tools-ci/.env.example` - пример `.env` с нереальными, но похожими на боевые значениями.
+- `tools-ci/local.secrets.env` - локальные secrets PostgreSQL, не хранятся в репозитории.
+- `tools-ci/local.secrets.env.example` - пример файла secrets без реальных значений.
 - `legacy/ansible-ci/group_vars/vault.yml` - секреты Ansible Vault, не хранится в репозитории.
 - `tools-ci/builder/settings/*/.env.template` - шаблоны frontend `.env`; реальные
   `tools-ci/builder/settings/*/.env` генерируются локально перед сборкой и игнорируются Git.
 
 ## Конфигурация
 
-В `.env` обязательно задаются адреса VM, SSH-пользователи, пути к рабочим копиям
+В `tools-ci/.env` обязательно задаются адреса VM, SSH-пользователи, пути к рабочим копиям
 репозиториев, домены и пути деплоя на app VM.
 
 `APP_VM_USER` и `DB_VM_USER` обязательны отдельно. Если `DB_VM_USER` не указан,
@@ -294,7 +296,7 @@ frontend-репозитория и использует только `RELEASE_RO
 Console script `simple-deploy` через `simple_deploy.cli.windows_pipeline`:
 
 - является основной операторской точкой входа для Windows-only режима;
-- читает `.env`, `local.secrets.env` и `windows_pipeline.local.json`;
+- читает `tools-ci/.env`, `tools-ci/local.secrets.env` и `tools-ci/windows_pipeline.local.json`;
 - запускает `tools-ci/builder/create_release.py` для сборки релиза;
 - выбирает собранный релиз;
 - доставляет schema SQL на DB VM и backend/frontend архивы на app VM;
@@ -306,7 +308,7 @@ Console script `simple-deploy` через `simple_deploy.cli.windows_pipeline`:
 
 Legacy Ansible:
 
-- читает `.env` и vault-секреты;
+- читает `tools-ci/.env` и vault-секреты;
 - вычисляет дефолтные пути проекта и релизов;
 - создает `tools-ci/builder/settings/*/.env` из tracked-шаблонов `.env.template` и
   подставляет туда домены;
@@ -328,7 +330,7 @@ ANSIBLE_CONFIG="$PWD/ansible.cfg" ../../.venv-ansible/bin/ansible-playbook \
 Dry run ничего не распаковывает, не запускает SQL-работы, миграции и рестарты.
 Самые ранние проверки:
 
-- `.env` заполнен обязательными параметрами;
+- `tools-ci/.env` заполнен обязательными параметрами;
 - в локальных backend/frontend-репозиториях настроен `origin`;
 - доступны app VM и DB VM по сети;
 - SSH-аутентификация проходит с одним парольным prompt, без повторного долбления
@@ -407,7 +409,7 @@ cmd.exe /C npm --version
 ```
 
 Локальные backend/frontend-репозитории тоже проверяются Windows Git, потому что в
-`.env` хранятся Windows-пути вида `C:/...`.
+`tools-ci/.env` хранятся Windows-пути вида `C:/...`.
 
 Проверка `origin` должна обращаться не к голому домену и не через `git ls-remote`,
 а к полной ссылке `origin`:
@@ -429,10 +431,10 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 
 В репозитории не должны храниться локальные значения рабочей машины:
 
-- корневой `.env` игнорируется;
+- локальный `tools-ci/.env` игнорируется;
 - `legacy/ansible-ci/group_vars/vault.yml` и `.vault-pass` игнорируются;
 - реальные `tools-ci/builder/settings/*/.env` игнорируются, потому что Ansible записывает
-  туда домены из локального `.env`;
+  туда домены из локального `tools-ci/.env`;
 - в Git хранятся только `tools-ci/builder/settings/*/.env.template` с плейсхолдерами
   `__ANSIBLE_*`;
 - `.venv-ansible/`, `__pycache__/` и локальные runtime-артефакты не коммитятся.

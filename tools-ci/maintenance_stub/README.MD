@@ -31,7 +31,7 @@ Runner распаковывает архив с `--strip-components=1`, поэт
 ```
 
 Если архив заменяется другой универсальной заглушкой, обновите
-`maintenance_stub_verify_marker` в `windows_pipeline.local.json`.
+`maintenance_stub_verify_marker` в `tools-ci/windows_pipeline.local.json`.
 
 Deploy runner проверяет наличие архива до остановки app-сервисов, когда
 `maintenance_stub_enabled` равен `true`.

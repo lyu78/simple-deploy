@@ -22,7 +22,7 @@ from simple_deploy.config.runtime_loader import (  # noqa: E402
 
 
 class RuntimeConfigModelTests(unittest.TestCase):
-    """Проверяет структурную модель ``windows_pipeline.local.json``."""
+    """Проверяет структурную модель ``tools-ci/windows_pipeline.local.json``."""
 
     def test_example_runtime_config_matches_pydantic_model(self):
         """Example runtime config проходит структурную Pydantic-валидацию."""

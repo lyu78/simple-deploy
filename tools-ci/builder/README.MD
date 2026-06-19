@@ -28,8 +28,8 @@ VM и не двигает baseline контуров.
 
 В пакет релиза намеренно не входят:
 
-- секреты, SSH-доступы и локальные `.env`/`local.secrets.env`;
-- `windows_pipeline.local.json` и операторские runtime-настройки;
+- секреты, SSH-доступы и локальные `tools-ci/.env`/`tools-ci/local.secrets.env`;
+- `tools-ci/windows_pipeline.local.json` и операторские runtime-настройки;
 - локальная SQLite-база `local_state/simple_deploy.sqlite3`;
 - состояние baseline контуров;
 - сам runner деплоя и его окружение выполнения;

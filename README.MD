@@ -40,8 +40,9 @@ Web/API v1 для просмотра локального состояния з�
 он показывает контуры, релизы, build/deploy attempts, локальные jobs и внешние
 заявки TEST/PROD.
 
-Практическая настройка рабочей машины, `.env`, `local.secrets.env`,
-`windows_pipeline.local.json`, service steps, Outlook email и запуск по
+Практическая настройка рабочей машины, `tools-ci/.env`,
+`tools-ci/local.secrets.env`, `tools-ci/windows_pipeline.local.json`,
+service steps, Outlook email и запуск по
 расписанию описаны в `tools-ci/README.MD`.
 
 Legacy-вариант через Ansible/WSL сохранен в `legacy/ansible-ci/PIPELINE.MD`, но не
@@ -134,5 +135,5 @@ SQL-диапазон.
 - `instructions/` - ручные операционные процедуры и правила подготовки SQL.
 - `docs/` - диаграммы и дополнительные описания.
 - `tests/` - тесты builder, runner и вспомогательной логики.
-- `.env.example` - пример локальной конфигурации без секретов.
-- `local.secrets.env.example` - пример локального файла секретов PostgreSQL.
+- `tools-ci/.env.example` - пример локальной конфигурации без секретов.
+- `tools-ci/local.secrets.env.example` - пример локального файла секретов PostgreSQL.

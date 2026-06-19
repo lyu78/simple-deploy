@@ -13,9 +13,9 @@ Ansible/WSL описан в `../legacy/ansible-ci/PIPELINE.MD`.
 
 Основные локальные файлы:
 
-- `.env` - пути к репозиториям, VM, домены, директории деплоя и build settings.
-- `local.secrets.env` - секреты PostgreSQL для DB VM.
-- `windows_pipeline.local.json` - service steps, management commands, healthcheck
+- `tools-ci/.env` - пути к репозиториям, VM, домены, директории деплоя и build settings.
+- `tools-ci/local.secrets.env` - секреты PostgreSQL для DB VM.
+- `tools-ci/windows_pipeline.local.json` - service steps, management commands, healthcheck
   и Outlook email.
 
 Локальное состояние SQL baseline хранится в
@@ -85,7 +85,7 @@ data SQL-артефакты по умолчанию. Явный schema-only ре
 
 `dry-run` не меняет VM и не запускает сборку. Он проверяет:
 
-- обязательные значения `.env` и наличие `local.secrets.env`;
+- обязательные значения `tools-ci/.env` и наличие `tools-ci/local.secrets.env`;
 - локальные backend/frontend source и target репозитории;
 - `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
@@ -146,7 +146,7 @@ SQL-архив по `--contour` и выполняет порядок:
    `after_migrate`, включая информационные SQL-отчеты в порядке `sql_scripts`.
 11. Распаковка backend с `--strip-components=1`.
 12. Service steps фазы `after_unpack`.
-13. Django management-команды из `windows_pipeline.local.json` или дефолт:
+13. Django management-команды из `tools-ci/windows_pipeline.local.json` или дефолт:
     `migrate --fake`, затем `sync_action_role`.
 14. Service steps фазы `after_migrate`.
 15. Распаковка финального frontend поверх заглушки.
@@ -165,7 +165,7 @@ baseline двигается только после завершенного dep
 Каждый запуск пишет вывод одновременно в консоль и в
 `logs/<timestamp>-<command>.log`.
 
-Основные точки расширения в `windows_pipeline.local.json`:
+Основные точки расширения в `tools-ci/windows_pipeline.local.json`:
 
 - `db_maintenance_sql` и `sql_scripts`;
 - `management_commands`;

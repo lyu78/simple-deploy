@@ -15,7 +15,7 @@ Runtime config - это operational-параметры запуска уже с�
 
 В отличие от ``config.topology``, этот модуль не знает, какие source
 repositories образуют компонент и на каких deployment targets он размещается.
-Он сохраняет текущий контракт ``windows_pipeline.local.json`` и только
+Он сохраняет текущий контракт ``tools-ci/windows_pipeline.local.json`` и только
 добавляет typed-валидацию/нормализацию вокруг него.
 """
 
@@ -67,7 +67,7 @@ class ServiceStepConfigModel(_RuntimeConfigBaseModel):
 
 
 class RuntimeConfigModel(_RuntimeConfigBaseModel):
-    """Структурная модель текущей формы ``windows_pipeline.local.json``.
+    """Структурная модель текущей формы ``tools-ci/windows_pipeline.local.json``.
 
     Модель держит legacy-совместимый набор полей runner-а. Она не валидирует
     бизнес-правила вроде "stop nginx требует последующий start" - такие правила

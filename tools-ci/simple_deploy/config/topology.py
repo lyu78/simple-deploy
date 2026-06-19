@@ -21,7 +21,7 @@ Runtime topology - это карта системы, а не набор флаг
 "/opt/app/backend" } ] } ] }
 
 На текущем этапе эти модели фиксируют typed target form для следующих срезов.
-Они не являются loader-ом текущего ``windows_pipeline.local.json`` и не
+Они не являются loader-ом текущего ``tools-ci/windows_pipeline.local.json`` и не
 содержат process-policy вроде порядка остановки сервисов или выбора SQL
 artifacts.
 """
@@ -203,7 +203,7 @@ def runtime_topology_from_legacy_env(
 ) -> RuntimeTopologyConfigModel:
     """Строит read-only DEV topology из текущего env-контракта runner-а.
 
-    Adapter не меняет формат ``.env``/``local.secrets.env`` и не используется
+    Adapter не меняет формат ``tools-ci/.env``/``tools-ci/local.secrets.env`` и не используется
     deploy-процессом для принятия решений. Он дает typed view уже известных
     значений: source repo paths, app/db VM, backend/frontend/database targets и
     contour-bound execution environment для ``dev``.

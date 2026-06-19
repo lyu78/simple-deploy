@@ -6,7 +6,7 @@ CLI, web/API, builder-интеграции и будущим локальным 
 прикладной логики.
 
 Этот README не заменяет операторские инструкции запуска. Для запуска команд,
-настройки `.env`, `windows_pipeline.local.json`, Task Scheduler и практического
+настройки `tools-ci/.env`, `tools-ci/windows_pipeline.local.json`, Task Scheduler и практического
 потока деплоя читайте `../README.MD` и корневой `../../README.MD`.
 
 ## Текущее состояние
@@ -37,7 +37,7 @@ CLI, web/API, builder-интеграции и будущим локальным 
 - `types/` - первые constrained primitives для release/build version, commit SHA,
   contour, status, component, artifact и deploy entrypoint справочников.
 - `models/state.py` - внутренние модели чтения над SQLite state/API.
-- `config/runtime.py` - первая Pydantic-модель текущего `windows_pipeline.local.json`
+- `config/runtime.py` - первая Pydantic-модель текущего `tools-ci/windows_pipeline.local.json`
   без изменения старого loader-контракта.
 - `config/validation.py` - runtime preflight/policy validation, вынесенная из
   старого runner-а.
@@ -80,7 +80,7 @@ CLI, web/API, builder-интеграции и будущим локальным 
 
 - команды `dry-run`, `build`, `deploy`, `pipeline`, `set-baseline`,
   `mark-applied`, `mark-failed`;
-- формат `windows_pipeline.local.json`;
+- формат `tools-ci/windows_pipeline.local.json`;
 - SQLite-состояние в `local_state/simple_deploy.sqlite3`;
 - логи в терминал и `logs/<timestamp>-<command>.log`;
 - поведение baseline: он двигается только после подтвержденного успешного

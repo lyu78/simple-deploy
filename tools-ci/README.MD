@@ -31,9 +31,9 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org -r tools-ci/requirements.dev.txt
 .venv/Scripts/python.exe -m pip install --disable-pip-version-check -e . --no-deps
 
-cp .env.example .env
-cp local.secrets.env.example local.secrets.env
-cp tools-ci/windows_pipeline.example.json windows_pipeline.local.json
+cp tools-ci/.env.example tools-ci/.env
+cp tools-ci/local.secrets.env.example tools-ci/local.secrets.env
+cp tools-ci/windows_pipeline.example.json tools-ci/windows_pipeline.local.json
 ```
 
 Read-only web/API v1 запускается поверх той же SQLite-базы:
@@ -45,8 +45,8 @@ Read-only web/API v1 запускается поверх той же SQLite-ба
 UI: `http://127.0.0.1:8000/`.
 API: `http://127.0.0.1:8000/api/state`.
 
-Заполните `.env` путями к backend/frontend репозиториям, VM-хостами, доменами,
-директориями деплоя и build settings. Для Windows-only режима можно оставить
+Заполните `tools-ci/.env` путями к backend/frontend репозиториям, VM-хостами,
+доменами, директориями деплоя и build settings. Для Windows-only режима можно оставить
 `PROJECT_ROOT_WSL` и `RELEASE_ROOT_WSL` пустыми; при необходимости задайте
 `RELEASE_ROOT_WINDOWS`.
 
@@ -63,7 +63,7 @@ runner ищет сначала от текущей директории, зат�
 Windows-пользователя. Если один ключ подходит для обеих VM, можно задать только
 `SSH_KEY_PATH`.
 
-В `local.secrets.env` укажите доступ к PostgreSQL:
+В `tools-ci/local.secrets.env` укажите доступ к PostgreSQL:
 
 ```properties
 DB_LOGIN_USER=postgres
@@ -75,7 +75,7 @@ DB_LOGIN_PASSWORD=<password>
 
 ## Локальный runner config
 
-`windows_pipeline.local.json` хранит локальные расширения pipeline:
+`tools-ci/windows_pipeline.local.json` хранит локальные расширения pipeline:
 
 - `service_steps` - сервисные команды на app VM;
 - `management_commands` - Django management-команды;
@@ -195,7 +195,7 @@ deploy-simple ALL=(root) NOPASSWD: SIMPLE_DEPLOY_SYSTEMD
 ```
 
 Если `command -v systemctl` возвращает не `/bin/systemctl`, используйте этот
-фактический путь и в sudoers, и в `windows_pipeline.local.json`. Команды
+фактический путь и в sudoers, и в `tools-ci/windows_pipeline.local.json`. Команды
 `systemctl status ...` в sudoers добавлять не нужно, если они доступны без sudo.
 После правки проверьте файл и конкретные права:
 
@@ -296,7 +296,7 @@ data SQL-артефакты по умолчанию. Явный schema-only ре
 
 `dry-run` ничего не собирает, не меняет VM и не двигает baseline. Он проверяет:
 
-- обязательные значения `.env` и наличие `local.secrets.env`;
+- обязательные значения `tools-ci/.env` и наличие `tools-ci/local.secrets.env`;
 - локальные backend/frontend source и target репозитории;
 - `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
@@ -398,7 +398,7 @@ backend-и с `application_name=simple-deploy-data-update`.
 ## Outlook email
 
 Уведомление об успешном deploy отправляется через установленный desktop Outlook
-на рабочей машине. Включается в `windows_pipeline.local.json`:
+на рабочей машине. Включается в `tools-ci/windows_pipeline.local.json`:
 
 ```json
 {

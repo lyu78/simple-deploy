@@ -8,9 +8,9 @@ ROOT = Path(__file__).resolve().parents[3]
 TOOLS_CI_ROOT = ROOT / "tools-ci"
 BUILDER_ROOT = TOOLS_CI_ROOT / "builder"
 
-DEFAULT_ENV_FILE = ROOT / ".env"
-DEFAULT_SECRETS_FILE = ROOT / "local.secrets.env"
-DEFAULT_CONFIG_FILE = ROOT / "windows_pipeline.local.json"
+DEFAULT_ENV_FILE = TOOLS_CI_ROOT / ".env"
+DEFAULT_SECRETS_FILE = TOOLS_CI_ROOT / "local.secrets.env"
+DEFAULT_CONFIG_FILE = TOOLS_CI_ROOT / "windows_pipeline.local.json"
 DEFAULT_LOG_DIR = ROOT / "logs"
 
 DEFAULT_TIMEOUT = 20

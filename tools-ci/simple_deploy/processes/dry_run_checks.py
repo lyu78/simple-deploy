@@ -233,7 +233,7 @@ def check_backend_build_inputs(
             "backend app root",
             f"BACKEND_APP_ROOT_DIR={app_root_dir!r} не найден: "
             f"{app_root_path}. "
-            "Задайте реальную директорию backend application root в .env.",
+            "Задайте реальную директорию backend application root в tools-ci/.env.",
         )
 
     requirements_path = source_repo / Path(requirements_relative_path)
@@ -800,7 +800,7 @@ def check_outlook_email_config(reporter: Reporter, runtime: dict) -> None:
     """Проверяет runtime-настройки и COM-доступность Outlook email."""
     if not runtime.get("outlook_email_enabled", False):
         reporter.skip(
-            "Outlook email", "отключено в windows_pipeline.local.json"
+            "Outlook email", "отключено в tools-ci/windows_pipeline.local.json"
         )
         return
 
