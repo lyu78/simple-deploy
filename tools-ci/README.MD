@@ -36,7 +36,9 @@ cp tools-ci/local.secrets.env.example tools-ci/local.secrets.env
 cp tools-ci/windows_pipeline.example.json tools-ci/windows_pipeline.local.json
 ```
 
-Read-only web/API v1 запускается поверх той же SQLite-базы:
+Web/API v1 запускается поверх той же SQLite-базы. CLI остается основным и
+аварийным путем, а React UI дает операторскую панель для просмотра состояния и
+создания локальных jobs через API:
 
 ```bash
 .venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
@@ -44,6 +46,15 @@ Read-only web/API v1 запускается поверх той же SQLite-ба
 
 UI: `http://127.0.0.1:8000/`.
 API: `http://127.0.0.1:8000/api/state`.
+
+Исходники UI лежат в `tools-ci/web-ui`. После изменения фронтенда соберите
+статические assets:
+
+```bash
+cd tools-ci/web-ui
+npm install
+npm run build
+```
 
 Заполните `tools-ci/.env` путями к backend/frontend репозиториям, VM-хостами,
 доменами, директориями деплоя и build settings. Для Windows-only режима можно оставить

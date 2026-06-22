@@ -33,7 +33,7 @@ title simple-deploy: полный pipeline от dry-run до DEV/TEST/PROD
 actor "Оператор" as operator
 
 box "Рабочая Windows-машина" #F7F7F7
-participant "tools-ci/tools/windows_pipeline.py\nCLI runner" as runner
+participant ".venv/Scripts/simple-deploy.exe\nconsole script + CLI adapter" as runner
 database "local_state/simple_deploy.sqlite3\nлокальная история контуров" as state
 collections "logs/\nдиагностика и демо-вывод" as logs
 end box
@@ -51,7 +51,7 @@ collections "RELEASE_ROOT_WINDOWS/<build_version>\nrelease directory" as release
 participant "release_manifest.json\ncommits + artifact metadata" as manifest
 collections "backend/frontend tar.gz\napplication artifacts" as app_artifacts
 collections "db_schema_dev/test/prod tar.gz\nschema SQL artifacts" as schema_artifacts
-collections "db_insert/db_update_sequential/db_update_parallel tar.gz\ndata SQL artifacts" as data_artifacts
+collections "db_insert/db_update/db_set_default tar.gz\ndata SQL artifacts" as data_artifacts
 collections "tools-ci/maintenance_stub/maintenance_stub.tar.gz\nuniversal maintenance page" as maintenance_stub
 end box
 
@@ -107,11 +107,11 @@ backend_src -> backend_src: сгенерировать PostgreSQL DDL offline\n�
 backend_src --> runner: summary_sql_dev/test/prod + metadata
 
 runner -> backend_src: запустить create_run_all_sql.py
-backend_src --> runner: run_all_insert.sql + run_all_update_sequential.sql + run_all_update_parallel.sh
+backend_src --> runner: run_all_insert.sql + run_all_update_*.sql/sh + run_all_set_default_*.sql/sh
 
 runner -> release_dir: создать release directory
 runner -> schema_artifacts: упаковать db_schema_dev/test/prod tar.gz
-runner -> data_artifacts: упаковать db_insert/db_update_sequential/db_update_parallel tar.gz
+runner -> data_artifacts: упаковать db_insert/db_update/db_set_default tar.gz
 runner -> app_artifacts: упаковать backend/frontend tar.gz
 runner -> manifest: записать build_version,\nrepo commits,\nSQL ranges,\nartifact names
 runner -> state: записать release metadata

@@ -15,7 +15,8 @@ from html import escape
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from simple_deploy.dto.state import (
@@ -46,7 +47,15 @@ _release_read_models_from_state = (
 _state_snapshot_read_model = _registry_queries.state_snapshot_read_model
 
 app = FastAPI(title="simple-deploy", version="0.1.0")
+WEB_UI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
+WEB_UI_INDEX = WEB_UI_DIST / "index.html"
 TERMINAL_JOB_STATUSES = {"success", "failed", "cancelled"}
+
+app.mount(
+    "/assets",
+    StaticFiles(directory=WEB_UI_DIST / "assets", check_dir=False),
+    name="web-ui-assets",
+)
 
 
 class JobCreateRequest(BaseModel):
@@ -232,21 +241,27 @@ def api_requests(limit: int = 50) -> list[ExternalRequestDto]:
     ]
 
 
-@app.get("/", response_class=HTMLResponse)
-def dashboard() -> str:
-    """Возвращает HTML-панель для локального оператора."""
-    return render_dashboard(state_snapshot(limit=20))
+@app.get("/", response_class=HTMLResponse, response_model=None)
+def dashboard() -> Response:
+    """Возвращает React-панель для локального оператора."""
+    if WEB_UI_INDEX.is_file():
+        return FileResponse(WEB_UI_INDEX)
+    return HTMLResponse(render_dashboard(state_snapshot(limit=20)))
 
 
-@app.get("/jobs/{job_id}", response_class=HTMLResponse)
-def job_log_page(job_id: int) -> str:
-    """Возвращает HTML-страницу live log одной local job."""
+@app.get("/jobs/{job_id}", response_class=HTMLResponse, response_model=None)
+def job_log_page(job_id: int) -> Response:
+    """Возвращает React-страницу live log одной local job."""
     job = _job_read_model_from_state(job_id)
     if job is None:
         raise HTTPException(
             status_code=404, detail=f"Local job not found: id={job_id}"
         )
-    return render_job_log_page(dto_dump(JobDto.model_validate(job)))
+    if WEB_UI_INDEX.is_file():
+        return FileResponse(WEB_UI_INDEX)
+    return HTMLResponse(
+        render_job_log_page(dto_dump(JobDto.model_validate(job)))
+    )
 
 
 def render_dashboard(snapshot: dict) -> str:

@@ -1,7 +1,7 @@
-"""Тесты FastAPI dashboard/API только для чтения поверх локальной базы состояния.
+"""Тесты FastAPI dashboard/API поверх локальной базы состояния.
 
-Модуль проверяет, что web слой читает ту же SQLite-базу, что и CLI, и не имеет
-собственной модели состояния.
+Модуль проверяет, что web слой читает ту же SQLite-базу, что и CLI, и создает
+локальные jobs через общий API без собственной модели состояния.
 """
 
 import os
@@ -23,6 +23,10 @@ FAILED_BUILD_VERSION = "1.2.5"
 TEST_BACKEND_COMMIT = "abc123"
 TEST_FRONTEND_COMMIT = "def456"
 TEST_EXTERNAL_ID = "REQ-123"
+REACT_INDEX_HTML = (
+    '<title>simple-deploy</title><div id="root"></div>'
+    '<script src="/assets/app.js"></script>'
+)
 
 sys.path.insert(0, str(TOOLS_CI_ROOT))
 
@@ -39,7 +43,15 @@ from simple_deploy.release.state import (
     update_external_request_status,
     upsert_contour_state,
 )
+import simple_deploy.web.app as web_app
 from simple_deploy.web.app import app
+
+
+def write_react_index_fixture(directory: str) -> Path:
+    """Создает минимальную React shell fixture для HTML routes."""
+    web_index = Path(directory) / "index.html"
+    web_index.write_text(REACT_INDEX_HTML, encoding="utf-8")
+    return web_index
 
 
 class WebAppTests(unittest.TestCase):
@@ -108,33 +120,50 @@ class WebAppTests(unittest.TestCase):
                 )
 
             with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
-                client = TestClient(app)
-                health_response = client.get("/api/health")
-                state_response = client.get("/api/state")
-                releases_response = client.get("/api/releases")
-                jobs_response = client.get("/api/jobs")
-                created_job_response = client.post(
-                    "/api/jobs",
-                    json={
-                        "kind": "build",
-                        "payload": {
-                            "env_file": str(TOOLS_CI_ROOT / ".env"),
-                            "secrets_file": str(
-                                TOOLS_CI_ROOT / "local.secrets.env"
-                            ),
-                            "timeout": 77,
-                            "skip_data_sql_artifacts": True,
-                        },
-                    },
-                )
-                requests_response = client.get("/api/requests")
-                dashboard_response = client.get("/")
+                with tempfile.TemporaryDirectory() as web_tmp:
+                    web_index = write_react_index_fixture(web_tmp)
+                    with patch.object(web_app, "WEB_UI_INDEX", web_index):
+                        client = TestClient(app)
+                        health_response = client.get("/api/health")
+                        state_response = client.get("/api/state")
+                        releases_response = client.get("/api/releases")
+                        jobs_response = client.get("/api/jobs")
+                        created_job_response = client.post(
+                            "/api/jobs",
+                            json={
+                                "kind": "build",
+                                "payload": {
+                                    "env_file": str(TOOLS_CI_ROOT / ".env"),
+                                    "secrets_file": str(
+                                        TOOLS_CI_ROOT / "local.secrets.env"
+                                    ),
+                                    "timeout": 77,
+                                    "skip_data_sql_artifacts": True,
+                                },
+                            },
+                        )
+                        created_deploy_job_response = client.post(
+                            "/api/jobs",
+                            json={
+                                "kind": "deploy",
+                                "payload": {
+                                    "contour": "dev",
+                                    "build_version": "",
+                                    "latest": True,
+                                    "include_set_default_sql": False,
+                                    "app_only": False,
+                                },
+                            },
+                        )
+                        requests_response = client.get("/api/requests")
+                        dashboard_response = client.get("/")
 
         self.assertEqual(health_response.status_code, 200)
         self.assertEqual(state_response.status_code, 200)
         self.assertEqual(releases_response.status_code, 200)
         self.assertEqual(jobs_response.status_code, 200)
         self.assertEqual(created_job_response.status_code, 201)
+        self.assertEqual(created_deploy_job_response.status_code, 201)
         self.assertEqual(requests_response.status_code, 200)
         self.assertEqual(dashboard_response.status_code, 200)
         self.assertEqual(health_response.json(), {"status": "ok"})
@@ -190,11 +219,14 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(created_job["kind"], "build")
         self.assertEqual(created_job["status"], "queued")
         self.assertIn("skip_data_sql_artifacts", created_job["payload_json"])
+        created_deploy_job = created_deploy_job_response.json()
+        self.assertEqual(created_deploy_job["kind"], "deploy")
+        self.assertEqual(created_deploy_job["contour"], "dev")
+        self.assertIn("include_set_default_sql", created_deploy_job["payload_json"])
         self.assertEqual(requests_response.json(), state_json["external_requests"])
         self.assertIn("simple-deploy", dashboard_response.text)
-        self.assertIn(TEST_BUILD_VERSION, dashboard_response.text)
-        self.assertIn('data-job-status="cancelled"', dashboard_response.text)
-        self.assertIn("/jobs/", dashboard_response.text)
+        self.assertIn('id="root"', dashboard_response.text)
+        self.assertIn("/assets/", dashboard_response.text)
 
     def test_job_websocket_streams_log_file_for_terminal_job(self):
         """WebSocket читает статус из SQLite и строки из job log file."""
@@ -215,15 +247,18 @@ class WebAppTests(unittest.TestCase):
                 mark_job_finished(connection, job_id, "success")
 
             with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
-                client = TestClient(app)
-                page_response = client.get(f"/jobs/{job_id}")
-                missing_page_response = client.get("/jobs/999999")
-                with client.websocket_connect(
-                    f"/ws/jobs/{job_id}?poll_interval=0.1"
-                ) as websocket:
-                    snapshot = websocket.receive_json()
-                    log_chunk = websocket.receive_json()
-                    done = websocket.receive_json()
+                with tempfile.TemporaryDirectory() as web_tmp:
+                    web_index = write_react_index_fixture(web_tmp)
+                    with patch.object(web_app, "WEB_UI_INDEX", web_index):
+                        client = TestClient(app)
+                        page_response = client.get(f"/jobs/{job_id}")
+                        missing_page_response = client.get("/jobs/999999")
+                        with client.websocket_connect(
+                            f"/ws/jobs/{job_id}?poll_interval=0.1"
+                        ) as websocket:
+                            snapshot = websocket.receive_json()
+                            log_chunk = websocket.receive_json()
+                            done = websocket.receive_json()
 
         self.assertEqual(snapshot["type"], "snapshot")
         self.assertEqual(snapshot["job"]["id"], job_id)
@@ -232,8 +267,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("WORKER finished job", log_chunk["text"])
         self.assertEqual(done, {"type": "done", "status": "success"})
         self.assertEqual(page_response.status_code, 200)
-        self.assertIn(f"Job {job_id}", page_response.text)
-        self.assertIn(f"/ws/jobs/{job_id}", page_response.text)
+        self.assertIn('id="root"', page_response.text)
+        self.assertIn("/assets/", page_response.text)
         self.assertEqual(missing_page_response.status_code, 404)
 
     def test_job_api_updates_lifecycle_status_via_patch(self):

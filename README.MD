@@ -29,16 +29,20 @@
 Команда `simple-deploy.exe` создается при первичной настройке из
 `tools-ci/README.MD` через editable install проекта.
 
-Web/API v1 для просмотра локального состояния запускается отдельно и не заменяет CLI:
+Web/API v1 запускается отдельно и не заменяет CLI. CLI остается основным и
+аварийным путем, а web-панель дает операторский интерфейс поверх того же
+локального состояния и API:
 
 ```bash
 .venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
 ```
 
 Панель доступна на `http://127.0.0.1:8000/`, API состояния - на
-`http://127.0.0.1:8000/api/state`. В текущем срезе это read-only dashboard:
-он показывает контуры, релизы, build/deploy attempts, локальные jobs и внешние
-заявки TEST/PROD.
+`http://127.0.0.1:8000/api/state`. React UI показывает контуры, релизы,
+build/deploy attempts, локальные jobs и внешние заявки TEST/PROD, а также
+создает локальные jobs через API. Исходники UI лежат в `tools-ci/web-ui`; после
+изменений фронтенда выполните `npm install && npm run build` из этого каталога,
+чтобы FastAPI начал отдавать свежую сборку.
 
 Практическая настройка рабочей машины, `tools-ci/.env`,
 `tools-ci/local.secrets.env`, `tools-ci/windows_pipeline.local.json`,
@@ -61,8 +65,11 @@ backend commit релиза.
 - frontend runtime archive;
 - `release_manifest.json` с версиями, commit SHA и SQL metadata;
 - schema SQL-архивы `db_schema_dev_*`, `db_schema_test_*`, `db_schema_prod_*`;
-- data SQL-архивы `db_insert_*` и `db_update_*`, если build запущен с
-  `--include-data-sql`.
+- data SQL-архивы `db_insert_*`, `db_update_sequential_*`,
+  `db_update_parallel_*`, `db_set_default_sequential_*` и
+  `db_set_default_parallel_*`. Build создает их по умолчанию; schema-only режим
+  включается через `--skip-data-sql-artifacts`, а старый `--include-data-sql`
+  оставлен только для совместимости.
 
 Schema SQL генерируется offline по Git-диапазону backend source repo. Он не
 подтверждает состояние реальной БД сам по себе: фактом применения считается
@@ -129,8 +136,8 @@ SQL-диапазон.
 
 ## Структура репозитория
 
-- `tools-ci/` - основной Windows/Python runner, builder, настройки и
-  вспомогательные tools.
+- `tools-ci/` - основной Windows/Python runner, builder, React web UI, настройки
+  и вспомогательные tools.
 - `legacy/ansible-ci/` - legacy Ansible/WSL flow.
 - `instructions/` - ручные операционные процедуры и правила подготовки SQL.
 - `docs/` - диаграммы и дополнительные описания.

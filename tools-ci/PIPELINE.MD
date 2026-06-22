@@ -27,8 +27,9 @@ attempts и deploy attempts: успешные build попадают в `release
 сдвига baseline.
 
 В этой же SQLite-базе есть таблицы `local_jobs` и `external_requests`.
-Они предназначены для web/API v1: локальные jobs будут отражать долгие операции,
-а external requests - заявки TEST/PROD и ручную фиксацию внешнего процесса.
+Они используются web/API v1: локальные jobs отражают queued/running/terminal
+операции, созданные через API или CLI-совместимый runner, а external requests -
+заявки TEST/PROD и ручную фиксацию внешнего процесса.
 
 ## Команды оператора
 

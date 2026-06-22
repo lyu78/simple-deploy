@@ -25,7 +25,7 @@ title simple-deploy: передача релиза на TEST и PROD
 actor "Оператор" as operator
 
 box "Рабочая Windows-машина" #F7F7F7
-participant "windows_pipeline.py\nCLI runner" as runner
+participant ".venv/Scripts/simple-deploy.exe\nconsole script + CLI adapter" as runner
 database "SQLite state\nlocal_state/simple_deploy.sqlite3" as state
 end box
 
@@ -34,7 +34,7 @@ collections "release directory\nRELEASE_ROOT_WINDOWS/<build_version>" as release
 participant "release_manifest.json\nbackend commit + SQL ranges" as manifest
 collections "backend/frontend tar.gz" as app_artifacts
 collections "db_schema_test.tar.gz\ndb_schema_prod.tar.gz" as schema_artifacts
-collections "db_insert/db_update tar.gz" as data_artifacts
+collections "db_insert/db_update/db_set_default tar.gz" as data_artifacts
 end box
 
 box "TEST контур" #F2ECFF
@@ -63,7 +63,7 @@ runner -> state: сохранить PROD last_success_release и last_success_ba
 
 operator -> release_dir: выбрать собранный release R1
 operator -> schema_artifacts: взять db_schema_test tar.gz
-operator -> data_artifacts: при необходимости взять db_insert/db_update
+operator -> data_artifacts: при необходимости взять db_insert/db_update/db_set_default
 operator -> app_artifacts: взять backend/frontend artifacts
 operator -> test_process: передать release artifacts
 
@@ -86,7 +86,7 @@ end
 
 operator -> release_dir: выбрать утвержденный release R1
 operator -> schema_artifacts: взять db_schema_prod tar.gz
-operator -> data_artifacts: при необходимости взять db_insert/db_update
+operator -> data_artifacts: при необходимости взять db_insert/db_update/db_set_default
 operator -> app_artifacts: взять backend/frontend artifacts
 operator -> prod_process: передать release artifacts
 
