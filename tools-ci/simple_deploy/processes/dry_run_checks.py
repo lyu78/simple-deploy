@@ -22,6 +22,7 @@ from simple_deploy.core.email import (
     normalize_email_list,
 )
 from simple_deploy.core.env import require_value
+from simple_deploy.core.job_logging import job_log
 from simple_deploy.core.paths import DEFAULT_TIMEOUT, ROOT
 from simple_deploy.core.ssh import resolve_ssh_key_path, sh_quote, ssh_command
 from simple_deploy.release.artifacts import DEFAULT_MAINTENANCE_STUB_ARCHIVE
@@ -91,39 +92,39 @@ class Reporter:
     def pass_(self, name: str, detail: str = "") -> None:
         """Фиксирует успешную dry-run проверку."""
         suffix = f": {detail}" if detail else ""
-        print(f"DRY-RUN PASS {name}{suffix}")
+        job_log(f"DRY-RUN PASS {name}{suffix}")
 
     def fail(self, name: str, detail: str) -> None:
         """Фиксирует проваленную dry-run проверку."""
-        print(f"DRY-RUN FAIL {name}: {detail}")
+        job_log(f"DRY-RUN FAIL {name}: {detail}")
         self.issues.append(f"{name}: {detail}")
 
     def warn(self, name: str, detail: str) -> None:
         """Фиксирует предупреждение dry-run без провала результата."""
-        print(f"DRY-RUN WARN {name}: {detail}")
+        job_log(f"DRY-RUN WARN {name}: {detail}")
         self.warnings.append(f"{name}: {detail}")
 
     def skip(self, name: str, reason: str) -> None:
         """Фиксирует пропущенную dry-run проверку с причиной."""
-        print(f"DRY-RUN SKIP {name}: {reason}")
+        job_log(f"DRY-RUN SKIP {name}: {reason}")
         self.skipped.append(f"{name}: {reason}")
 
     def result(self) -> bool:
         """Печатает итог dry-run и возвращает True, если ошибок не было."""
         status = "FAIL" if self.issues else "PASS"
-        print(f"DRY RUN RESULT: {status}")
+        job_log(f"DRY RUN RESULT: {status}")
         if self.skipped:
-            print("skipped_checks:")
+            job_log("skipped_checks:")
             for skipped in self.skipped:
-                print(f"- {skipped}")
+                job_log(f"- {skipped}")
         if self.warnings:
-            print("warnings:")
+            job_log("warnings:")
             for warning in self.warnings:
-                print(f"- {warning}")
+                job_log(f"- {warning}")
         if self.issues:
-            print("failed_checks:")
+            job_log("failed_checks:")
             for issue in self.issues:
-                print(f"- {issue}")
+                job_log(f"- {issue}")
         return not self.issues
 
 

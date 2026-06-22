@@ -1201,6 +1201,22 @@ SQLite-backed jobs без введения отдельного task framework:
   dry-run `Reporter`, logging fallback helpers и строка `RUN LOG ...`;
 - focused tests вокруг deploy/worker/build и полный `pytest` остались зелеными.
 
+### Статус тридцатого среза шага 6
+
+Тридцатый безопасный срез перевел dry-run summary/reporting на общий job
+logger:
+
+- `processes.dry_run_checks.Reporter` пишет `DRY-RUN PASS/FAIL/WARN/SKIP`,
+  `DRY RUN RESULT`, `skipped_checks`, `warnings` и `failed_checks` через
+  `job_log()`;
+- формат строк dry-run отчета не менялся, менялся только канал вывода;
+- все dry-run проверки продолжают работать через тот же `Reporter` API;
+- в `tools-ci/simple_deploy` остались только намеренные прямые `print()`:
+  CLI error fallback, fallback helpers в `core.commands`/`core.job_logging`,
+  строка `RUN LOG ...` при открытии log file и один строковый литерал команды
+  `print(os.environ['DJANGO_SETTINGS_MODULE'])`;
+- focused tests вокруг dry-run/worker и полный `pytest` остались зелеными.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:
