@@ -13,12 +13,16 @@ artifacts в отдельные директории:
 rm -rf /tmp/data-migrations/manual
 mkdir -p /tmp/data-migrations/manual/db_insert
 mkdir -p /tmp/data-migrations/manual/db_update_parallel
+mkdir -p /tmp/data-migrations/manual/db_set_default_parallel
 
 tar -xzf db_insert_r_<release>-c_<commit>.tar.gz \
   -C /tmp/data-migrations/manual/db_insert
 
 tar -xzf db_update_parallel_r_<release>-c_<commit>.tar.gz \
   -C /tmp/data-migrations/manual/db_update_parallel
+
+tar -xzf db_set_default_parallel_r_<release>-c_<commit>.tar.gz \
+  -C /tmp/data-migrations/manual/db_set_default_parallel
 ```
 
 ## INSERT
@@ -39,10 +43,10 @@ psql -p 10265 -U pgadmin -d application_test \
 `27 секунд`, то есть меньше минуты. Фактическое время смотрите по timestamps
 запуска и завершения команды.
 
-## UPDATE Parallel Without Defaults
+## UPDATE Parallel
 
-`run_all_update_parallel_*.sh` можно запускать вручную без применения
-`kind=set_default`. Defaults выключены по умолчанию:
+`run_all_update_parallel_*.sh` содержит только `kind=update`, поэтому его можно
+запускать вручную без риска применить defaults:
 
 ```bash
 cd /tmp/data-migrations/manual/db_update_parallel
@@ -50,7 +54,6 @@ PGPORT=10265 \
 PGUSER=pgadmin \
 PGDATABASE=application_test \
 PSQL_BIN=psql \
-SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT=0 \
 SIMPLE_DEPLOY_UPDATE_MAX_WORKERS=8 \
 SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS=30 \
 bash "$(ls -1 run_all_update_parallel_*.sh | tail -n 1)"
@@ -77,10 +80,24 @@ bash "$(ls -1 run_all_update_parallel_*.sh | tail -n 1)"
 админского запуска `pg_dump -p 10265 -U pgadmin -d application_test`, где доступ
 настроен на стороне DB VM.
 
-Не задавайте `SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT=1`, если defaults применять не
-нужно. В текущей реализации ручной запуск `run_all_update_sequential_*.sql`
-через `psql -f` не является безопасной заменой parallel runner-а без defaults:
-sequential SQL содержит `set_default` без runtime-фильтра.
+## SET_DEFAULT Parallel
+
+Defaults запускайте только если они действительно нужны для релиза:
+
+```bash
+cd /tmp/data-migrations/manual/db_set_default_parallel
+PGPORT=10265 \
+PGUSER=pgadmin \
+PGDATABASE=application_test \
+PSQL_BIN=psql \
+SIMPLE_DEPLOY_UPDATE_MAX_WORKERS=8 \
+SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS=30 \
+bash "$(ls -1 run_all_set_default_parallel_*.sh | tail -n 1)"
+```
+
+Ручной sequential fallback также разделен: `run_all_update_sequential_*.sql`
+содержит только update, а `run_all_set_default_sequential_*.sql` содержит
+только defaults.
 
 ## Send Logs
 
@@ -92,6 +109,7 @@ cd /tmp/data-migrations/manual
 
 echo "INSERT log: $(pwd)/db_insert/insert.log"
 echo "UPDATE logs: $(pwd)/db_update_parallel/logs/update_parallel/"
+echo "SET_DEFAULT logs: $(pwd)/db_set_default_parallel/logs/set_default_parallel/"
 ```
 
 `insert.log` явно создается командой `touch "$(pwd)/insert.log"` перед запуском
@@ -100,9 +118,10 @@ INSERT, а затем перезаписывается редиректом `> "
 пользователь не может создать или перезаписать файл лога в рабочей директории.
 Запускайте команды из директории, созданной этим же пользователем, или удалите
 старую рабочую директорию перед распаковкой.
-Директории `logs/update_parallel/<run_id>/`, `scripts/` и `results/` создаются
-самим `run_all_update_parallel_*.sh`; заранее создавать их не нужно.
+Директории `logs/update_parallel/<run_id>/`,
+`logs/set_default_parallel/<run_id>/`, `scripts/` и `results/` создаются
+самими parallel runner-ами; заранее создавать их не нужно.
 
-Передайте все содержимое директории UPDATE logs. Внутри каждого запуска лежат
-`summary.log`, `script_timings.log` и полные логи отдельных SQL-скриптов в
-`scripts/`.
+Передайте все содержимое директории UPDATE logs, а также SET_DEFAULT logs, если
+этот шаг запускался. Внутри каждого запуска лежат `summary.log`,
+`script_timings.log` и полные логи отдельных SQL-скриптов в `scripts/`.

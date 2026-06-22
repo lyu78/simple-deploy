@@ -96,11 +96,17 @@ TEST и PROD могут продвигаться внешним или ручн�
 - `db_insert_r_<release>-c_<commit>.tar.gz` - data SQL-архив insert-миграций с
   `run_all_insert_<commit>.sql` и SQL-файлами, на которые он ссылается.
 - `db_update_sequential_r_<release>-c_<commit>.tar.gz` - аварийный data SQL-архив
-  последовательных update/set_default-миграций с
+  последовательных update-миграций с
   `run_all_update_sequential_<commit>.sql` и SQL-файлами, на которые он ссылается.
 - `db_update_parallel_r_<release>-c_<commit>.tar.gz` - data SQL-архив
-  параллельных wave update/set_default-миграций с
+  параллельных wave update-миграций с
   `run_all_update_parallel_<commit>.sh` и SQL-файлами, которые он запускает.
+- `db_set_default_sequential_r_<release>-c_<commit>.tar.gz` - аварийный data
+  SQL-архив последовательных set_default-миграций с
+  `run_all_set_default_sequential_<commit>.sql`.
+- `db_set_default_parallel_r_<release>-c_<commit>.tar.gz` - data SQL-архив
+  параллельных wave set_default-миграций с
+  `run_all_set_default_parallel_<commit>.sh`.
 - `success` - релиз применен и baseline контура можно двигать вперед.
 - `failed` - попытка зафиксирована, baseline остается прежним.
 

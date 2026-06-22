@@ -1234,21 +1234,53 @@ logger:
   доступен, поэтому UI дополнительно проверен HTTP-rendering smoke check-ом
   на локальном uvicorn.
 
-### Отложенное улучшение: data SQL set_default artifacts
+### Текущая точка фиксации после шага 6
 
-Текущая реализация генерирует `kind=set_default` внутри update artifacts:
+На 2026-06-22 рабочая ветка `refactor/create-deploy-toolkit` зафиксирована
+серией атомарных коммитов:
 
-- `run_all_update_parallel_*.sh` содержит `set_default` задачи, но пропускает
-  их по умолчанию и включает только при `SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT=1`;
-- `run_all_update_sequential_*.sql` содержит `set_default` без runtime-фильтра,
-  поэтому ручной emergency fallback через `psql -f` применит defaults.
+- `1365658 Refactor local jobs and job logging`;
+- `6a7de54 Route deploy progress through job logger`;
+- `179fefa Route dry-run reporter through job logger`;
+- `ac2fcfd Add local jobs operator controls`.
 
-Это рабочее, но слишком неявное поведение. Целевое улучшение: разделить
-`update` и `set_default` на уровне artifacts и deploy chain:
+Текущий устойчивый контракт:
 
-- update artifacts должны содержать только `kind=update`;
-- set_default должен собираться в отдельные artifacts/entrypoints;
-- `--include-set-default-sql` должен добавлять отдельный set_default step в
-  цепочку выполнения, а не менять поведение update runner-а через env;
-- ручной запуск update runner-а должен быть безопасен без знания внутреннего
-  фильтра set_default.
+- CLI entrypoint остается `.venv/Scripts/simple-deploy.exe`;
+- web/API создает jobs через `POST /api/jobs`, управляет lifecycle через
+  `PATCH /api/jobs/{id}`, читает логи через `/ws/jobs/{id}` и HTML
+  `/jobs/{id}`;
+- долгие операции выполняет отдельный `simple-deploy worker`, а не HTTP request;
+- operator-facing вывод основных build/deploy/dry-run процессов идет через
+  `job_log()` и попадает в job log file при worker execution;
+- полный regression suite: `182 passed`.
+
+Следующий рекомендуемый срез выполнен: `update` и `set_default` data SQL
+разделены на уровне artifacts/deploy chain. Расширение dashboard для создания
+jobs из формы остается следующим UI-срезом после стабилизации SQL artifact
+contract.
+
+### Статус тридцать второго среза шага 6
+
+Тридцать второй безопасный срез разделил data SQL update и set_default
+artifacts:
+
+- `run_all_update_sequential_*.sql` и `run_all_update_parallel_*.sh` содержат
+  только `kind=update`;
+- `run_all_set_default_sequential_*.sql` и
+  `run_all_set_default_parallel_*.sh` содержат только `kind=set_default`;
+- builder упаковывает отдельные archives `db_set_default_sequential_*` и
+  `db_set_default_parallel_*`, а manifest получил keys
+  `db_set_default_sequential_archive` и `db_set_default_parallel_archive`;
+- `--include-set-default-sql` добавляет отдельный set_default deploy step после
+  update, а не меняет поведение update runner-а через env;
+- `SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT` удален из update runner contract;
+- preflight cleanup останавливает хвосты и update, и set_default parallel
+  runner-ов под общим `PGAPPNAME=simple-deploy-data-update`;
+- manual update runner теперь безопасен без знания внутреннего defaults-фильтра.
+- проверка после среза: focused `pytest` по builder/deploy contracts и полный
+  `pytest` - `182 passed`; `git diff --check` - без whitespace errors, только
+  стандартные CRLF warnings.
+
+Следующий рекомендуемый срез: расширить operator dashboard формой создания
+local jobs поверх уже стабилизированного REST/job worker контракта.

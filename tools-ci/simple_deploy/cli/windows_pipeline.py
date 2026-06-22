@@ -173,7 +173,7 @@ def parse_args() -> argparse.Namespace:
         "--include-set-default-sql",
         action="store_true",
         help=(
-            "Include kind=set_default data SQL in the update runner. "
+            "Run the separate kind=set_default data SQL step. "
             "Disabled by default."
         ),
     )
@@ -187,7 +187,7 @@ def parse_args() -> argparse.Namespace:
         "--include-set-default-sql",
         action="store_true",
         help=(
-            "Include kind=set_default data SQL in the update runner. "
+            "Run the separate kind=set_default data SQL step. "
             "Disabled by default."
         ),
     )

@@ -43,6 +43,12 @@ REMOTE_DB_INSERT_ARCHIVE = f"{REMOTE_RELEASE_ROOT}/db_insert.tar.gz"
 REMOTE_DB_INSERT_DIR = f"{REMOTE_RELEASE_ROOT}/db_insert"
 REMOTE_DB_UPDATE_PARALLEL_ARCHIVE = f"{REMOTE_RELEASE_ROOT}/db_update_parallel.tar.gz"
 REMOTE_DB_UPDATE_PARALLEL_DIR = f"{REMOTE_RELEASE_ROOT}/db_update_parallel"
+REMOTE_DB_SET_DEFAULT_PARALLEL_ARCHIVE = (
+    f"{REMOTE_RELEASE_ROOT}/db_set_default_parallel.tar.gz"
+)
+REMOTE_DB_SET_DEFAULT_PARALLEL_DIR = (
+    f"{REMOTE_RELEASE_ROOT}/db_set_default_parallel"
+)
 
 APP_VM_USER = "deploy-simple"
 APP_VM_HOST = "app.example.local"
@@ -94,6 +100,7 @@ from simple_deploy.processes.app_deploy import (  # noqa: E402
 from simple_deploy.processes.data_sql import (  # noqa: E402
     cleanup_db_data_update_leftovers,
     run_db_data_insert,
+    run_db_data_set_default_parallel,
     run_db_data_update_parallel,
     run_db_maintenance,
     run_db_schema_summary,
@@ -245,14 +252,18 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             self.assertEqual(artifact.entrypoint_dir, ".")
             self.assertEqual(artifact.entrypoint_pattern, "summary_sql_dev_*.sql")
 
-    def test_resolve_db_data_artifact_insert_and_parallel_update(self):
+    def test_resolve_db_data_artifact_insert_update_and_set_default(self):
         """Фиксирует remote paths и entrypoint patterns для data SQL архивов."""
         with tempfile.TemporaryDirectory() as tmp:
             release_dir = Path(tmp)
             insert_path = release_dir / f"db_insert_r_{TEST_BUILD_VERSION}-c_{TEST_BACKEND_COMMIT}.tar.gz"
             update_path = release_dir / f"db_update_parallel_r_{TEST_BUILD_VERSION}-c_{TEST_BACKEND_COMMIT}.tar.gz"
+            set_default_path = release_dir / (
+                f"db_set_default_parallel_r_{TEST_BUILD_VERSION}-c_{TEST_BACKEND_COMMIT}.tar.gz"
+            )
             insert_path.write_text("", encoding="utf-8")
             update_path.write_text("", encoding="utf-8")
+            set_default_path.write_text("", encoding="utf-8")
 
             insert = resolve_db_data_artifact({"REMOTE_TMP_ROOT": REMOTE_TMP_ROOT}, TEST_BUILD_VERSION, release_dir, "insert")
             update = resolve_db_data_artifact(
@@ -260,6 +271,12 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
                 TEST_BUILD_VERSION,
                 release_dir,
                 "update_parallel",
+            )
+            set_default = resolve_db_data_artifact(
+                {"REMOTE_TMP_ROOT": REMOTE_TMP_ROOT},
+                TEST_BUILD_VERSION,
+                release_dir,
+                "set_default_parallel",
             )
 
         self.assertEqual(insert.local_path, insert_path)
@@ -270,6 +287,19 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertEqual(update.remote_archive, REMOTE_DB_UPDATE_PARALLEL_ARCHIVE)
         self.assertEqual(update.remote_extract_path, REMOTE_DB_UPDATE_PARALLEL_DIR)
         self.assertEqual(update.entrypoint_pattern, "run_all_update_parallel_*.sh")
+        self.assertEqual(set_default.local_path, set_default_path)
+        self.assertEqual(
+            set_default.remote_archive,
+            REMOTE_DB_SET_DEFAULT_PARALLEL_ARCHIVE,
+        )
+        self.assertEqual(
+            set_default.remote_extract_path,
+            REMOTE_DB_SET_DEFAULT_PARALLEL_DIR,
+        )
+        self.assertEqual(
+            set_default.entrypoint_pattern,
+            "run_all_set_default_parallel_*.sh",
+        )
 
     def test_resolve_maintenance_stub_uses_fixed_archive_path(self):
         """Проверяет, что maintenance stub берется из фиксированного локального архива."""
@@ -442,7 +472,10 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         process_call = ssh_mock.call_args_list[0]
         self.assertEqual(process_call.args[3], "bash -s")
         self.assertIn("command -v pgrep", process_call.kwargs["input_text"])
-        self.assertIn("run_all_update_parallel_", process_call.kwargs["input_text"])
+        self.assertIn(
+            "run_all_(update|set_default)_parallel_",
+            process_call.kwargs["input_text"],
+        )
         self.assertIn("kill -TERM", process_call.kwargs["input_text"])
         self.assertIn("kill -KILL", process_call.kwargs["input_text"])
         self.assertEqual(process_call.kwargs["timeout"], 90)
@@ -497,20 +530,20 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         self.assertIn("PSQL_BIN='psql'", command)
         self.assertIn("SIMPLE_DEPLOY_UPDATE_MAX_WORKERS='4'", command)
         self.assertIn("SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS='15'", command)
-        self.assertIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT='0'", command)
+        self.assertNotIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT", command)
         self.assertIn('bash "$runner"', command)
         self.assertEqual(stream_mock.call_args.kwargs["timeout"], 12345)
         self.assertEqual(stream_mock.call_args.kwargs["mask"], ["secret"])
 
-    def test_run_db_data_update_parallel_can_include_set_default_with_explicit_flag(self):
-        """Фиксирует, что set_default SQL включается только явным флагом deploy."""
+    def test_run_db_data_set_default_parallel_streams_separate_runner(self):
+        """Фиксирует отдельный streaming-запуск set_default runner-а."""
         artifact = DbSqlArtifact(
-            name="db_update_parallel",
-            local_path=Path("db_update_parallel.tar.gz"),
-            remote_archive=REMOTE_DB_UPDATE_PARALLEL_ARCHIVE,
-            remote_extract_path=REMOTE_DB_UPDATE_PARALLEL_DIR,
+            name="db_set_default_parallel",
+            local_path=Path("db_set_default_parallel.tar.gz"),
+            remote_archive=REMOTE_DB_SET_DEFAULT_PARALLEL_ARCHIVE,
+            remote_extract_path=REMOTE_DB_SET_DEFAULT_PARALLEL_DIR,
             entrypoint_dir=".",
-            entrypoint_pattern="run_all_update_parallel_*.sh",
+            entrypoint_pattern="run_all_set_default_parallel_*.sh",
         )
         env = {
             "DB_VM_USER": DB_VM_USER,
@@ -523,10 +556,15 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
 
         with patch("simple_deploy.processes.data_sql.upload_unpack_db_sql_artifact"):
             with patch("simple_deploy.processes.data_sql.stream_ssh_command", return_value=CommandResult(0, "", "")) as stream_mock:
-                run_db_data_update_parallel(env, {}, artifact, include_set_default_sql=True)
+                run_db_data_set_default_parallel(env, {}, artifact)
 
         command = stream_mock.call_args.args[3]
-        self.assertIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT='1'", command)
+        self.assertIn("run_all_set_default_parallel_*.sh", command)
+        self.assertIn("PGAPPNAME='simple-deploy-data-update'", command)
+        self.assertIn("SIMPLE_DEPLOY_UPDATE_MAX_WORKERS='8'", command)
+        self.assertIn("SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS='30'", command)
+        self.assertNotIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT", command)
+        self.assertIn('bash "$runner"', command)
 
     def test_run_db_maintenance_uses_configured_timeout(self):
         """Проверяет timeout для inline maintenance SQL на выбранной фазе."""
@@ -1231,6 +1269,9 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             db_schema_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_schema_summary"))
             db_insert_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_insert"))
             db_update_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_update_parallel"))
+            db_set_default_mock = stack.enter_context(
+                patch("simple_deploy.processes.deploy.run_db_data_set_default_parallel")
+            )
             stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance"))
             stack.enter_context(patch("simple_deploy.processes.deploy.management_commands", return_value=[]))
             mark_mock = stack.enter_context(patch("simple_deploy.processes.deploy.mark_contour_applied"))
@@ -1243,6 +1284,7 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         db_schema_mock.assert_called_once_with(env, runtime, db_schema)
         db_insert_mock.assert_not_called()
         db_update_mock.assert_not_called()
+        db_set_default_mock.assert_not_called()
         upload_mock.assert_called_once_with(env, [backend, frontend], REMOTE_RELEASE_ROOT)
         mark_mock.assert_called_once_with("dev", TEST_BUILD_VERSION, release_dir)
 
@@ -1282,6 +1324,9 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             stack.enter_context(patch("simple_deploy.processes.deploy.run_db_schema_summary"))
             db_insert_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_insert"))
             db_update_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_update_parallel"))
+            db_set_default_mock = stack.enter_context(
+                patch("simple_deploy.processes.deploy.run_db_data_set_default_parallel")
+            )
             stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance"))
             stack.enter_context(patch("simple_deploy.processes.deploy.management_commands", return_value=[]))
             stack.enter_context(patch("simple_deploy.processes.deploy.mark_contour_applied"))
@@ -1294,7 +1339,84 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         upload_mock.assert_called_once_with(env, [backend, frontend], REMOTE_RELEASE_ROOT)
         self.assertNotIn("maintenance_stub", [call.args[1].name for call in unpack_mock.call_args_list])
         db_insert_mock.assert_called_once_with(env, runtime, db_insert)
-        db_update_mock.assert_called_once_with(env, runtime, db_update, include_set_default_sql=False)
+        db_update_mock.assert_called_once_with(env, runtime, db_update)
+        db_set_default_mock.assert_not_called()
+
+    def test_deploy_full_runs_set_default_as_separate_step_when_requested(self):
+        """--include-set-default-sql добавляет отдельный set_default step после update."""
+        args = self._deploy_args()
+        args.include_set_default_sql = True
+        env = self._deploy_env()
+        runtime = {
+            "service_steps": [],
+            "healthcheck_enabled": False,
+            "maintenance_stub_enabled": False,
+            "data_sql_enabled": True,
+        }
+        release_dir = Path("releases") / TEST_BUILD_VERSION
+        backend, frontend = self._app_artifacts()
+        db_schema = DbSqlArtifact("db_schema_dev", Path("schema.tar.gz"), "", "", ".", "summary_sql_dev_*.sql")
+        db_insert = DbSqlArtifact("db_insert", Path("insert.tar.gz"), "", "", ".", "run_all_insert_*.sql")
+        db_update = DbSqlArtifact("db_update_parallel", Path("update.tar.gz"), "", "", ".", "run_all_update_parallel_*.sh")
+        db_set_default = DbSqlArtifact(
+            "db_set_default_parallel",
+            Path("set_default.tar.gz"),
+            "",
+            "",
+            ".",
+            "run_all_set_default_parallel_*.sh",
+        )
+        events = []
+
+        def data_artifact_side_effect(_env, _build_version, _release_dir, kind):
+            return {
+                "insert": db_insert,
+                "update_parallel": db_update,
+                "set_default_parallel": db_set_default,
+            }[kind]
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_env", return_value=env))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.cleanup_db_data_update_leftovers"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_schema_artifact", return_value=db_schema))
+            resolve_data_mock = stack.enter_context(
+                patch("simple_deploy.processes.deploy.resolve_db_data_artifact", side_effect=data_artifact_side_effect)
+            )
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_maintenance_stub_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.upload_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.backup_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_service_steps"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.unpack_app_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_schema_summary"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_insert"))
+            stack.enter_context(
+                patch(
+                    "simple_deploy.processes.deploy.run_db_data_update_parallel",
+                    side_effect=lambda *_args: events.append("update"),
+                )
+            )
+            set_default_mock = stack.enter_context(
+                patch(
+                    "simple_deploy.processes.deploy.run_db_data_set_default_parallel",
+                    side_effect=lambda *_args: events.append("set_default"),
+                )
+            )
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.management_commands", return_value=[]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.mark_contour_applied"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.send_outlook_success_email"))
+
+            self.assertEqual(deploy(args), 0)
+
+        self.assertEqual(
+            [call.args[3] for call in resolve_data_mock.call_args_list],
+            ["insert", "update_parallel", "set_default_parallel"],
+        )
+        self.assertEqual(events, ["update", "set_default"])
+        set_default_mock.assert_called_once_with(env, runtime, db_set_default)
 
     def test_successful_deploy_marks_state_after_healthcheck_before_email(self):
         """Фиксирует текущий порядок success side effects: healthcheck, mark, email."""

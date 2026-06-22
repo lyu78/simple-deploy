@@ -13,8 +13,9 @@
 ================================================================================
 НАЗНАЧЕНИЕ:
     Автоматически собирает SQL скрипты из директорий миграций в итоговые
-    файлы run_all_insert.sql, run_all_update_sequential.sql
-    и run_all_update_parallel.sh с хэшем коммита в имени.
+    файлы run_all_insert.sql, run_all_update_sequential.sql,
+    run_all_update_parallel.sh, run_all_set_default_sequential.sql
+    и run_all_set_default_parallel.sh с хэшем коммита в имени.
     INSERT скрипты проверяются на идемпотентность.
 
 ================================================================================
@@ -31,14 +32,16 @@
     │   ├── app_ip_subcompany_lti/          # всё -> UPDATE
     │   └── app_ip_subcompany_pnca/         # всё -> UPDATE
     │   ├── run_all_insert_<hash>.sql       # генерируется
-    │   ├── run_all_update_sequential_<hash>.sql # генерируется
-    │   └── run_all_update_parallel_<hash>.sh    # генерируется
+    │   ├── run_all_update_sequential_<hash>.sql      # генерируется
+    │   ├── run_all_update_parallel_<hash>.sh         # генерируется
+    │   ├── run_all_set_default_sequential_<hash>.sql # генерируется
+    │   └── run_all_set_default_parallel_<hash>.sh    # генерируется
 
 ================================================================================
 ПРАВИЛА РАСПРЕДЕЛЕНИЯ СКРИПТОВ:
     - INSERT: скрипты из insert_* директорий + все скрипты из INSERT_DIRS
-    - UPDATE: kind=update и kind=set_default по simple-deploy metadata; set_default
-      пропускается runner-ом без явного SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT=1
+    - UPDATE: только kind=update по simple-deploy metadata
+    - SET_DEFAULT: только kind=set_default по simple-deploy metadata
 
 ================================================================================
 ПРОВЕРКА ИДЕМПОТЕНТНОСТИ (только для INSERT):
@@ -62,10 +65,18 @@
         
     run_all_update_sequential_<hash>.sql:
         - ON_ERROR_STOP = 1  (аварийный строгий fallback)
-        - kind=update и kind=set_default по simple-deploy metadata
+        - только kind=update по simple-deploy metadata
 
     run_all_update_parallel_<hash>.sh:
-        - Волновый runner для kind=update и kind=set_default; set_default off by default
+        - Волновый runner для kind=update
+        - Печатает live-status и timing в терминал, psql output пишет в logs/
+
+    run_all_set_default_sequential_<hash>.sql:
+        - ON_ERROR_STOP = 1  (аварийный строгий fallback)
+        - только kind=set_default по simple-deploy metadata
+
+    run_all_set_default_parallel_<hash>.sh:
+        - Волновый runner для kind=set_default
         - Печатает live-status и timing в терминал, psql output пишет в logs/
 
 ================================================================================
@@ -76,8 +87,11 @@
     # Аварийный fallback для одной DB-сессии/одного ядра
     psql -U username -d database_name -1 -c "SET synchronous_commit = OFF;" -f run_all_update_sequential_<hash>.sql -c "SET synchronous_commit = ON;"
 
-    # Целевой параллельный runner для update; set_default включается явно
+    # Целевой параллельный runner для update
     PGHOST=host PGPORT=5432 PGUSER=username PGDATABASE=database_name PGPASSWORD=password ./run_all_update_parallel_<hash>.sh
+
+    # Отдельный runner для set_default
+    PGHOST=host PGPORT=5432 PGUSER=username PGDATABASE=database_name PGPASSWORD=password ./run_all_set_default_parallel_<hash>.sh
 
 ================================================================================
 ПРИМЕР ИДЕМПОТЕНТНОГО INSERT:
@@ -99,6 +113,8 @@
     ✅ Generated: run_all_insert_a1b2c3d.sql (ON_ERROR_STOP=1)
     ✅ Generated: run_all_update_sequential_a1b2c3d.sql (ON_ERROR_STOP=1)
     ✅ Generated: run_all_update_parallel_a1b2c3d.sh (wave runner, max_workers=8)
+    ✅ Generated: run_all_set_default_sequential_a1b2c3d.sql (ON_ERROR_STOP=1)
+    ✅ Generated: run_all_set_default_parallel_a1b2c3d.sh (wave runner, max_workers=8)
     
     ✅ All INSERT scripts are idempotent. Ready to run.
 
@@ -141,6 +157,8 @@ COMMIT_HASH = get_commit_hash()
 OUTPUT_INSERT = os.path.join(SCRIPT_DIR, f"run_all_insert_{COMMIT_HASH}.sql")
 OUTPUT_UPDATE_SEQUENTIAL = os.path.join(SCRIPT_DIR, f"run_all_update_sequential_{COMMIT_HASH}.sql")
 OUTPUT_UPDATE_PARALLEL = os.path.join(SCRIPT_DIR, f"run_all_update_parallel_{COMMIT_HASH}.sh")
+OUTPUT_SET_DEFAULT_SEQUENTIAL = os.path.join(SCRIPT_DIR, f"run_all_set_default_sequential_{COMMIT_HASH}.sql")
+OUTPUT_SET_DEFAULT_PARALLEL = os.path.join(SCRIPT_DIR, f"run_all_set_default_parallel_{COMMIT_HASH}.sh")
 
 PSQL_SESSION_SETTINGS = [
     "SET synchronous_commit = OFF;",
@@ -167,7 +185,8 @@ PSQL_SEQUENTIAL_SESSION_SETTINGS = [
 ]
 
 SIMPLE_DEPLOY_METADATA_RE = re.compile(r"^\s*--\s*simple-deploy:\s*([^=]+?)\s*=\s*(.*?)\s*$")
-UPDATE_SEQUENTIAL_KINDS = {"update", "set_default"}
+UPDATE_KINDS = {"update"}
+SET_DEFAULT_KINDS = {"set_default"}
 
 # Директории, где ВСЕ скрипты идут в INSERT
 INSERT_DIRS = ["app_ip_subcompany_catalogs"]
@@ -341,10 +360,13 @@ def write_run_all_preamble(out, on_error_stop, session_settings=None):
 def write_run_all_epilogue(out):
     out.write("SET synchronous_commit = ON;\n")
 
-UPDATE_PARALLEL_RUNNER_TEMPLATE = r'''#!/usr/bin/env bash
+PARALLEL_RUNNER_TEMPLATE = r'''#!/usr/bin/env bash
 set -uo pipefail
 
 COMMIT_HASH=__COMMIT_HASH__
+RUNNER_KIND=__RUNNER_KIND__
+RUNNER_TITLE=__RUNNER_TITLE__
+LOG_DIR_NAME=__LOG_DIR_NAME__
 DEFAULT_MAX_WORKERS=8
 DEFAULT_STATUS_INTERVAL_SECONDS=30
 
@@ -356,7 +378,6 @@ PSQL_BIN="${PSQL_BIN:-psql}"
 MAX_WORKERS="${SIMPLE_DEPLOY_UPDATE_MAX_WORKERS:-$DEFAULT_MAX_WORKERS}"
 STATUS_INTERVAL="${SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS:-$DEFAULT_STATUS_INTERVAL_SECONDS}"
 VERBOSE="${SIMPLE_DEPLOY_UPDATE_VERBOSE:-0}"
-INCLUDE_SET_DEFAULT="${SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT:-0}"
 
 RUNNING_PIDS=()
 RUNNING_TASK_IDS=()
@@ -389,22 +410,6 @@ die() {
   exit 2
 }
 
-is_truthy() {
-  case "${1:-}" in
-    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-task_enabled() {
-  local idx="$1"
-  local kind="${TASK_KINDS[$idx]:-update}"
-  if [[ "$kind" == "set_default" ]] && ! is_truthy "$INCLUDE_SET_DEFAULT"; then
-    return 1
-  fi
-  return 0
-}
-
 log_msg() {
   local message="[$(timestamp)] $*"
   echo "$message"
@@ -422,7 +427,6 @@ count_wave_scripts() {
   local count=0
   local idx order
   for idx in "${!TASK_ORDERS[@]}"; do
-    task_enabled "$idx" || continue
     order="${TASK_ORDERS[$idx]}"
     if [[ "$order" == "$target_order" ]]; then
       count=$((count + 1))
@@ -436,7 +440,6 @@ count_waves() {
   local previous=""
   local idx order
   for idx in "${!TASK_ORDERS[@]}"; do
-    task_enabled "$idx" || continue
     order="${TASK_ORDERS[$idx]}"
     if [[ "$order" != "$previous" ]]; then
       count=$((count + 1))
@@ -447,25 +450,7 @@ count_waves() {
 }
 
 count_enabled_scripts() {
-  local count=0
-  local idx
-  for idx in "${!TASK_PATHS[@]}"; do
-    if task_enabled "$idx"; then
-      count=$((count + 1))
-    fi
-  done
-  echo "$count"
-}
-
-count_skipped_set_default_scripts() {
-  local count=0
-  local idx
-  for idx in "${!TASK_KINDS[@]}"; do
-    if [[ "${TASK_KINDS[$idx]}" == "set_default" ]] && ! task_enabled "$idx"; then
-      count=$((count + 1))
-    fi
-  done
-  echo "$count"
+  echo "${#TASK_PATHS[@]}"
 }
 
 print_running_status() {
@@ -648,19 +633,18 @@ main() {
   local total_scripts
   total_scripts="$(count_enabled_scripts)"
   if [[ "$total_scripts" -eq 0 ]]; then
-    die "No update scripts are enabled for this runner"
+    die "No $RUNNER_KIND scripts are enabled for this runner"
   fi
 
   local idx script
   for idx in "${!TASK_PATHS[@]}"; do
-    task_enabled "$idx" || continue
     script="${TASK_PATHS[$idx]}"
     [[ -f "$script" ]] || die "Missing SQL file: $script"
   done
 
   local run_id
   run_id="$(date '+%Y%m%d_%H%M%S')"
-  LOG_ROOT="${SIMPLE_DEPLOY_UPDATE_LOG_DIR:-logs/update_parallel/$run_id}"
+  LOG_ROOT="${SIMPLE_DEPLOY_UPDATE_LOG_DIR:-logs/$LOG_DIR_NAME/$run_id}"
   SCRIPT_LOG_DIR="$LOG_ROOT/scripts"
   RESULT_DIR="$LOG_ROOT/results"
   SUMMARY_LOG="$LOG_ROOT/summary.log"
@@ -671,18 +655,12 @@ main() {
 
   local wave_count
   wave_count="$(count_waves)"
-  local skipped_set_default
-  skipped_set_default="$(count_skipped_set_default_scripts)"
   local run_start
   run_start="$(now_epoch)"
-  log_msg "run_all_update_parallel commit=$COMMIT_HASH max_workers=$MAX_WORKERS status_interval=${STATUS_INTERVAL}s scripts=$total_scripts waves=$wave_count include_set_default=$INCLUDE_SET_DEFAULT log_root=$LOG_ROOT"
-  if [[ "$skipped_set_default" -gt 0 ]]; then
-    log_msg "SKIP set_default scripts=$skipped_set_default; rerun deploy with --include-set-default-sql to include them"
-  fi
+  log_msg "run_all_${RUNNER_KIND}_parallel commit=$COMMIT_HASH max_workers=$MAX_WORKERS status_interval=${STATUS_INTERVAL}s scripts=$total_scripts waves=$wave_count log_root=$LOG_ROOT"
 
   local order
   for idx in "${!TASK_PATHS[@]}"; do
-    task_enabled "$idx" || continue
     order="${TASK_ORDERS[$idx]}"
     if [[ "$order" != "$CURRENT_WAVE" ]]; then
       if [[ -n "$CURRENT_WAVE" ]]; then
@@ -730,11 +708,11 @@ main() {
   fi
 
   if [[ "$FAILED_COUNT" -ne 0 ]]; then
-    log_msg "=== UPDATE PARALLEL FAILED: scripts=$total_scripts ok=$OK_COUNT failed=$FAILED_COUNT total_duration=${total_duration}s ==="
+    log_msg "=== $RUNNER_TITLE PARALLEL FAILED: scripts=$total_scripts ok=$OK_COUNT failed=$FAILED_COUNT total_duration=${total_duration}s ==="
     return 1
   fi
 
-  log_msg "=== UPDATE PARALLEL DONE: scripts=$total_scripts ok=$OK_COUNT failed=$FAILED_COUNT total_duration=${total_duration}s ==="
+  log_msg "=== $RUNNER_TITLE PARALLEL DONE: scripts=$total_scripts ok=$OK_COUNT failed=$FAILED_COUNT total_duration=${total_duration}s ==="
   return 0
 }
 
@@ -754,7 +732,7 @@ def _psql_session_args(settings):
         args.extend(["-c", setting])
     return _shell_array("PSQL_SESSION_ARGS", args)
 
-def write_update_parallel_runner(out, entries):
+def write_parallel_runner(out, entries, runner_kind, runner_title, log_dir_name):
     include_comments = "\n".join(
         f"# simple-deploy-include: {entry['archive_path']}" for entry in entries
     )
@@ -768,13 +746,28 @@ def write_update_parallel_runner(out, entries):
         ]
     )
     runner = (
-        UPDATE_PARALLEL_RUNNER_TEMPLATE
+        PARALLEL_RUNNER_TEMPLATE
         .replace("__COMMIT_HASH__", shlex.quote(COMMIT_HASH))
+        .replace("__RUNNER_KIND__", shlex.quote(runner_kind))
+        .replace("__RUNNER_TITLE__", shlex.quote(runner_title))
+        .replace("__LOG_DIR_NAME__", shlex.quote(log_dir_name))
         .replace("__INCLUDE_COMMENTS__", include_comments)
         .replace("__TASK_ARRAYS__", task_arrays)
         .replace("__PSQL_SESSION_ARGS__", _psql_session_args(PSQL_SEQUENTIAL_SESSION_SETTINGS))
     )
     out.write(runner)
+
+def write_update_parallel_runner(out, entries):
+    write_parallel_runner(out, entries, "update", "UPDATE", "update_parallel")
+
+def write_set_default_parallel_runner(out, entries):
+    write_parallel_runner(
+        out,
+        entries,
+        "set_default",
+        "SET_DEFAULT",
+        "set_default_parallel",
+    )
 
 # ============================================================================
 # ОСНОВНАЯ ЛОГИКА
@@ -822,10 +815,10 @@ def main():
         out.write("-- STRICT SEQUENTIAL UPDATES (emergency fallback, one DB session)\n")
         out.write("-- ============================================\n\n")
         out.write("-- Ordered by simple-deploy metadata: order, group, path\n")
-        out.write("-- Includes kind=update and kind=set_default. set_default runs only with explicit deploy flag.\n")
+        out.write("-- Includes only kind=update.\n")
         out.write("-- Excludes inserts and insert_new_objects.\n\n")
 
-        for sql in find_metadata_sql_files(UPDATE_SEQUENTIAL_KINDS):
+        for sql in find_metadata_sql_files(UPDATE_KINDS):
             out.write(f"\\i '{sql}'\n")
 
         out.write("\n")
@@ -835,13 +828,41 @@ def main():
 
     # Генерация целевого параллельного UPDATE runner-а с барьерными волнами
     with open(OUTPUT_UPDATE_PARALLEL, "w", newline="\n") as out:
-        write_update_parallel_runner(out, find_metadata_sql_entries(UPDATE_SEQUENTIAL_KINDS))
+        write_update_parallel_runner(out, find_metadata_sql_entries(UPDATE_KINDS))
     try:
         os.chmod(OUTPUT_UPDATE_PARALLEL, 0o755)
     except OSError:
         pass
 
     print(f"✅ Generated: {os.path.basename(OUTPUT_UPDATE_PARALLEL)} (wave runner, max_workers=8)")
+
+    # Генерация аварийного последовательного SET_DEFAULT скрипта
+    with open(OUTPUT_SET_DEFAULT_SEQUENTIAL, "w") as out:
+        write_run_all_preamble(out, 1, PSQL_SEQUENTIAL_SESSION_SETTINGS)
+        out.write("-- ============================================\n")
+        out.write("-- STRICT SEQUENTIAL SET_DEFAULT (emergency fallback, one DB session)\n")
+        out.write("-- ============================================\n\n")
+        out.write("-- Ordered by simple-deploy metadata: order, group, path\n")
+        out.write("-- Includes only kind=set_default.\n")
+        out.write("-- Excludes inserts and insert_new_objects.\n\n")
+
+        for sql in find_metadata_sql_files(SET_DEFAULT_KINDS):
+            out.write(f"\\i '{sql}'\n")
+
+        out.write("\n")
+        write_run_all_epilogue(out)
+
+    print(f"✅ Generated: {os.path.basename(OUTPUT_SET_DEFAULT_SEQUENTIAL)} (ON_ERROR_STOP=1)")
+
+    # Генерация отдельного параллельного SET_DEFAULT runner-а с барьерными волнами
+    with open(OUTPUT_SET_DEFAULT_PARALLEL, "w", newline="\n") as out:
+        write_set_default_parallel_runner(out, find_metadata_sql_entries(SET_DEFAULT_KINDS))
+    try:
+        os.chmod(OUTPUT_SET_DEFAULT_PARALLEL, 0o755)
+    except OSError:
+        pass
+
+    print(f"✅ Generated: {os.path.basename(OUTPUT_SET_DEFAULT_PARALLEL)} (wave runner, max_workers=8)")
 
     # Вывод результата проверки идемпотентности
     if errors:

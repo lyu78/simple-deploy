@@ -78,16 +78,18 @@ baseline для текущего backend repo составляет около `2
 
 Для аварийного update-сценария генерируется отдельный
 `run_all_update_sequential_<commit>.sql`. Он нужен, когда доступна только одна
-DB-сессия/одно ядро и update/set_default нужно выполнить строго
-последовательно. В него попадают только размеченные `kind=update` и
-`kind=set_default`; `kind=insert` и `insert_new_objects/**` исключаются.
-Порядок берется из metadata: сначала `order`, затем `group`, затем путь файла.
-`parallel` в этом fallback игнорируется.
+DB-сессия/одно ядро и update нужно выполнить строго последовательно. В него
+попадают только размеченные `kind=update`; `kind=insert`, `kind=set_default` и
+`insert_new_objects/**` исключаются. Порядок берется из metadata: сначала
+`order`, затем `group`, затем путь файла. `parallel` в этом fallback
+игнорируется.
 
 Для основного параллельного update-сценария генерируется
-`run_all_update_parallel_<commit>.sh`. Он содержит тот же набор
-`kind=update`/`kind=set_default`, но штатный deploy по умолчанию пропускает
-`set_default`; для запуска нужен явный флаг `--include-set-default-sql`.
+`run_all_update_parallel_<commit>.sh`. Он содержит только `kind=update`.
+`kind=set_default` генерируется в отдельные
+`run_all_set_default_sequential_<commit>.sql` и
+`run_all_set_default_parallel_<commit>.sh`; штатный deploy запускает этот
+отдельный step только при явном флаге `--include-set-default-sql`.
 Runner выполняет `order` как барьерные wave:
 следующая wave стартует только после завершения предыдущей. `parallel=true`
 запускается в background с лимитом `SIMPLE_DEPLOY_UPDATE_MAX_WORKERS` (default

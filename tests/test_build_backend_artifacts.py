@@ -320,8 +320,8 @@ class BuildBackendArtifactTests(unittest.TestCase):
             module.BASE_DIR = old_base_dir
             module.SCRIPTS_DIR = old_scripts_dir
 
-    def test_update_sequential_metadata_files_are_sorted_and_exclude_inserts(self):
-        """Sequential metadata сортирует update/set_default и исключает INSERT."""
+    def test_metadata_files_are_split_by_update_and_set_default_kind(self):
+        """Metadata выборки разделяют update и set_default, исключая INSERT."""
         module = load_create_run_all_sql_module()
         old_base_dir = module.BASE_DIR
         old_scripts_dir = module.SCRIPTS_DIR
@@ -362,18 +362,19 @@ class BuildBackendArtifactTests(unittest.TestCase):
             )
 
             self.assertEqual(
-                module.find_metadata_sql_files(module.UPDATE_SEQUENTIAL_KINDS),
-                [
-                    DOMAIN_A_DEFAULT_SQL,
-                    DOMAIN_B_UPDATE_SQL,
-                ],
+                module.find_metadata_sql_files(module.UPDATE_KINDS),
+                [DOMAIN_B_UPDATE_SQL],
+            )
+            self.assertEqual(
+                module.find_metadata_sql_files(module.SET_DEFAULT_KINDS),
+                [DOMAIN_A_DEFAULT_SQL],
             )
         finally:
             module.BASE_DIR = old_base_dir
             module.SCRIPTS_DIR = old_scripts_dir
 
     def test_update_parallel_runner_has_live_status_and_no_csv_output(self):
-        """Проверяет live status parallel runner и отсутствие CSV side effects."""
+        """Проверяет live status update runner без set_default env-фильтра."""
         module = load_create_run_all_sql_module()
         entries = [
             {
@@ -384,14 +385,6 @@ class BuildBackendArtifactTests(unittest.TestCase):
                 "path": str(Path(DOMAIN_A_UPDATE_SQL)),
                 "archive_path": DOMAIN_A_UPDATE_SQL,
             },
-            {
-                "kind": "set_default",
-                "order": 10,
-                "group": "domain.b",
-                "parallel": "false",
-                "path": str(Path(DOMAIN_B_DEFAULT_SQL)),
-                "archive_path": DOMAIN_B_DEFAULT_SQL,
-            },
         ]
         out = io.StringIO()
 
@@ -400,12 +393,13 @@ class BuildBackendArtifactTests(unittest.TestCase):
 
         self.assertIn("#!/usr/bin/env bash\n", content)
         self.assertIn(f"# simple-deploy-include: {DOMAIN_A_UPDATE_SQL}\n", content)
-        self.assertIn(f"# simple-deploy-include: {DOMAIN_B_DEFAULT_SQL}\n", content)
         self.assertIn("DEFAULT_MAX_WORKERS=8", content)
         self.assertIn("DEFAULT_STATUS_INTERVAL_SECONDS=30", content)
-        self.assertIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT", content)
+        self.assertNotIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT", content)
         self.assertIn("TASK_KINDS=(", content)
-        self.assertIn("SKIP set_default scripts=", content)
+        self.assertNotIn("SKIP set_default scripts=", content)
+        self.assertIn("RUNNER_KIND=update", content)
+        self.assertIn("logs/$LOG_DIR_NAME/$run_id", content)
         self.assertIn("[START]", content)
         self.assertIn("[RUNNING]", content)
         self.assertIn("[$status]", content)
@@ -419,6 +413,37 @@ class BuildBackendArtifactTests(unittest.TestCase):
         bash_path = shutil.which("bash")
         if bash_path:
             runner_path = self.root / "run_all_update_parallel_test.sh"
+            runner_path.write_text(content, encoding="utf-8", newline="\n")
+            subprocess.run([bash_path, "-n", str(runner_path)], check=True)
+
+    def test_set_default_parallel_runner_uses_separate_kind_and_log_dir(self):
+        """Фиксирует отдельный parallel runner для kind=set_default."""
+        module = load_create_run_all_sql_module()
+        entries = [
+            {
+                "kind": "set_default",
+                "order": 10,
+                "group": "domain.b",
+                "parallel": "false",
+                "path": str(Path(DOMAIN_B_DEFAULT_SQL)),
+                "archive_path": DOMAIN_B_DEFAULT_SQL,
+            },
+        ]
+        out = io.StringIO()
+
+        module.write_set_default_parallel_runner(out, entries)
+        content = out.getvalue()
+
+        self.assertIn(f"# simple-deploy-include: {DOMAIN_B_DEFAULT_SQL}\n", content)
+        self.assertIn("RUNNER_KIND=set_default", content)
+        self.assertIn("LOG_DIR_NAME=set_default_parallel", content)
+        self.assertIn("=== $RUNNER_TITLE PARALLEL DONE:", content)
+        self.assertNotIn("SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT", content)
+        self.assertNotIn("SKIP set_default", content)
+
+        bash_path = shutil.which("bash")
+        if bash_path:
+            runner_path = self.root / "run_all_set_default_parallel_test.sh"
             runner_path.write_text(content, encoding="utf-8", newline="\n")
             subprocess.run([bash_path, "-n", str(runner_path)], check=True)
 
@@ -588,10 +613,12 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertNotIn("db_insert_archive", manifest)
         self.assertNotIn("db_update_sequential_archive", manifest)
         self.assertNotIn("db_update_parallel_archive", manifest)
+        self.assertNotIn("db_set_default_sequential_archive", manifest)
+        self.assertNotIn("db_set_default_parallel_archive", manifest)
         self.assertEqual(set(manifest["db_schema_archives"]), {"dev", "test", "prod"})
 
     def test_db_migrations_archives_include_data_sql_by_default(self):
-        """По умолчанию builder добавляет schema, insert и update data SQL archives."""
+        """По умолчанию builder добавляет schema, insert/update/set_default data SQL archives."""
         source_repo = self.root / "source"
         source_repo.mkdir()
         build_scripts_dir = source_repo / "build_scripts"
@@ -626,12 +653,24 @@ class BuildBackendArtifactTests(unittest.TestCase):
                     "\\set ON_ERROR_STOP 1\n",
                     encoding="utf-8",
                 )
+                (build_scripts_dir / f"run_all_set_default_sequential_{TEST_COMMIT}.sql").write_text(
+                    "\\set ON_ERROR_STOP 1\n",
+                    encoding="utf-8",
+                )
                 update_sql = source_repo / APP_UPDATE_SQL
                 update_sql.parent.mkdir(parents=True, exist_ok=True)
                 update_sql.write_text("select 1;\n", encoding="utf-8")
+                set_default_sql = source_repo / DOMAIN_A_DEFAULT_SQL
+                set_default_sql.parent.mkdir(parents=True, exist_ok=True)
+                set_default_sql.write_text("select 1;\n", encoding="utf-8")
                 (build_scripts_dir / f"run_all_update_parallel_{TEST_COMMIT}.sh").write_text(
                     "#!/usr/bin/env bash\n"
                     f"# simple-deploy-include: {APP_UPDATE_SQL}\n",
+                    encoding="utf-8",
+                )
+                (build_scripts_dir / f"run_all_set_default_parallel_{TEST_COMMIT}.sh").write_text(
+                    "#!/usr/bin/env bash\n"
+                    f"# simple-deploy-include: {DOMAIN_A_DEFAULT_SQL}\n",
                     encoding="utf-8",
                 )
 
@@ -655,6 +694,8 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertNotIn("db_update_archive", manifest)
         self.assertIn("db_update_sequential_archive", manifest)
         self.assertIn("db_update_parallel_archive", manifest)
+        self.assertIn("db_set_default_sequential_archive", manifest)
+        self.assertIn("db_set_default_parallel_archive", manifest)
 
     def test_backend_build_requirements_path_can_be_configured(self):
         """Учитывает BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH при pip install."""

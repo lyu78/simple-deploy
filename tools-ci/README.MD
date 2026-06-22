@@ -347,14 +347,16 @@ Schema SQL генерируется offline через Django schema editor в �
 
 - `db_insert_r_<release>-c_<commit>.tar.gz` с `run_all_insert_<commit>.sql`;
 - `db_update_sequential_r_<release>-c_<commit>.tar.gz` с `run_all_update_sequential_<commit>.sql`;
-- `db_update_parallel_r_<release>-c_<commit>.tar.gz` с `run_all_update_parallel_<commit>.sh`.
+- `db_update_parallel_r_<release>-c_<commit>.tar.gz` с `run_all_update_parallel_<commit>.sh`;
+- `db_set_default_sequential_r_<release>-c_<commit>.tar.gz` с `run_all_set_default_sequential_<commit>.sql`;
+- `db_set_default_parallel_r_<release>-c_<commit>.tar.gz` с `run_all_set_default_parallel_<commit>.sh`.
 
 В штатном full deploy Windows runner применяет `db_insert` и
-`db_update_parallel` после schema SQL. `db_update_parallel` по умолчанию
-пропускает `kind=set_default`; чтобы включить эти скрипты, запускайте
-`deploy` или `pipeline` с `--include-set-default-sql`. `db_update_sequential`
-остается аварийным ручным вариантом для последовательного запуска на одной
-DB-сессии.
+`db_update_parallel` после schema SQL. `db_update_parallel` содержит только
+`kind=update`; чтобы отдельно применить `kind=set_default`, запускайте `deploy`
+или `pipeline` с `--include-set-default-sql`. `db_update_sequential` и
+`db_set_default_sequential` остаются аварийными ручными вариантами для
+последовательного запуска на одной DB-сессии.
 
 ## Deploy
 
@@ -369,15 +371,15 @@ psql --set=ON_ERROR_STOP=1 --single-transaction
 Full deploy сначала выполняет DB data update preflight cleanup, чтобы повторный
 запуск после `KeyboardInterrupt` или падения не накатывал новый релиз поверх
 еще работающего update. На DB VM runner останавливает хвосты
-`run_all_update_parallel_*.sh`/их `psql` процессов и завершает PostgreSQL
-backend-и с `application_name=simple-deploy-data-update`.
+`run_all_update_parallel_*.sh`, `run_all_set_default_parallel_*.sh` и их `psql`
+процессов, затем завершает PostgreSQL backend-и с
+`application_name=simple-deploy-data-update`.
 Затем runner загружает app-артефакты, останавливает сервисы, распаковывает
 `tools-ci/maintenance_stub/maintenance_stub.tar.gz` в `FRONTEND_RELEASE_PATH`,
 проверяет по HTTP, что `https://DEV_DOMAIN/` отдает именно заглушку, а не
 основной frontend, и при остановленном backend выполняет schema SQL, `run_all_insert_*.sql`,
-`run_all_update_parallel_*.sh` и DB maintenance. Update runner по умолчанию
-пропускает `set_default` и печатает `SKIP set_default ...`; явное включение -
-через `--include-set-default-sql`. Insert выполняется тихо:
+`run_all_update_parallel_*.sh`, опционально `run_all_set_default_parallel_*.sh`
+при `--include-set-default-sql`, и DB maintenance. Insert выполняется тихо:
 полный `psql` output пишется на DB VM в `logs/insert/`, а в терминал выводится
 только итоговая длительность. После DB-части runner
 распаковывает backend, выполняет `after_unpack`, Django management-команды и

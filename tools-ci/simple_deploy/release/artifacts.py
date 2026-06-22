@@ -197,10 +197,10 @@ def resolve_db_data_artifact(
 ) -> DbSqlArtifact:
     """Находит data SQL-архив заданного вида.
 
-    Поддерживаются только виды, которые deploy-процесс умеет применять
-    автоматически: ``insert`` и ``update_parallel``. Функция возвращает
-    описание entrypoint-файла внутри архива и не выполняет SQL; фактическое
-    применение остается ответственностью процесса deploy.
+    Поддерживаются только виды, которые deploy-процесс умеет применять:
+    ``insert``, ``update_parallel`` и опциональный ``set_default_parallel``.
+    Функция возвращает описание entrypoint-файла внутри архива и не выполняет
+    SQL; фактическое применение остается ответственностью процесса deploy.
     """
     specs = {
         "insert": (
@@ -216,6 +216,13 @@ def resolve_db_data_artifact(
             "db_update_parallel.tar.gz",
             "db_update_parallel",
             "run_all_update_parallel_*.sh",
+        ),
+        "set_default_parallel": (
+            "db_set_default_parallel",
+            f"db_set_default_parallel_r_{build_version}-c_*.tar.gz",
+            "db_set_default_parallel.tar.gz",
+            "db_set_default_parallel",
+            "run_all_set_default_parallel_*.sh",
         ),
     }
     if kind not in specs:

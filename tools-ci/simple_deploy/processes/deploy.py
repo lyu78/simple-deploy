@@ -26,6 +26,7 @@ from simple_deploy.processes.app_deploy import (
 from simple_deploy.processes.data_sql import (
     cleanup_db_data_update_leftovers,
     run_db_data_insert,
+    run_db_data_set_default_parallel,
     run_db_data_update_parallel,
     run_db_maintenance,
     run_db_schema_summary,
@@ -98,6 +99,7 @@ def deploy(request: DeployRequest) -> ProcessResult:
             db_schema_artifact = None
             db_insert_artifact = None
             db_update_parallel_artifact = None
+            db_set_default_parallel_artifact = None
         else:
             backend_artifact = require_artifact(artifacts, "backend")
             frontend_artifact = require_artifact(artifacts, "frontend")
@@ -114,9 +116,21 @@ def deploy(request: DeployRequest) -> ProcessResult:
                     release_dir,
                     "update_parallel",
                 )
+                if request.include_set_default_sql:
+                    db_set_default_parallel_artifact = (
+                        resolve_db_data_artifact(
+                            env,
+                            build_version,
+                            release_dir,
+                            "set_default_parallel",
+                        )
+                    )
+                else:
+                    db_set_default_parallel_artifact = None
             else:
                 db_insert_artifact = None
                 db_update_parallel_artifact = None
+                db_set_default_parallel_artifact = None
                 job_log("SKIP DB data SQL artifacts: disabled")
             if runtime.get("maintenance_stub_enabled", True):
                 maintenance_stub_artifact = resolve_maintenance_stub_artifact(
@@ -158,9 +172,12 @@ def deploy(request: DeployRequest) -> ProcessResult:
                     env,
                     runtime,
                     db_update_parallel_artifact,
-                    include_set_default_sql=(
-                        request.include_set_default_sql
-                    ),
+                )
+            if db_set_default_parallel_artifact is not None:
+                run_db_data_set_default_parallel(
+                    env,
+                    runtime,
+                    db_set_default_parallel_artifact,
                 )
             for phase in ("before_unpack", "before_migrate", "after_migrate"):
                 run_db_maintenance(env, runtime, phase)

@@ -29,7 +29,7 @@ command -v pgrep >/dev/null 2>&1 || {
   exit 2
 }
 
-PATTERN='run_all_update_parallel_.*[.]sh|psql .*docs/database/scripts'
+PATTERN='run_all_(update|set_default)_parallel_.*[.]sh|psql .*docs/database/scripts'
 
 print_matches() {
   pgrep -af "$PATTERN" || true
@@ -259,14 +259,46 @@ def run_db_data_update_parallel(
     env: dict[str, str],
     runtime: dict,
     artifact: DbSqlArtifact,
-    include_set_default_sql: bool = False,
 ) -> None:
     """Запускает parallel data UPDATE runner на DB VM.
 
-    Функция передает runner-у PostgreSQL env, параметры parallel execution и
-    флаг включения ``set_default``. Пароль маскируется в выводе. Baseline не
-    меняется, потому что это только один этап deploy-процесса.
+    Функция передает runner-у PostgreSQL env и параметры parallel execution.
+    Пароль маскируется в выводе. Baseline не меняется, потому что это только
+    один этап deploy-процесса.
     """
+    _run_db_data_parallel_runner(
+        env,
+        runtime,
+        artifact,
+        log_name="update",
+        action_name="DB data update parallel",
+    )
+
+
+def run_db_data_set_default_parallel(
+    env: dict[str, str],
+    runtime: dict,
+    artifact: DbSqlArtifact,
+) -> None:
+    """Запускает отдельный parallel data SET_DEFAULT runner на DB VM."""
+    _run_db_data_parallel_runner(
+        env,
+        runtime,
+        artifact,
+        log_name="set_default",
+        action_name="DB data set_default parallel",
+    )
+
+
+def _run_db_data_parallel_runner(
+    env: dict[str, str],
+    runtime: dict,
+    artifact: DbSqlArtifact,
+    *,
+    log_name: str,
+    action_name: str,
+) -> None:
+    """Общий запуск shell runner-а для parallel data SQL артефактов."""
     db_user = require_value(env, "DB_VM_USER")
     db_host = require_value(env, "DB_VM_HOST")
     password = env.get("DB_LOGIN_PASSWORD", "")
@@ -288,9 +320,6 @@ def run_db_data_update_parallel(
         "SIMPLE_DEPLOY_UPDATE_STATUS_INTERVAL_SECONDS": str(
             runtime.get("db_update_parallel_status_interval_seconds", 30)
         ),
-        "SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT": "1"
-        if include_set_default_sql
-        else "0",
     }
     env_prefix = " ".join(
         f"{name}={sh_quote(value)}" for name, value in runner_env.items()
@@ -306,7 +335,7 @@ def run_db_data_update_parallel(
         f'{env_prefix} bash "$runner"'
     )
     job_log(
-        "RUN DB data update parallel: "
+        f"RUN DB data {log_name} parallel: "
         f"{artifact.remote_extract_path}/{artifact.entrypoint_dir}"
     )
     result = stream_ssh_command(
@@ -318,7 +347,7 @@ def run_db_data_update_parallel(
         timeout=timeout,
         mask=[password],
     )
-    run_or_raise("DB data update parallel", result, mask=[password])
+    run_or_raise(action_name, result, mask=[password])
 
 
 def cleanup_db_data_update_leftovers(
@@ -434,6 +463,7 @@ __all__ = [
     "remote_db_schema_unpack_command",
     "remote_db_sql_unpack_command",
     "run_db_data_insert",
+    "run_db_data_set_default_parallel",
     "run_db_data_update_parallel",
     "run_db_maintenance",
     "run_db_schema_summary",
