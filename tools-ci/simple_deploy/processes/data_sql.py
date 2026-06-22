@@ -11,6 +11,7 @@ from pathlib import PurePosixPath
 from simple_deploy.core.commands import run_or_raise
 from simple_deploy.core.db import db_psql_base_command
 from simple_deploy.core.env import require_value
+from simple_deploy.core.job_logging import job_log
 from simple_deploy.core.paths import ROOT
 from simple_deploy.core.ssh import (
     scp_file,
@@ -120,7 +121,7 @@ def upload_unpack_db_sql_artifact(
     db_host = require_value(env, "DB_VM_HOST")
     remote_dir = str(PurePosixPath(artifact.remote_archive).parent)
 
-    print(f"RUN create DB remote release dir: {remote_dir}", flush=True)
+    job_log(f"RUN create DB remote release dir: {remote_dir}")
     run_or_raise(
         "create DB remote release dir",
         ssh_command(
@@ -128,10 +129,9 @@ def upload_unpack_db_sql_artifact(
         ),
     )
 
-    print(
+    job_log(
         f"RUN upload {artifact.name}: "
-        f"{artifact.local_path} -> {artifact.remote_archive}",
-        flush=True,
+        f"{artifact.local_path} -> {artifact.remote_archive}"
     )
     run_or_raise(
         f"upload {artifact.name}",
@@ -145,10 +145,9 @@ def upload_unpack_db_sql_artifact(
         ),
     )
 
-    print(
+    job_log(
         f"RUN unpack {artifact.name}: "
-        f"{artifact.remote_archive} -> {artifact.remote_extract_path}",
-        flush=True,
+        f"{artifact.remote_archive} -> {artifact.remote_extract_path}"
     )
     run_or_raise(
         f"unpack {artifact.name}",
@@ -190,10 +189,9 @@ def run_db_schema_summary(
         'test -n "$sql_file"; '
         f'{psql_base} --single-transaction -f "$sql_file"'
     )
-    print(
+    job_log(
         "RUN DB schema summary SQL: "
-        f"{artifact.remote_extract_path}/{artifact.entrypoint_dir}",
-        flush=True,
+        f"{artifact.remote_extract_path}/{artifact.entrypoint_dir}"
     )
     result = ssh_command(
         env, db_user, db_host, command, "DB", timeout=300, mask=mask
@@ -243,17 +241,16 @@ def run_db_data_insert(
         'exit "$rc"; '
         "fi"
     )
-    print(
+    job_log(
         "RUN DB data insert SQL: "
-        f"{artifact.remote_extract_path}/{artifact.entrypoint_dir}",
-        flush=True,
+        f"{artifact.remote_extract_path}/{artifact.entrypoint_dir}"
     )
     result = ssh_command(
         env, db_user, db_host, command, "DB", timeout=timeout, mask=mask
     )
     if result.rc == 0:
         detail = (result.stdout or result.stderr).strip()
-        print(f"PASS {detail or 'DB data insert SQL completed'}", flush=True)
+        job_log(f"PASS {detail or 'DB data insert SQL completed'}")
         return
     run_or_raise("DB data insert SQL", result, mask=mask)
 
@@ -308,10 +305,9 @@ def run_db_data_update_parallel(
         'chmod +x "$runner"; '
         f'{env_prefix} bash "$runner"'
     )
-    print(
+    job_log(
         "RUN DB data update parallel: "
-        f"{artifact.remote_extract_path}/{artifact.entrypoint_dir}",
-        flush=True,
+        f"{artifact.remote_extract_path}/{artifact.entrypoint_dir}"
     )
     result = stream_ssh_command(
         env,
@@ -338,7 +334,7 @@ def cleanup_db_data_update_leftovers(
     db_host = require_value(env, "DB_VM_HOST")
     password = env.get("DB_LOGIN_PASSWORD", "")
 
-    print("RUN DB data update preflight cleanup: OS processes", flush=True)
+    job_log("RUN DB data update preflight cleanup: OS processes")
     process_result = ssh_command(
         env,
         db_user,
@@ -370,9 +366,7 @@ SELECT 'terminated_backend_count=' || count(*) FILTER (WHERE terminated)
 FROM terminated;
 """
     command = f"{psql_base} --tuples-only --no-align --command={sh_quote(sql)}"
-    print(
-        "RUN DB data update preflight cleanup: PostgreSQL backends", flush=True
-    )
+    job_log("RUN DB data update preflight cleanup: PostgreSQL backends")
     backend_result = ssh_command(
         env, db_user, db_host, command, "DB", timeout=60, mask=mask
     )
@@ -389,7 +383,7 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
     частью общего deploy-процесса.
     """
     if not runtime.get("db_maintenance_enabled", True):
-        print(f"SKIP DB maintenance {phase}: disabled")
+        job_log(f"SKIP DB maintenance {phase}: disabled")
         return
 
     db_user = require_value(env, "DB_VM_USER")
@@ -401,7 +395,7 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
         for index, sql in enumerate(
             runtime.get("db_maintenance_sql", []), start=1
         ):
-            print(f"RUN DB inline SQL {phase} #{index}", flush=True)
+            job_log(f"RUN DB inline SQL {phase} #{index}")
             command = f"{psql_base} --command={sh_quote(sql)}"
             result = ssh_command(
                 env,
@@ -419,7 +413,7 @@ def run_db_maintenance(env: dict[str, str], runtime: dict, phase: str) -> None:
             continue
         path = ROOT / script["path"]
         sql = path.read_text(encoding="utf-8")
-        print(f"RUN DB SQL script {path}", flush=True)
+        job_log(f"RUN DB SQL script {path}")
         result = ssh_command(
             env,
             db_user,

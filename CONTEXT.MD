@@ -564,7 +564,9 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 изменение ресурса `PATCH /api/jobs/{id}`, без action-style путей
 `/retries`/`/cancellations`, и продолжили перевод операторского вывода на общий
 job logger. Сейчас `build`, `mark`, `core.release_paths`, `release.artifacts`,
-`healthcheck` и `notifications` пишут через `job_log()` с fallback на прежний
-stdout/stderr. Следующий безопасный срез: продолжить этот перевод в более
-крупных process-модулях `deploy`, `app_deploy` и `data_sql` без изменения текста
-и порядка log file.
+`healthcheck`, `notifications`, `deploy`, `app_deploy` и `data_sql` пишут через
+`job_log()` с fallback на прежний stdout/stderr. В `tools-ci/simple_deploy`
+осталось 17 прямых `print()`: CLI error fallback, dry-run `Reporter`, logging
+fallback helpers и строка `RUN LOG ...`. Следующий безопасный срез: решить,
+оставляем ли dry-run `Reporter` как специализированный stdout-интерфейс или
+переводим его на `job_log()` с сохранением формата отчета.

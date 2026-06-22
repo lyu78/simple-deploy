@@ -6,6 +6,7 @@ from pathlib import Path, PurePosixPath
 
 from simple_deploy.core.commands import run_or_raise
 from simple_deploy.core.env import require_value
+from simple_deploy.core.job_logging import job_log
 from simple_deploy.core.ssh import scp_file, sh_quote, ssh_command
 from simple_deploy.release.artifacts import Artifact
 
@@ -48,7 +49,7 @@ def upload_app_artifacts(
     """Создает release-каталог и загружает application artifacts."""
     app_user = require_value(env, "APP_VM_USER")
     app_host = require_value(env, "APP_VM_HOST")
-    print(f"RUN create remote release dir: {remote_dir}", flush=True)
+    job_log(f"RUN create remote release dir: {remote_dir}")
     run_or_raise(
         "create remote release dir",
         ssh_command(
@@ -56,10 +57,9 @@ def upload_app_artifacts(
         ),
     )
     for artifact in artifacts:
-        print(
+        job_log(
             f"RUN upload {artifact.name}: "
-            f"{artifact.local_path} -> {artifact.remote_archive}",
-            flush=True,
+            f"{artifact.local_path} -> {artifact.remote_archive}"
         )
         run_or_raise(
             f"upload {artifact.name}",
@@ -89,7 +89,7 @@ def backup_app_artifacts(
         "BACKUP_ROOT_BASE", "/tmp/simple-deploy-backups"
     ).rstrip("/")
     backup_root = f"{backup_base}/{build_version}"
-    print(f"RUN create backup root: {backup_root}", flush=True)
+    job_log(f"RUN create backup root: {backup_root}")
     run_or_raise(
         "create backup root",
         ssh_command(
@@ -106,9 +106,7 @@ def backup_app_artifacts(
             f"tar -czf {sh_quote(backup_archive)} "
             f"-C {sh_quote(backup_parent)} {sh_quote(backup_name)}"
         )
-        print(
-            f"RUN backup {artifact.name}: {artifact.extract_path}", flush=True
-        )
+        job_log(f"RUN backup {artifact.name}: {artifact.extract_path}")
         run_or_raise(
             f"backup {artifact.name}",
             ssh_command(env, app_user, app_host, command, "APP", timeout=120),
@@ -118,10 +116,9 @@ def backup_app_artifacts(
 def unpack_app_artifact(env: dict[str, str], artifact: Artifact) -> None:
     """Распаковывает один application artifact на APP VM."""
     command = remote_clean_unpack_command(artifact)
-    print(
+    job_log(
         f"RUN unpack {artifact.name}: "
-        f"{artifact.remote_archive} -> {artifact.extract_path}",
-        flush=True,
+        f"{artifact.remote_archive} -> {artifact.extract_path}"
     )
     run_or_raise(
         f"unpack {artifact.name}",
@@ -143,12 +140,12 @@ def run_service_steps(env: dict[str, str], runtime: dict, phase: str) -> None:
         if step.get("phase", "after_migrate") == phase:
             steps.append(step)
     if not steps:
-        print(f"SKIP service steps {phase}: empty")
+        job_log(f"SKIP service steps {phase}: empty")
         return
     for step in steps:
         label = step.get("name") or step["command"]
         command = step["command"]
-        print(f"RUN service {phase}: {label}", flush=True)
+        job_log(f"RUN service {phase}: {label}")
         result = ssh_command(
             env,
             require_value(env, "APP_VM_USER"),

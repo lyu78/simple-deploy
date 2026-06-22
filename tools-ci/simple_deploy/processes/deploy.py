@@ -12,6 +12,7 @@ from simple_deploy.application.results import ProcessResult
 from simple_deploy.config.runtime_loader import load_runtime_config
 from simple_deploy.core.commands import run_or_raise
 from simple_deploy.core.env import load_env, require_value
+from simple_deploy.core.job_logging import job_log
 from simple_deploy.core.release_paths import resolve_release_dir
 from simple_deploy.core.ssh import sh_quote, ssh_command
 from simple_deploy.processes.app_deploy import (
@@ -58,7 +59,7 @@ def deploy(request: DeployRequest) -> ProcessResult:
     ``mark_contour_failed_best_effort``.
 
     """
-    print("DEPLOY load config", flush=True)
+    job_log("DEPLOY load config")
     app_only = request.app_only
     env = load_env(
         request.env_file,
@@ -72,10 +73,10 @@ def deploy(request: DeployRequest) -> ProcessResult:
         env, request.build_version, request.latest
     )
     contour = validate_contour(request.contour.value)
-    print(f"DEPLOY build_version: {build_version}", flush=True)
-    print(f"DEPLOY contour: {contour}", flush=True)
-    print(f"DEPLOY release_dir: {release_dir}", flush=True)
-    print(f"DEPLOY mode: {'app-only' if app_only else 'full'}", flush=True)
+    job_log(f"DEPLOY build_version: {build_version}")
+    job_log(f"DEPLOY contour: {contour}")
+    job_log(f"DEPLOY release_dir: {release_dir}")
+    job_log(f"DEPLOY mode: {'app-only' if app_only else 'full'}")
 
     success_recorded = False
     try:
@@ -89,7 +90,7 @@ def deploy(request: DeployRequest) -> ProcessResult:
             cleanup_db_data_update_leftovers(env, runtime)
 
         if app_only:
-            print("SKIP DB steps: app-only mode", flush=True)
+            job_log("SKIP DB steps: app-only mode")
             app_upload_artifacts = artifacts
             backend_artifact = None
             frontend_artifact = None
@@ -116,14 +117,14 @@ def deploy(request: DeployRequest) -> ProcessResult:
             else:
                 db_insert_artifact = None
                 db_update_parallel_artifact = None
-                print("SKIP DB data SQL artifacts: disabled", flush=True)
+                job_log("SKIP DB data SQL artifacts: disabled")
             if runtime.get("maintenance_stub_enabled", True):
                 maintenance_stub_artifact = resolve_maintenance_stub_artifact(
                     env, runtime, build_version
                 )
             else:
                 maintenance_stub_artifact = None
-                print("SKIP maintenance stub: disabled", flush=True)
+                job_log("SKIP maintenance stub: disabled")
             app_upload_artifacts = [
                 artifact
                 for artifact in (
@@ -147,7 +148,7 @@ def deploy(request: DeployRequest) -> ProcessResult:
                 unpack_app_artifact(env, maintenance_stub_artifact)
                 verify_maintenance_stub_http(env, runtime)
             else:
-                print("SKIP maintenance stub unpack: disabled", flush=True)
+                job_log("SKIP maintenance stub unpack: disabled")
 
             run_db_schema_summary(env, runtime, db_schema_artifact)
             if db_insert_artifact is not None:
@@ -176,7 +177,7 @@ def deploy(request: DeployRequest) -> ProcessResult:
                 f". {app_venv} && "
                 f"{command}"
             )
-            print(f"RUN management command: {command}", flush=True)
+            job_log(f"RUN management command: {command}")
             run_or_raise(
                 f"management command: {command}",
                 ssh_command(
@@ -193,16 +194,16 @@ def deploy(request: DeployRequest) -> ProcessResult:
         if runtime.get("healthcheck_enabled", True):
             healthcheck(env, runtime, build_version)
         else:
-            print("SKIP healthcheck: disabled")
+            job_log("SKIP healthcheck: disabled")
 
         mark_contour_applied(contour, build_version, release_dir)
         success_recorded = True
 
-        print("DEPLOY SUMMARY")
+        job_log("DEPLOY SUMMARY")
         for line in deploy_summary_lines(
             build_version, release_dir, artifacts
         ):
-            print(line)
+            job_log(line)
 
         send_outlook_success_email(
             env, runtime, build_version, release_dir, artifacts
@@ -213,10 +214,9 @@ def deploy(request: DeployRequest) -> ProcessResult:
                 contour, build_version, release_dir, exc
             )
         else:
-            print(
+            job_log(
                 f"WARN deploy failed after successful state update: "
-                f"contour={contour} build_version={build_version} error={exc}",
-                flush=True,
+                f"contour={contour} build_version={build_version} error={exc}"
             )
         raise
     return ProcessResult.success(

@@ -1184,6 +1184,23 @@ SQLite-backed jobs без введения отдельного task framework:
 - focused tests вокруг deploy/healthcheck/worker и полный `pytest` остались
   зелеными.
 
+### Статус двадцать девятого среза шага 6
+
+Двадцать девятый безопасный срез перевел крупные deploy process modules на
+общий job logger без изменения текста и порядка сообщений:
+
+- `processes.deploy` пишет `DEPLOY ...`, `SKIP ...`, management command,
+  summary и late-warning строки через `job_log()`;
+- `processes.app_deploy` пишет upload/backup/unpack/service-step progress через
+  `job_log()`;
+- `processes.data_sql` пишет DB upload/unpack/schema/data/cleanup/maintenance
+  progress через `job_log()`;
+- subprocess/SSH output по-прежнему идет через `run_or_raise()` и
+  `stream_ssh_command()`, то есть формат remote output не менялся;
+- в `tools-ci/simple_deploy` осталось 17 прямых `print()`: CLI error fallback,
+  dry-run `Reporter`, logging fallback helpers и строка `RUN LOG ...`;
+- focused tests вокруг deploy/worker/build и полный `pytest` остались зелеными.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:
