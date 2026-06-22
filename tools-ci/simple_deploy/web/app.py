@@ -238,6 +238,17 @@ def dashboard() -> str:
     return render_dashboard(state_snapshot(limit=20))
 
 
+@app.get("/jobs/{job_id}", response_class=HTMLResponse)
+def job_log_page(job_id: int) -> str:
+    """Возвращает HTML-страницу live log одной local job."""
+    job = _job_read_model_from_state(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404, detail=f"Local job not found: id={job_id}"
+        )
+    return render_job_log_page(dto_dump(JobDto.model_validate(job)))
+
+
 def render_dashboard(snapshot: dict) -> str:
     """Рендерит полный HTML-документ панели из готового снимка."""
     release_columns = [
@@ -259,17 +270,6 @@ def render_dashboard(snapshot: dict) -> str:
         "contour",
         "build_version",
         "status",
-        "started_at",
-        "finished_at",
-        "error",
-    ]
-    job_columns = [
-        "id",
-        "kind",
-        "contour",
-        "build_version",
-        "status",
-        "created_at",
         "started_at",
         "finished_at",
         "error",
@@ -386,6 +386,33 @@ def render_dashboard(snapshot: dict) -> str:
       white-space: normal;
       min-width: 220px;
     }}
+    .actions {{
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }}
+    button, .button-link {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #fff;
+      color: var(--fg);
+      font: inherit;
+      text-decoration: none;
+      cursor: pointer;
+    }}
+    button.danger {{
+      border-color: #f3b4ad;
+      color: var(--danger);
+    }}
+    button:disabled {{
+      color: var(--muted);
+      cursor: default;
+    }}
     .empty {{
       margin: 8px 0 0;
       color: var(--muted);
@@ -412,9 +439,144 @@ def render_dashboard(snapshot: dict) -> str:
     {render_table("Releases", snapshot["releases"], release_columns)}
     {build_attempts_html}
     {deploy_attempts_html}
-    {render_table("Jobs", snapshot["jobs"], job_columns)}
+    {render_jobs_table(snapshot["jobs"])}
     {external_requests_html}
   </main>
+  <script>
+    async function updateJobStatus(jobId, status) {{
+      const response = await fetch(`/api/jobs/${{jobId}}`, {{
+        method: "PATCH",
+        headers: {{"content-type": "application/json"}},
+        body: JSON.stringify({{status}})
+      }});
+      if (response.ok) {{
+        window.location.reload();
+        return;
+      }}
+      const text = await response.text();
+      window.alert(text || `Job update failed: ${{response.status}}`);
+    }}
+    document.addEventListener("click", (event) => {{
+      const button = event.target.closest("[data-job-status]");
+      if (!button) {{
+        return;
+      }}
+      updateJobStatus(button.dataset.jobId, button.dataset.jobStatus);
+    }});
+  </script>
+</body>
+</html>"""
+
+
+def render_job_log_page(job: dict) -> str:
+    """Рендерит HTML-страницу live log одной local job."""
+    job_id = int(job["id"])
+    title = f"Job {job_id}"
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)} - simple-deploy</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --fg: #17202a;
+      --muted: #657282;
+      --line: #d8dde5;
+      --surface: #ffffff;
+      --accent: #0f766e;
+      --danger: #b42318;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.45 Arial, sans-serif;
+    }}
+    header {{
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px 28px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }}
+    h1 {{ margin: 0; font-size: 22px; letter-spacing: 0; }}
+    main {{ display: grid; gap: 16px; padding: 22px 28px 32px; }}
+    .meta {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .pill {{
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 9px;
+      background: #fff;
+    }}
+    pre {{
+      min-height: 420px;
+      margin: 0;
+      padding: 14px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      background: #101820;
+      color: #e8edf2;
+      white-space: pre-wrap;
+      font: 13px/1.45 Consolas, "Courier New", monospace;
+    }}
+    a {{ color: var(--accent); }}
+    @media (max-width: 760px) {{
+      header {{ align-items: start; flex-direction: column; padding: 16px; }}
+      main {{ padding: 16px; }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>{escape(title)}</h1>
+      <div class="meta">
+        <span class="pill" id="status">{escape(str(job["status"]))}</span>
+        <span>{escape(str(job["kind"]))}</span>
+        <a href="/">Dashboard</a>
+        <a href="/api/jobs/{job_id}">/api/jobs/{job_id}</a>
+      </div>
+    </div>
+  </header>
+  <main>
+    <pre id="log"></pre>
+  </main>
+  <script>
+    const log = document.getElementById("log");
+    const status = document.getElementById("status");
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(
+      `${{protocol}}//${{window.location.host}}/ws/jobs/{job_id}`
+    );
+    socket.addEventListener("message", (event) => {{
+      const message = JSON.parse(event.data);
+      if (message.type === "snapshot" && message.job) {{
+        status.textContent = message.job.status;
+      }}
+      if (message.type === "status" || message.type === "done") {{
+        status.textContent = message.status;
+      }}
+      if (message.type === "log") {{
+        log.textContent += message.text;
+        log.scrollTop = log.scrollHeight;
+      }}
+      if (message.type === "error") {{
+        log.textContent += message.message + "\\n";
+      }}
+    }});
+  </script>
 </body>
 </html>"""
 
@@ -459,6 +621,64 @@ def render_contours(contours: dict) -> str:
             "last_success_backend_commit",
             "updated_at",
         ],
+    )
+
+
+def render_job_actions(row: dict) -> str:
+    """Рендерит REST lifecycle actions для одной job."""
+    job_id = int(row["id"])
+    status = str(row.get("status", ""))
+    actions = [
+        f'<a class="button-link" href="/jobs/{job_id}">Log</a>',
+    ]
+    if status == "queued":
+        actions.append(
+            '<button class="danger" type="button" '
+            f'data-job-id="{job_id}" data-job-status="cancelled">'
+            "Cancel</button>"
+        )
+    if status in {"failed", "cancelled"}:
+        actions.append(
+            '<button type="button" '
+            f'data-job-id="{job_id}" data-job-status="queued">'
+            "Requeue</button>"
+        )
+    return '<div class="actions">' + "".join(actions) + "</div>"
+
+
+def render_jobs_table(rows: list[dict]) -> str:
+    """Рендерит таблицу jobs с operator actions."""
+    columns = [
+        "id",
+        "kind",
+        "contour",
+        "build_version",
+        "status",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "error",
+        "actions",
+    ]
+    if not rows:
+        return """<section><h2>Jobs</h2><p class="empty">No records</p></section>"""
+    head = "".join(f"<th>{escape(column)}</th>" for column in columns)
+    body_rows = []
+    for row in rows:
+        cells = []
+        for column in columns:
+            if column == "actions":
+                cells.append(f"<td>{render_job_actions(row)}</td>")
+                continue
+            value = "" if row.get(column) is None else str(row.get(column, ""))
+            css_class = ' class="error"' if column == "error" and value else ""
+            cells.append(f"<td{css_class}>{escape(value)}</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    return (
+        '<section><h2>Jobs</h2><div class="table-wrap">'
+        f"<table><thead><tr>{head}</tr></thead><tbody>"
+        + "".join(body_rows)
+        + "</tbody></table></div></section>"
     )
 
 

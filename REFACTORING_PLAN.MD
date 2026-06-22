@@ -1217,6 +1217,23 @@ logger:
   `print(os.environ['DJANGO_SETTINGS_MODULE'])`;
 - focused tests вокруг dry-run/worker и полный `pytest` остались зелеными.
 
+### Статус тридцать первого среза шага 6
+
+Тридцать первый безопасный срез добавил минимальный operator UX для local jobs
+поверх уже существующего REST/WebSocket контракта:
+
+- dashboard jobs table получила action column: `Log`, `Cancel` для `queued`,
+  `Requeue` для `failed`/`cancelled`;
+- действия вызывают только `PATCH /api/jobs/{id}` с `status=cancelled` или
+  `status=queued`, без добавления RPC/action endpoints;
+- добавлена HTML-страница `GET /jobs/{id}` для live log одной job через
+  существующий `/ws/jobs/{id}`;
+- Web/API tests проверяют наличие action controls, HTML log page, WebSocket
+  hook и `404` для отсутствующей job page;
+- полный `pytest` остался зеленым; in-app Browser backend в окружении не был
+  доступен, поэтому UI дополнительно проверен HTTP-rendering smoke check-ом
+  на локальном uvicorn.
+
 ### Отложенное улучшение: data SQL set_default artifacts
 
 Текущая реализация генерирует `kind=set_default` внутри update artifacts:

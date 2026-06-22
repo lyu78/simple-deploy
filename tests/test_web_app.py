@@ -193,6 +193,8 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(requests_response.json(), state_json["external_requests"])
         self.assertIn("simple-deploy", dashboard_response.text)
         self.assertIn(TEST_BUILD_VERSION, dashboard_response.text)
+        self.assertIn('data-job-status="cancelled"', dashboard_response.text)
+        self.assertIn("/jobs/", dashboard_response.text)
 
     def test_job_websocket_streams_log_file_for_terminal_job(self):
         """WebSocket читает статус из SQLite и строки из job log file."""
@@ -214,6 +216,8 @@ class WebAppTests(unittest.TestCase):
 
             with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
                 client = TestClient(app)
+                page_response = client.get(f"/jobs/{job_id}")
+                missing_page_response = client.get("/jobs/999999")
                 with client.websocket_connect(
                     f"/ws/jobs/{job_id}?poll_interval=0.1"
                 ) as websocket:
@@ -227,6 +231,10 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(log_chunk["type"], "log")
         self.assertIn("WORKER finished job", log_chunk["text"])
         self.assertEqual(done, {"type": "done", "status": "success"})
+        self.assertEqual(page_response.status_code, 200)
+        self.assertIn(f"Job {job_id}", page_response.text)
+        self.assertIn(f"/ws/jobs/{job_id}", page_response.text)
+        self.assertEqual(missing_page_response.status_code, 404)
 
     def test_job_api_updates_lifecycle_status_via_patch(self):
         """PATCH /api/jobs/{id} выполняет REST transition состояния job."""

@@ -556,6 +556,9 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - helper-ы app deploy, HTTP healthcheck и Outlook-уведомлений живут в
   `processes.app_deploy`, `processes.healthcheck` и `processes.notifications`;
 - web/API v1 доступен как `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000`; `POST /api/jobs` создает queued job, `GET /api/jobs/{id}` читает одну job, `PATCH /api/jobs/{id}` меняет lifecycle status (`cancelled` для отмены queued job, `queued` для повторной постановки failed/cancelled job в очередь с тем же `id`), а `/ws/jobs/{id}` стримит job log file;
+- dashboard jobs table показывает `Log`, `Cancel` и `Requeue` actions поверх
+  REST `PATCH /api/jobs/{id}`; `GET /jobs/{id}` открывает HTML live log page,
+  которая подключается к `/ws/jobs/{id}`;
 - Ansible перенесен из корня в `legacy/ansible-ci`, дефолтные пути legacy Ansible поправлены на новую глубину каталога;
 - операторские build/deploy команды и аргументы не менялись; добавлена
   сервисная команда `simple-deploy worker`.
@@ -571,5 +574,5 @@ job logger. Сейчас `build`, `mark`, `core.release_paths`, `release.artifac
 helpers в `core.commands`/`core.job_logging`, строка `RUN LOG ...` при открытии
 log file и один строковый литерал команды
 `print(os.environ['DJANGO_SETTINGS_MODULE'])`. Следующий безопасный срез:
-перейти от logging cleanup к web/dashboard operator UX для jobs или к отложенной
-теме data SQL set_default artifacts.
+перейти к отложенной теме data SQL set_default artifacts или к расширению
+operator UI для создания jobs из dashboard.
