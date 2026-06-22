@@ -8,9 +8,7 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import sys
-import time
 from pathlib import Path
 
 from simple_deploy.application.requests import (
@@ -56,59 +54,17 @@ from simple_deploy.cli.requests import (
 from simple_deploy.core.paths import (
     DEFAULT_CONFIG_FILE,
     DEFAULT_ENV_FILE,
-    DEFAULT_LOG_DIR,
     DEFAULT_SECRETS_FILE,
 )
+from simple_deploy.core.job_logging import (
+    Tee,
+    create_log_file,
+    tee_output,
+)
+from simple_deploy.jobs.worker import run_worker_loop
 from simple_deploy.registry.state import (
     CONTOURS,
 )
-
-
-class Tee:
-    """Пишет один и тот же текст сразу в несколько потоков вывода."""
-
-    def __init__(self, *streams) -> None:
-        """Сохраняет целевые потоки вывода."""
-        self.streams = streams
-
-    def write(self, text: str) -> int:
-        """Записывает текст во все потоки и возвращает его длину."""
-        for stream in self.streams:
-            stream.write(text)
-        return len(text)
-
-    def flush(self) -> None:
-        """Сбрасывает буферы всех потоков."""
-        for stream in self.streams:
-            stream.flush()
-
-
-def create_log_file(command: str) -> Path:
-    """Создает путь к log-файлу для запуска указанной CLI-команды."""
-    DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    safe_command = "".join(
-        char if char.isalnum() or char in {"-", "_"} else "-"
-        for char in command or "run"
-    )
-    return DEFAULT_LOG_DIR / f"{timestamp}-{safe_command}.log"
-
-
-@contextlib.contextmanager
-def tee_output(command: str):
-    """Дублирует stdout/stderr текущей команды в log-файл."""
-    log_path = create_log_file(command)
-    with log_path.open("w", encoding="utf-8") as log_file:
-        original_stdout = sys.stdout
-        original_stderr = sys.stderr
-        sys.stdout = Tee(original_stdout, log_file)
-        sys.stderr = Tee(original_stderr, log_file)
-        try:
-            print(f"RUN LOG {log_path}", flush=True)
-            yield log_path
-        finally:
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
 
 
 def dry_run(request: DryRunRequest | argparse.Namespace) -> bool:
@@ -270,12 +226,28 @@ def parse_args() -> argparse.Namespace:
     )
     mark_failed_parser.add_argument("--build-version", required=True)
     mark_failed_parser.add_argument("--error", required=True)
+
+    worker_parser = subparsers.add_parser("worker")
+    worker_parser.add_argument("--once", action="store_true")
+    worker_parser.add_argument("--poll-interval", type=float, default=2.0)
     return parser.parse_args()
 
 
 def main() -> int:
     """Запускает выбранную CLI-команду и возвращает process exit code."""
     args = parse_args()
+    if args.command == "worker":
+        try:
+            return run_worker_loop(
+                once=args.once,
+                poll_interval=args.poll_interval,
+            )
+        except KeyboardInterrupt:
+            return 0
+        except Exception as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+
     with tee_output(args.command):
         try:
             request = request_from_args(args)

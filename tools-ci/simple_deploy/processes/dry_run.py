@@ -9,16 +9,18 @@
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 import sys
 
+from simple_deploy.application.requests import DryRunRequest
+from simple_deploy.application.results import ProcessResult
 from simple_deploy.config.runtime_loader import (
     check_runtime_config,
     DEFAULT_RUNTIME_CONFIG,
     load_runtime_config,
     runtime_default_preview,
 )
+from simple_deploy.config.topology import runtime_topology_from_legacy_env
 from simple_deploy.core.build_env import data_sql_artifacts_enabled
 from simple_deploy.core.env import load_env
 from simple_deploy.processes.dry_run_checks import (
@@ -41,7 +43,7 @@ from simple_deploy.processes.dry_run_checks import (
 )
 
 
-def dry_run(args: argparse.Namespace) -> bool:
+def dry_run(request: DryRunRequest) -> ProcessResult:
     """Выполняет preflight-проверки без build/deploy side effects.
 
     Функция возвращает итог ``Reporter.result()``. Она не меняет baseline,
@@ -49,21 +51,30 @@ def dry_run(args: argparse.Namespace) -> bool:
     проверок, которые уже были частью старого runner contract.
     """
     reporter = Reporter()
-    app_only = bool(getattr(args, "app_only", False))
+    app_only = request.app_only
     try:
         env = load_env(
-            args.env_file, args.secrets_file, require_secrets=not app_only
+            request.env_file,
+            request.secrets_file,
+            require_secrets=not app_only,
         )
-        runtime, defaulted_runtime_keys = load_runtime_config(args.config_file)
-        reporter.pass_("config files", f"{args.env_file}, {args.secrets_file}")
+        runtime, defaulted_runtime_keys = load_runtime_config(
+            request.config_file
+        )
+        reporter.pass_(
+            "config files", f"{request.env_file}, {request.secrets_file}"
+        )
     except Exception as exc:
         reporter.fail("config files", str(exc))
-        return reporter.result()
+        return ProcessResult.failure(
+            "dry-run config validation failed",
+            details={"stage": "config"},
+        )
 
     for key in defaulted_runtime_keys:
         reporter.warn(
             f"runtime {key}",
-            f"missing in {args.config_file}; using default "
+            f"missing in {request.config_file}; using default "
             f"{runtime_default_preview(DEFAULT_RUNTIME_CONFIG[key])}",
         )
 
@@ -96,18 +107,27 @@ def dry_run(args: argparse.Namespace) -> bool:
 
     check_ssh_key_files(reporter, env, app_only=app_only)
 
-    origins = [
-        ("backend source repo", env.get("BACKEND_SOURCE_REPO_PATH", "")),
+    topology = runtime_topology_from_legacy_env(env)
+    origins_by_id = {
+        origin.origin_id: origin for origin in topology.source_origins
+    }
+    source_origins = []
+    for repository in topology.source_repositories:
+        origin = origins_by_id.get(repository.default_origin_id)
+        if origin is not None:
+            source_origins.append(
+                (f"{repository.repo_id} source repo", origin.remote_url)
+            )
+    target_origins = [
         ("backend target repo", env.get("BACKEND_TARGET_REPO_PATH", "")),
-        ("frontend source repo", env.get("FRONTEND_SOURCE_REPO_PATH", "")),
         ("frontend target repo", env.get("FRONTEND_TARGET_REPO_PATH", "")),
     ]
-    for name, path in origins:
+    for name, path in [*source_origins, *target_origins]:
         origin_url = check_repo(reporter, name, path)
         check_origin_network(reporter, f"{name} origin network", origin_url)
 
     check_backend_build_inputs(reporter, env)
-    if data_sql_artifacts_enabled(args):
+    if data_sql_artifacts_enabled(request.skip_data_sql_artifacts):
         check_backend_data_insert_idempotency(reporter, env)
     else:
         reporter.skip(
@@ -164,7 +184,9 @@ def dry_run(args: argparse.Namespace) -> bool:
     else:
         reporter.skip("DB psql login", "DB VM SSH/psql unavailable")
 
-    return reporter.result()
+    if reporter.result():
+        return ProcessResult.success("dry-run checks passed")
+    return ProcessResult.failure("dry-run checks failed")
 
 
 def required_env_keys(app_only: bool = False) -> list[str]:

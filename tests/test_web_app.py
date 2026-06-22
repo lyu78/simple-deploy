@@ -30,6 +30,8 @@ from simple_deploy.release.state import (
     connect_state_db,
     create_external_request,
     create_job,
+    mark_job_finished,
+    mark_job_started,
     record_attempt,
     record_build_attempt_finished,
     record_build_attempt_started,
@@ -111,6 +113,20 @@ class WebAppTests(unittest.TestCase):
                 state_response = client.get("/api/state")
                 releases_response = client.get("/api/releases")
                 jobs_response = client.get("/api/jobs")
+                created_job_response = client.post(
+                    "/api/jobs",
+                    json={
+                        "kind": "build",
+                        "payload": {
+                            "env_file": str(TOOLS_CI_ROOT / ".env"),
+                            "secrets_file": str(
+                                TOOLS_CI_ROOT / "local.secrets.env"
+                            ),
+                            "timeout": 77,
+                            "skip_data_sql_artifacts": True,
+                        },
+                    },
+                )
                 requests_response = client.get("/api/requests")
                 dashboard_response = client.get("/")
 
@@ -118,6 +134,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(state_response.status_code, 200)
         self.assertEqual(releases_response.status_code, 200)
         self.assertEqual(jobs_response.status_code, 200)
+        self.assertEqual(created_job_response.status_code, 201)
         self.assertEqual(requests_response.status_code, 200)
         self.assertEqual(dashboard_response.status_code, 200)
         self.assertEqual(health_response.json(), {"status": "ok"})
@@ -169,9 +186,119 @@ class WebAppTests(unittest.TestCase):
         )
         self.assertEqual(releases_response.json(), state_json["releases"])
         self.assertEqual(jobs_response.json(), state_json["jobs"])
+        created_job = created_job_response.json()
+        self.assertEqual(created_job["kind"], "build")
+        self.assertEqual(created_job["status"], "queued")
+        self.assertIn("skip_data_sql_artifacts", created_job["payload_json"])
         self.assertEqual(requests_response.json(), state_json["external_requests"])
         self.assertIn("simple-deploy", dashboard_response.text)
         self.assertIn(TEST_BUILD_VERSION, dashboard_response.text)
+
+    def test_job_websocket_streams_log_file_for_terminal_job(self):
+        """WebSocket читает статус из SQLite и строки из job log file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / STATE_DB_NAME
+            log_path = Path(tmp) / "job.log"
+            log_path.write_text(
+                "RUN LOG job.log\nWORKER finished job\n",
+                encoding="utf-8",
+            )
+            with closing(connect_state_db(db_path)) as connection:
+                job_id = create_job(
+                    connection,
+                    "build",
+                    build_version=TEST_BUILD_VERSION,
+                )
+                mark_job_started(connection, job_id, log_path=str(log_path))
+                mark_job_finished(connection, job_id, "success")
+
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
+                client = TestClient(app)
+                with client.websocket_connect(
+                    f"/ws/jobs/{job_id}?poll_interval=0.1"
+                ) as websocket:
+                    snapshot = websocket.receive_json()
+                    log_chunk = websocket.receive_json()
+                    done = websocket.receive_json()
+
+        self.assertEqual(snapshot["type"], "snapshot")
+        self.assertEqual(snapshot["job"]["id"], job_id)
+        self.assertEqual(snapshot["job"]["status"], "success")
+        self.assertEqual(log_chunk["type"], "log")
+        self.assertIn("WORKER finished job", log_chunk["text"])
+        self.assertEqual(done, {"type": "done", "status": "success"})
+
+    def test_job_api_updates_lifecycle_status_via_patch(self):
+        """PATCH /api/jobs/{id} выполняет REST transition состояния job."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / STATE_DB_NAME
+            with closing(connect_state_db(db_path)) as connection:
+                queued_id = create_job(
+                    connection,
+                    "build",
+                    build_version=TEST_BUILD_VERSION,
+                )
+                running_id = create_job(
+                    connection,
+                    "build",
+                    build_version=FAILED_BUILD_VERSION,
+                )
+                mark_job_started(connection, running_id)
+                failed_id = create_job(
+                    connection,
+                    "deploy",
+                    contour="dev",
+                    build_version=TEST_BUILD_VERSION,
+                )
+                mark_job_started(
+                    connection, failed_id, log_path="logs/failed.log"
+                )
+                mark_job_finished(connection, failed_id, "failed", "boom")
+
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
+                client = TestClient(app)
+                get_response = client.get(f"/api/jobs/{queued_id}")
+                cancel_response = client.patch(
+                    f"/api/jobs/{queued_id}",
+                    json={"status": "cancelled"},
+                )
+                running_cancel_response = client.patch(
+                    f"/api/jobs/{running_id}",
+                    json={"status": "cancelled"},
+                )
+                requeue_response = client.patch(
+                    f"/api/jobs/{failed_id}",
+                    json={"status": "queued"},
+                )
+                invalid_target_response = client.patch(
+                    f"/api/jobs/{failed_id}",
+                    json={"status": "running"},
+                )
+                missing_get_response = client.get("/api/jobs/999999")
+                missing_patch_response = client.patch(
+                    "/api/jobs/999999",
+                    json={"status": "cancelled"},
+                )
+
+        self.assertEqual(get_response.status_code, 200)
+        self.assertEqual(get_response.json()["id"], queued_id)
+        self.assertEqual(cancel_response.status_code, 200)
+        cancelled = cancel_response.json()
+        self.assertEqual(cancelled["id"], queued_id)
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertNotEqual(cancelled["finished_at"], "")
+        self.assertEqual(running_cancel_response.status_code, 409)
+        self.assertEqual(requeue_response.status_code, 200)
+        requeued = requeue_response.json()
+        self.assertEqual(requeued["id"], failed_id)
+        self.assertEqual(requeued["status"], "queued")
+        self.assertEqual(requeued["log_path"], "")
+        self.assertEqual(requeued["error"], "")
+        self.assertEqual(requeued["started_at"], "")
+        self.assertEqual(requeued["finished_at"], "")
+        self.assertEqual(invalid_target_response.status_code, 409)
+        self.assertEqual(missing_get_response.status_code, 404)
+        self.assertEqual(missing_patch_response.status_code, 404)
 
 
 if __name__ == "__main__":

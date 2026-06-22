@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from simple_deploy.core.env import windows_release_root
+from simple_deploy.core.job_logging import job_log
 
 
 def resolve_release_dir(
@@ -14,7 +15,7 @@ def resolve_release_dir(
     Возвращает build version и директорию релиза по явной версии или latest.
     """
     release_root = windows_release_root(env)
-    print(f"RESOLVE release root: {release_root}", flush=True)
+    job_log(f"RESOLVE release root: {release_root}")
     if latest:
         dirs = (
             [path for path in release_root.iterdir() if path.is_dir()]
@@ -26,16 +27,12 @@ def resolve_release_dir(
                 f"В {release_root} не найдены директории релизов"
             )
         selected = max(dirs, key=lambda path: path.stat().st_mtime)
-        print(
-            f"RESOLVE latest release: {selected.name} ({selected})", flush=True
-        )
+        job_log(f"RESOLVE latest release: {selected.name} ({selected})")
         return selected.name, selected
     if not build_version:
         raise RuntimeError("Укажите --build-version или --latest")
     selected = release_root / build_version
-    print(
-        f"RESOLVE requested release: {selected.name} ({selected})", flush=True
-    )
+    job_log(f"RESOLVE requested release: {selected.name} ({selected})")
     return build_version, selected
 
 

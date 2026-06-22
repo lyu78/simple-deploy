@@ -10,6 +10,7 @@ from urllib import error, parse, request
 
 from simple_deploy.core.commands import decode_subprocess_output, run_or_raise
 from simple_deploy.core.env import require_value
+from simple_deploy.core.job_logging import job_log
 from simple_deploy.core.paths import DEFAULT_TIMEOUT
 from simple_deploy.core.ssh import ssh_command
 
@@ -76,39 +77,35 @@ def check_portal_release_version(
 ) -> None:
     """Проверяет, что версия видна в HTML или React assets."""
     if not runtime.get("portal_version_check_enabled", True):
-        print("SKIP portal version check: disabled")
+        job_log("SKIP portal version check: disabled")
         return
     if not expected_version:
-        print("SKIP portal version check: build version unknown")
+        job_log("SKIP portal version check: build version unknown")
         return
 
     validate = bool(runtime.get("healthcheck_validate_certs", False))
     context = None if validate else ssl._create_unverified_context()
     url = f"https://{require_value(env, 'DEV_DOMAIN')}/"
-    print(
-        f"RUN portal version check: {url} expected={expected_version}",
-        flush=True,
-    )
+    job_log(f"RUN portal version check: {url} expected={expected_version}")
 
     html = read_http_text(url, context)
     if version_found_in_text(html, expected_version):
-        print(f"PASS portal version check: found {expected_version} in HTML")
+        job_log(f"PASS portal version check: found {expected_version} in HTML")
         return
 
     asset_limit = int(runtime.get("portal_version_asset_limit", 20))
     script_urls = script_urls_from_html(url, html)[:asset_limit]
-    print(
-        f"RUN portal version check: scanning {len(script_urls)} React assets",
-        flush=True,
+    job_log(
+        f"RUN portal version check: scanning {len(script_urls)} React assets"
     )
     for asset_url in script_urls:
         try:
             asset_text = read_http_text(asset_url, context)
         except Exception as exc:
-            print(f"SKIP portal asset {asset_url}: {exc}", flush=True)
+            job_log(f"SKIP portal asset {asset_url}: {exc}")
             continue
         if version_found_in_text(asset_text, expected_version):
-            print(
+            job_log(
                 f"PASS portal version check: found {expected_version} "
                 f"in {asset_url}"
             )
@@ -123,7 +120,7 @@ def check_portal_release_version(
 def verify_maintenance_stub_http(env: dict[str, str], runtime: dict) -> None:
     """Проверяет по HTTP, что maintenance stub отдает ожидаемый маркер."""
     if not runtime.get("maintenance_stub_verify_enabled", True):
-        print("SKIP maintenance stub HTTP check: disabled")
+        job_log("SKIP maintenance stub HTTP check: disabled")
         return
 
     marker = str(runtime.get("maintenance_stub_verify_marker", "")).strip()
@@ -137,24 +134,20 @@ def verify_maintenance_stub_http(env: dict[str, str], runtime: dict) -> None:
     base_url = f"https://{require_value(env, 'DEV_DOMAIN')}/"
     last_error = ""
 
-    print(
+    job_log(
         f"RUN maintenance stub HTTP check: {base_url} marker={marker!r} "
-        f"(retries={retries}, delay={delay}s)",
-        flush=True,
+        f"(retries={retries}, delay={delay}s)"
     )
     for attempt in range(1, retries + 1):
         url = (
             base_url
             + f"?simple_deploy_maintenance_check={int(time.time())}_{attempt}"
         )
-        print(
-            f"RUN maintenance stub HTTP check attempt {attempt}/{retries}",
-            flush=True,
-        )
+        job_log(f"RUN maintenance stub HTTP check attempt {attempt}/{retries}")
         try:
             html = read_http_text(url, context)
             if marker in html:
-                print("PASS maintenance stub HTTP check: marker found")
+                job_log("PASS maintenance stub HTTP check: marker found")
                 return
             preview = re.sub(r"\s+", " ", html).strip()[:300]
             last_error = f"marker not found; response preview: {preview}"
@@ -178,23 +171,22 @@ def healthcheck(
     url = f"https://{require_value(env, 'DEV_DOMAIN')}/"
     context = None if validate else ssl._create_unverified_context()
     last_error = ""
-    print(
+    job_log(
         f"RUN healthcheck HTTP: {url} (retries={retries}, delay={delay}s)",
-        flush=True,
     )
     for attempt in range(1, retries + 1):
-        print(f"RUN healthcheck attempt {attempt}/{retries}", flush=True)
+        job_log(f"RUN healthcheck attempt {attempt}/{retries}")
         try:
             with request.urlopen(
                 url, timeout=DEFAULT_TIMEOUT, context=context
             ) as response:
                 if response.status in {200, 302, 401, 403}:
-                    print(f"PASS healthcheck HTTP {response.status}")
+                    job_log(f"PASS healthcheck HTTP {response.status}")
                     break
                 last_error = f"HTTP {response.status}"
         except error.HTTPError as exc:
             if exc.code in {200, 302, 401, 403}:
-                print(f"PASS healthcheck HTTP {exc.code}")
+                job_log(f"PASS healthcheck HTTP {exc.code}")
                 break
             last_error = f"HTTP {exc.code}"
         except Exception as exc:
@@ -208,7 +200,7 @@ def healthcheck(
     app_user = require_value(env, "APP_VM_USER")
     app_host = require_value(env, "APP_VM_HOST")
     for command in runtime.get("healthcheck_commands", []):
-        print(f"RUN healthcheck command: {command}", flush=True)
+        job_log(f"RUN healthcheck command: {command}")
         run_or_raise(
             f"healthcheck command: {command}",
             ssh_command(env, app_user, app_host, command, "APP", timeout=120),

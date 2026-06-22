@@ -21,6 +21,11 @@ from simple_deploy.entities.release import (
     SourceRepositoryRevision,
     SourceSnapshot,
 )
+from simple_deploy.release.manifest import (  # noqa: E402
+    build_release_manifest,
+    manifest_from_release_bundle,
+    release_bundle_from_manifest,
+)
 from simple_deploy.types.artifact import ArtifactKindEnum, ArtifactScopeEnum
 from simple_deploy.types.contour import ContourCodeEnum
 from simple_deploy.types.status import DeploymentAttemptStatusEnum
@@ -174,6 +179,39 @@ class ReleaseEntityTests(unittest.TestCase):
                 created_at=TEST_TIMESTAMP,
                 build_attempt_id=0,
             )
+
+    def test_release_manifest_round_trips_through_bundle_aggregate(self):
+        """Manifest adapter сохраняет текущую JSON-форму вокруг ReleaseBundle."""
+        backend_repo = {
+            "source_repo_path": "backend",
+            "source_remote_url": "https://example/backend.git",
+            "branch": "dev",
+            "commit_sha": "abc123",
+            "commit_short_sha": "abc123",
+        }
+        frontend_repo = {
+            "source_repo_path": "frontend",
+            "source_remote_url": "https://example/frontend.git",
+            "branch": "dev",
+            "commit_sha": "def456",
+            "commit_short_sha": "def456",
+        }
+        manifest = build_release_manifest(
+            TEST_BUILD_VERSION,
+            backend_repo,
+            frontend_repo,
+            backend_artifacts={"db_data_sql_enabled": False},
+        )
+
+        bundle = release_bundle_from_manifest(manifest, build_attempt_id=7)
+        restored = manifest_from_release_bundle(bundle)
+
+        self.assertEqual(bundle.build_version, TEST_BUILD_VERSION)
+        self.assertEqual(bundle.build_attempt_id, 7)
+        self.assertEqual(
+            bundle.source_snapshot.revisions[0].commit_sha, "abc123"
+        )
+        self.assertEqual(restored, manifest)
 
 
 if __name__ == "__main__":

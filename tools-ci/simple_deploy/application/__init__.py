@@ -6,10 +6,10 @@ jobs. Он принимает request-модели, вызывает process/use
 возвращает результат без знания о HTTP, argparse dispatch или SQLite schema
 details.
 
-На текущем срезе сервисы делегируют существующим ``processes`` modules через
-приватный adapter к их namespace-like контракту. Это сохраняет поведение
-Windows runner-а и дает отдельную точку подключения для будущих API/job
-endpoints.
+Сервисы делегируют существующим ``processes`` modules через типизированные
+request DTO. CLI остается внешним adapter-ом: он разбирает ``argparse`` и
+сразу преобразует результат в request-модель, поэтому application/process
+граница не зависит от формы командной строки.
 """
 
 from simple_deploy.application.requests import (
@@ -22,14 +22,23 @@ from simple_deploy.application.requests import (
     RunnerCommandRequest,
     SetBaselineRequest,
 )
+from simple_deploy.application.results import ProcessResult
 from simple_deploy.application.services import (
     build,
+    build_result,
     deploy,
+    deploy_result,
     dry_run,
+    dry_run_result,
     mark_applied,
+    mark_applied_result,
     mark_failed,
+    mark_failed_result,
     pipeline,
+    pipeline_result,
+    result_for_request,
     set_baseline,
+    set_baseline_result,
 )
 
 __all__ = [
@@ -39,13 +48,22 @@ __all__ = [
     "MarkAppliedRequest",
     "MarkFailedRequest",
     "PipelineRequest",
+    "ProcessResult",
     "RunnerCommandRequest",
     "SetBaselineRequest",
     "build",
+    "build_result",
     "deploy",
+    "deploy_result",
     "dry_run",
+    "dry_run_result",
     "mark_applied",
+    "mark_applied_result",
     "mark_failed",
+    "mark_failed_result",
     "pipeline",
+    "pipeline_result",
+    "result_for_request",
     "set_baseline",
+    "set_baseline_result",
 ]

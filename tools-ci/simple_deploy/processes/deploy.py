@@ -7,8 +7,8 @@ schema/data SQL, management commands, healthcheck, фиксацию state и ema
 
 from __future__ import annotations
 
-import argparse
-
+from simple_deploy.application.requests import DeployRequest
+from simple_deploy.application.results import ProcessResult
 from simple_deploy.config.runtime_loader import load_runtime_config
 from simple_deploy.core.commands import run_or_raise
 from simple_deploy.core.env import load_env, require_value
@@ -48,7 +48,7 @@ from simple_deploy.release.artifacts import (
 )
 
 
-def deploy(args: argparse.Namespace) -> int:
+def deploy(request: DeployRequest) -> ProcessResult:
     """
     Выполняет deploy выбранного релиза на указанный контур.
 
@@ -59,15 +59,19 @@ def deploy(args: argparse.Namespace) -> int:
 
     """
     print("DEPLOY load config", flush=True)
-    app_only = bool(getattr(args, "app_only", False))
+    app_only = request.app_only
     env = load_env(
-        args.env_file, args.secrets_file, require_secrets=not app_only
+        request.env_file,
+        request.secrets_file,
+        require_secrets=not app_only,
     )
-    runtime, _defaulted_runtime_keys = load_runtime_config(args.config_file)
+    runtime, _defaulted_runtime_keys = load_runtime_config(
+        request.config_file
+    )
     build_version, release_dir = resolve_release_dir(
-        env, args.build_version, args.latest
+        env, request.build_version, request.latest
     )
-    contour = validate_contour(args.contour)
+    contour = validate_contour(request.contour.value)
     print(f"DEPLOY build_version: {build_version}", flush=True)
     print(f"DEPLOY contour: {contour}", flush=True)
     print(f"DEPLOY release_dir: {release_dir}", flush=True)
@@ -153,8 +157,8 @@ def deploy(args: argparse.Namespace) -> int:
                     env,
                     runtime,
                     db_update_parallel_artifact,
-                    include_set_default_sql=getattr(
-                        args, "include_set_default_sql", False
+                    include_set_default_sql=(
+                        request.include_set_default_sql
                     ),
                 )
             for phase in ("before_unpack", "before_migrate", "after_migrate"):
@@ -215,7 +219,11 @@ def deploy(args: argparse.Namespace) -> int:
                 flush=True,
             )
         raise
-    return 0
+    return ProcessResult.success(
+        "deploy completed",
+        build_version=build_version,
+        contour=request.contour,
+    )
 
 
 __all__ = ["deploy"]

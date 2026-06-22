@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 from simple_deploy.registry.state import (
+    cancel_job,
+    claim_next_job,
     create_job,
     get_job,
     JOB_STATUSES,
@@ -16,14 +18,20 @@ from simple_deploy.registry.state import (
     list_jobs,
     mark_job_finished,
     mark_job_started,
+    requeue_job,
+    set_job_log_path,
 )
 
 __all__ = [
     "JOB_STATUSES",
     "JobRecord",
+    "cancel_job",
+    "claim_next_job",
     "create_job",
     "get_job",
     "list_jobs",
     "mark_job_finished",
     "mark_job_started",
+    "requeue_job",
+    "set_job_log_path",
 ]

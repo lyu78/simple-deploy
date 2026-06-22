@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 import subprocess
 import sys
 import time
 from typing import Iterable
 
+from simple_deploy.core.job_logging import JOB_LOGGER_NAME
 from simple_deploy.core.paths import DEFAULT_TIMEOUT
 from simple_deploy.types.fields import CommandStderrText, CommandStdoutText
 
@@ -45,6 +47,18 @@ def mask_text(text: str, mask: Iterable[str] = ()) -> str:
         if secret:
             masked = masked.replace(secret, "***")
     return masked
+
+
+def _log_line(message: str, *, error: bool = False) -> None:
+    """Writes a command log line through the job logger or stdout fallback."""
+    logger = logging.getLogger(JOB_LOGGER_NAME)
+    if logger.handlers:
+        if error:
+            logger.error(message)
+        else:
+            logger.info(message)
+        return
+    print(message, file=sys.stderr if error else sys.stdout, flush=True)
 
 
 def run_command(
@@ -93,7 +107,7 @@ def stream_command(
     """Запускает команду и сразу печатает объединенный stdout/stderr."""
     mask_values = tuple(mask)
     printable_args = [mask_text(str(arg), mask_values) for arg in args]
-    print(f"RUN {' '.join(printable_args)}", flush=True)
+    _log_line(f"RUN {' '.join(printable_args)}")
     process = subprocess.Popen(
         args,
         cwd=cwd,
@@ -105,18 +119,11 @@ def stream_command(
     try:
         assert process.stdout is not None
         for line in process.stdout:
-            print(
-                mask_text(decode_subprocess_output(line), mask_values),
-                end="",
-                flush=True,
-            )
+            text = mask_text(decode_subprocess_output(line), mask_values)
+            _log_line(text.rstrip("\r\n"))
             if timeout is not None and time.monotonic() - start > timeout:
                 process.kill()
-                print(
-                    f"ERROR: timeout after {timeout}s",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                _log_line(f"ERROR: timeout after {timeout}s", error=True)
                 return 124
         return process.wait()
     finally:
@@ -127,7 +134,7 @@ def stream_command(
 def run_or_raise(
     label: str, result: CommandResult, mask: Iterable[str] = ()
 ) -> None:
-    print(f"CHECK {label}", flush=True)
+    _log_line(f"CHECK {label}")
     stdout = result.stdout.strip()
     stderr = result.stderr.strip()
     for secret in mask:
@@ -136,10 +143,10 @@ def run_or_raise(
             stderr = stderr.replace(secret, "***")
     if result.rc == 0:
         if stdout:
-            print(f"STDOUT {label}:\n{stdout}", flush=True)
+            _log_line(f"STDOUT {label}:\n{stdout}")
         if stderr:
-            print(f"STDERR {label}:\n{stderr}", flush=True)
-        print(f"PASS {label}")
+            _log_line(f"STDERR {label}:\n{stderr}")
+        _log_line(f"PASS {label}")
         return
     detail_parts = [f"rc={result.rc}"]
     if stdout:

@@ -1,19 +1,22 @@
 """
-Web/API поверхность только для чтения над локальным registry state.
+Web/API поверхность над локальным registry state.
 
 Модуль предоставляет FastAPI-приложение и HTML dashboard для просмотра той же
 SQLite-базы, которую используют CLI и builder. Read projections собираются в
 ``simple_deploy.registry.queries``; здесь остаются HTTP routes, DTO conversion
-и HTML rendering. Текущий v1 слой ничего не запускает и не меняет состояние
-релизов.
+и HTML rendering. Write endpoints создают local job resource, но не выполняют
+долгие build/deploy операции внутри HTTP-запроса.
 """
 
 from __future__ import annotations
 
+import asyncio
 from html import escape
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from simple_deploy.dto.state import (
     dto_dump,
@@ -22,19 +25,45 @@ from simple_deploy.dto.state import (
     ReleaseDto,
     StateSnapshotDto,
 )
+from simple_deploy.jobs.runner import REQUEST_MODELS, create_job_for_request
 from simple_deploy.models.state import StateSnapshotReadModel
+from simple_deploy.registry.commands import (
+    cancel_local_job,
+    requeue_local_job,
+)
 from simple_deploy.registry import queries as _registry_queries
+from simple_deploy.types.job import JobKindEnum
+from simple_deploy.types.status import JobStatusEnum
 
 _external_request_read_models_from_state = (
     _registry_queries.external_request_read_models_from_state
 )
 _job_read_models_from_state = _registry_queries.job_read_models_from_state
+_job_read_model_from_state = _registry_queries.job_read_model_from_state
 _release_read_models_from_state = (
     _registry_queries.release_read_models_from_state
 )
 _state_snapshot_read_model = _registry_queries.state_snapshot_read_model
 
 app = FastAPI(title="simple-deploy", version="0.1.0")
+TERMINAL_JOB_STATUSES = {"success", "failed", "cancelled"}
+
+
+class JobCreateRequest(BaseModel):
+    """HTTP payload создания queued local job."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: JobKindEnum
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class JobUpdateRequest(BaseModel):
+    """HTTP payload изменения lifecycle state local job."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: JobStatusEnum
 
 
 def state_snapshot_model(limit: int = 50) -> StateSnapshotReadModel:
@@ -84,6 +113,114 @@ def api_jobs(limit: int = 50) -> list[JobDto]:
         JobDto.model_validate(job)
         for job in _job_read_models_from_state(limit=limit)
     ]
+
+
+@app.get("/api/jobs/{job_id}", response_model=JobDto)
+def api_job(job_id: int) -> JobDto:
+    """Возвращает одну local job по id."""
+    job = _job_read_model_from_state(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404, detail=f"Local job not found: id={job_id}"
+        )
+    return JobDto.model_validate(job)
+
+
+@app.post("/api/jobs", response_model=JobDto, status_code=201)
+def api_create_job(request: JobCreateRequest) -> JobDto:
+    """Создает queued local job из HTTP payload без выполнения use case."""
+    request_model = REQUEST_MODELS[request.kind]
+    application_request = request_model.model_validate(request.payload)
+    job = create_job_for_request(application_request)
+    return JobDto.model_validate(job)
+
+
+@app.patch("/api/jobs/{job_id}", response_model=JobDto)
+def api_update_job(job_id: int, request: JobUpdateRequest) -> JobDto:
+    """Изменяет lifecycle status local job допустимым transition-ом."""
+    try:
+        if request.status == JobStatusEnum.CANCELLED:
+            result = cancel_local_job(job_id)
+        elif request.status == JobStatusEnum.QUEUED:
+            result = requeue_local_job(job_id)
+        else:
+            raise ValueError(
+                "Unsupported local job status transition target: "
+                f"{request.status.value}"
+            )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return JobDto.model_validate(result.job)
+
+
+def _tail_text_file(path: str, offset: int) -> tuple[str, int]:
+    """Reads new UTF-8 text from a log file starting at byte offset."""
+    if not path:
+        return "", offset
+    log_path = Path(path)
+    if not log_path.exists() or not log_path.is_file():
+        return "", offset
+    with log_path.open("rb") as log_file:
+        log_file.seek(offset)
+        data = log_file.read()
+        next_offset = log_file.tell()
+    return data.decode("utf-8", errors="replace"), next_offset
+
+
+@app.websocket("/ws/jobs/{job_id}")
+async def ws_job_logs(
+    websocket: WebSocket,
+    job_id: int,
+    poll_interval: float = 0.5,
+) -> None:
+    """Streams job status and log file deltas over WebSocket."""
+    await websocket.accept()
+    job = _registry_queries.job_read_model_from_state(job_id)
+    if job is None:
+        await websocket.send_json(
+            {"type": "error", "message": f"job not found: {job_id}"}
+        )
+        await websocket.close()
+        return
+
+    await websocket.send_json(
+        {
+            "type": "snapshot",
+            "job": dto_dump(JobDto.model_validate(job)),
+        }
+    )
+    offset = 0
+    last_status = job.status.value
+    interval = max(0.1, poll_interval)
+
+    while True:
+        job = _registry_queries.job_read_model_from_state(job_id)
+        if job is None:
+            await websocket.send_json(
+                {"type": "error", "message": f"job not found: {job_id}"}
+            )
+            await websocket.close()
+            return
+
+        text, offset = _tail_text_file(job.log_path, offset)
+        if text:
+            await websocket.send_json(
+                {"type": "log", "text": text, "offset": offset}
+            )
+
+        status = job.status.value
+        if status != last_status:
+            await websocket.send_json({"type": "status", "status": status})
+            last_status = status
+
+        if status in TERMINAL_JOB_STATUSES:
+            await websocket.send_json({"type": "done", "status": status})
+            await websocket.close()
+            return
+
+        await asyncio.sleep(interval)
 
 
 @app.get("/api/requests", response_model=list[ExternalRequestDto])
@@ -265,7 +402,7 @@ def render_dashboard(snapshot: dict) -> str:
     <div>
       <h1>simple-deploy</h1>
       <div class="meta">
-        <span class="pill">только чтение v1</span>
+        <span class="pill">registry v1</span>
         <a href="/api/state">/api/state</a>
       </div>
     </div>

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 from pathlib import Path
 import shutil
@@ -100,9 +99,9 @@ def prepare_frontend_env_files(
             set_env_line(target, key, value)
 
 
-def data_sql_artifacts_enabled(args: argparse.Namespace) -> bool:
+def data_sql_artifacts_enabled(skip_data_sql_artifacts: bool) -> bool:
     """Возвращает, нужно ли builder-у генерировать data SQL artifacts."""
-    return not getattr(args, "skip_data_sql_artifacts", False)
+    return not skip_data_sql_artifacts
 
 
 __all__ = [

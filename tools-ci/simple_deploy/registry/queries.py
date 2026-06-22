@@ -25,6 +25,7 @@ from simple_deploy.models.state import (
 from simple_deploy.registry.state import (
     all_contour_states,
     connect_state_db,
+    get_job,
     list_build_attempts,
     list_deployment_attempts,
     list_external_requests,
@@ -208,6 +209,15 @@ def job_read_models_from_state(limit: int = 50) -> list[JobReadModel]:
         ]
 
 
+def job_read_model_from_state(job_id: int) -> JobReadModel | None:
+    """Читает одну local job как read model без раскрытия storage dataclass."""
+    with closing(connect_state_db()) as connection:
+        job = get_job(connection, job_id)
+    if job is None:
+        return None
+    return JobReadModel.model_validate(job)
+
+
 def external_request_read_models_from_state(
     limit: int = 50,
 ) -> list[ExternalRequestReadModel]:
@@ -266,6 +276,7 @@ __all__ = [
     "bounded_limit",
     "contour_state_read_models",
     "external_request_read_models_from_state",
+    "job_read_model_from_state",
     "job_read_models_from_state",
     "release_read_models",
     "release_read_models_from_state",

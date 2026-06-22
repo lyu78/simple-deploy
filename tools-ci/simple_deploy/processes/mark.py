@@ -9,10 +9,16 @@ deploy-попытки. Источники истины разделены явн
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
+from simple_deploy.application.requests import (
+    MarkAppliedRequest,
+    MarkFailedRequest,
+    SetBaselineRequest,
+)
+from simple_deploy.application.results import ProcessResult
 from simple_deploy.core.env import load_env
+from simple_deploy.core.job_logging import job_log
 from simple_deploy.core.release_paths import resolve_release_dir
 from simple_deploy.registry.commands import (
     record_deployment_applied,
@@ -34,11 +40,10 @@ def mark_contour_applied(
     """
     backend_commit = release_backend_commit(release_dir)
     result = record_deployment_applied(contour, build_version, backend_commit)
-    print(
+    job_log(
         f"MARK applied: contour={result.contour} "
         f"build_version={result.build_version} "
-        f"backend_commit={result.backend_commit}",
-        flush=True,
+        f"backend_commit={result.backend_commit}"
     )
 
 
@@ -58,11 +63,10 @@ def mark_contour_failed(
     result = record_deployment_failed(
         contour, build_version, backend_commit, error_text
     )
-    print(
+    job_log(
         f"MARK failed: contour={result.contour} "
         f"build_version={result.build_version} "
-        f"backend_commit={result.backend_commit}",
-        flush=True,
+        f"backend_commit={result.backend_commit}"
     )
 
 
@@ -80,15 +84,14 @@ def mark_contour_failed_best_effort(
     try:
         mark_contour_failed(contour, build_version, release_dir, str(error))
     except Exception as record_error:
-        print(
+        job_log(
             f"WARN failed to record failed deploy attempt: "
             f"contour={contour} build_version={build_version} "
-            f"error={record_error}",
-            flush=True,
+            f"error={record_error}"
         )
 
 
-def set_baseline(args: argparse.Namespace) -> int:
+def set_baseline(request: SetBaselineRequest) -> ProcessResult:
     """
     Устанавливает baseline контура по build version или явному backend commit.
 
@@ -97,56 +100,75 @@ def set_baseline(args: argparse.Namespace) -> int:
     SQL ranges, а не как результат deploy-попытки.
 
     """
-    print("BASELINE load config", flush=True)
-    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
-    contour = validate_contour(args.contour)
-    if args.backend_commit:
-        build_version = args.build_version or "manual-baseline"
-        backend_commit = args.backend_commit.strip()
+    job_log("BASELINE load config")
+    env = load_env(
+        request.env_file, request.secrets_file, require_secrets=False
+    )
+    contour = validate_contour(request.contour.value)
+    if request.backend_commit:
+        build_version = request.build_version or "manual-baseline"
+        backend_commit = request.backend_commit.strip()
     else:
         build_version, release_dir = resolve_release_dir(
-            env, args.build_version, latest=False
+            env, request.build_version, latest=False
         )
         backend_commit = release_backend_commit(release_dir)
     result = set_contour_baseline(contour, build_version, backend_commit)
-    print(
+    job_log(
         f"BASELINE set: contour={result.contour} "
         f"build_version={result.build_version} "
-        f"backend_commit={result.backend_commit}",
-        flush=True,
+        f"backend_commit={result.backend_commit}"
     )
-    return 0
+    return ProcessResult.success(
+        "baseline set",
+        build_version=build_version,
+        contour=request.contour,
+    )
 
 
-def mark_applied(args: argparse.Namespace) -> int:
-    """CLI-обертка для фиксации успешного применения релиза.
+def mark_applied(request: MarkAppliedRequest) -> ProcessResult:
+    """Фиксирует успешное применение релиза по application request.
 
     Команда читает release dir через текущий runner contract и затем вызывает
     ``mark_contour_applied``. Baseline двигается только после успешного чтения
     backend commit из manifest.
     """
-    print("MARK-APPLIED load config", flush=True)
-    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
-    build_version, release_dir = resolve_release_dir(
-        env, args.build_version, latest=False
+    job_log("MARK-APPLIED load config")
+    env = load_env(
+        request.env_file, request.secrets_file, require_secrets=False
     )
-    mark_contour_applied(args.contour, build_version, release_dir)
-    return 0
+    build_version, release_dir = resolve_release_dir(
+        env, request.build_version, latest=False
+    )
+    mark_contour_applied(request.contour.value, build_version, release_dir)
+    return ProcessResult.success(
+        "deploy marked as applied",
+        build_version=build_version,
+        contour=request.contour,
+    )
 
 
-def mark_failed(args: argparse.Namespace) -> int:
-    """CLI-обертка для фиксации неуспешного применения релиза.
+def mark_failed(request: MarkFailedRequest) -> ProcessResult:
+    """Фиксирует неуспешное применение релиза по application request.
 
     Команда пишет failed attempt и не меняет baseline контура. Текст ошибки
-    берется из CLI-аргумента ``--error`` без дополнительной нормализации.
+    берется из request без дополнительной нормализации.
     """
-    print("MARK-FAILED load config", flush=True)
-    env = load_env(args.env_file, args.secrets_file, require_secrets=False)
-    build_version, release_dir = resolve_release_dir(
-        env, args.build_version, latest=False
+    job_log("MARK-FAILED load config")
+    env = load_env(
+        request.env_file, request.secrets_file, require_secrets=False
     )
-    mark_contour_failed(args.contour, build_version, release_dir, args.error)
-    return 0
+    build_version, release_dir = resolve_release_dir(
+        env, request.build_version, latest=False
+    )
+    mark_contour_failed(
+        request.contour.value, build_version, release_dir, request.error
+    )
+    return ProcessResult.success(
+        "deploy marked as failed",
+        build_version=build_version,
+        contour=request.contour,
+    )
 
 
 __all__ = [

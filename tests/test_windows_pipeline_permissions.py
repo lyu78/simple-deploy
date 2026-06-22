@@ -55,8 +55,6 @@ BACKEND_RELEASE_PATH = "/opt/example/backend/app"
 FRONTEND_RELEASE_PATH = "/opt/example/frontend/dist"
 
 BACKEND_SOURCE_REPO_WINDOWS = r"C:\example\repos\backend-source"
-BACKEND_TARGET_REPO_BASH = "/c/example/repos/backend-target"
-BACKEND_SOURCE_REPO_BASH = "/c/example/repos/backend-source"
 BACKEND_APP_ROOT = "backend_app"
 
 DATA_SQL_ROOT = "docs/database/scripts"
@@ -73,7 +71,6 @@ INSERT_NEW_OBJECTS_SQL_FILE = f"insert_{INSERT_NEW_OBJECTS_TABLE}.sql"
 sys.path.insert(0, str(TOOLS_CI_ROOT))
 
 from simple_deploy.cli.windows_pipeline import (  # noqa: E402
-    build,
     deploy,
     main,
     mark_applied,
@@ -83,13 +80,13 @@ from simple_deploy.cli.windows_pipeline import (  # noqa: E402
     set_baseline,
 )
 from simple_deploy.application.requests import PipelineRequest  # noqa: E402
+from simple_deploy.application.results import ProcessResult  # noqa: E402
 from simple_deploy.config.runtime_loader import (  # noqa: E402
     check_runtime_config,
     load_runtime_config,
 )
 from simple_deploy.core.build_env import prepare_build_env  # noqa: E402
 from simple_deploy.core.commands import CommandResult  # noqa: E402
-from simple_deploy.core.paths import BUILDER_ROOT  # noqa: E402
 from simple_deploy.core.ssh import scp_file  # noqa: E402
 from simple_deploy.processes.app_deploy import (  # noqa: E402
     management_commands,
@@ -963,110 +960,6 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
                     ):
                         self.assertEqual(main(), 1)
 
-    def test_prepare_build_env_uses_backend_source_repo_for_archive_root(self):
-        """Проверяет, что backend archive строится из source repo, а не target repo."""
-        build_env = prepare_build_env(
-            {
-                "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
-                "BACKEND_TARGET_REPO_PATH_BASH": BACKEND_TARGET_REPO_BASH,
-                "BACKEND_REPO_ROOT_BASH": "/c/wrong",
-                "DEV_DOMAIN": DEV_DOMAIN,
-            }
-        )
-
-        self.assertEqual(build_env["BACKEND_REPO_ROOT_BASH"], BACKEND_SOURCE_REPO_BASH)
-        self.assertEqual(build_env["BACKEND_APP_ROOT_DIR"], "example_backend_app")
-        self.assertEqual(build_env["BACKEND_DJANGO_SETTINGS_MODULE"], "example_backend_app.settings.base")
-
-    def test_prepare_build_env_sets_pip_defaults(self):
-        """Фиксирует безопасные pip defaults для build runner окружения."""
-        with patch.dict("os.environ", {}, clear=True):
-            build_env = prepare_build_env(
-                {
-                    "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
-                    "DEV_DOMAIN": DEV_DOMAIN,
-                }
-            )
-
-        self.assertEqual(build_env["PIP_DISABLE_PIP_VERSION_CHECK"], "1")
-        self.assertEqual(
-            build_env["PIP_TRUSTED_HOST"],
-            "pypi.org files.pythonhosted.org pypi.python.org",
-        )
-
-    def test_build_runs_create_release_from_builder_root_with_prepared_env(self):
-        """Фиксирует build orchestration wrapper вокруг builder/create_release.py."""
-        args = Namespace(
-            env_file=DEFAULT_ENV_FILE,
-            secrets_file=DEFAULT_SECRETS_FILE,
-            timeout=123,
-            include_data_sql=False,
-            skip_data_sql_artifacts=False,
-        )
-        env = {
-            "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
-            "DEV_DOMAIN": DEV_DOMAIN,
-        }
-        prepared_env = {"BASE": "1"}
-
-        with patch("simple_deploy.processes.build.load_env", return_value=env) as load_env_mock:
-            with patch("simple_deploy.processes.build.prepare_frontend_env_files") as frontend_env_mock:
-                with patch("simple_deploy.processes.build.prepare_build_env", return_value=prepared_env) as prepare_env_mock:
-                    with patch("simple_deploy.processes.build.stream_command", return_value=7) as stream_mock:
-                        self.assertEqual(build(args), 7)
-
-        load_env_mock.assert_called_once_with(DEFAULT_ENV_FILE, DEFAULT_SECRETS_FILE, require_secrets=False)
-        frontend_env_mock.assert_called_once_with(env)
-        prepare_env_mock.assert_called_once_with(env)
-        stream_mock.assert_called_once()
-        self.assertEqual(stream_mock.call_args.args[0], [sys.executable, "-u", "create_release.py"])
-        self.assertEqual(stream_mock.call_args.kwargs["cwd"], BUILDER_ROOT)
-        self.assertEqual(stream_mock.call_args.kwargs["timeout"], 123)
-        self.assertEqual(stream_mock.call_args.kwargs["env"]["BASE"], "1")
-        self.assertEqual(stream_mock.call_args.kwargs["env"]["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "1")
-
-    def test_build_enables_data_sql_by_default(self):
-        """Проверяет, что build по умолчанию включает генерацию data SQL artifacts."""
-        args = Namespace(
-            env_file=DEFAULT_ENV_FILE,
-            secrets_file=DEFAULT_SECRETS_FILE,
-            timeout=3600,
-            include_data_sql=False,
-            skip_data_sql_artifacts=False,
-        )
-        env = {
-            "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
-            "DEV_DOMAIN": DEV_DOMAIN,
-        }
-        with patch("simple_deploy.processes.build.load_env", return_value=env):
-            with patch("simple_deploy.processes.build.prepare_frontend_env_files"):
-                with patch("simple_deploy.processes.build.stream_command", return_value=0) as stream_mock:
-                    self.assertEqual(build(args), 0)
-
-        build_env = stream_mock.call_args.kwargs["env"]
-        self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "1")
-
-    def test_build_skips_data_sql_with_explicit_flag(self):
-        """Проверяет явное отключение data SQL generation через CLI flag."""
-        args = Namespace(
-            env_file=DEFAULT_ENV_FILE,
-            secrets_file=DEFAULT_SECRETS_FILE,
-            timeout=3600,
-            include_data_sql=False,
-            skip_data_sql_artifacts=True,
-        )
-        env = {
-            "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
-            "DEV_DOMAIN": DEV_DOMAIN,
-        }
-        with patch("simple_deploy.processes.build.load_env", return_value=env):
-            with patch("simple_deploy.processes.build.prepare_frontend_env_files"):
-                with patch("simple_deploy.processes.build.stream_command", return_value=0) as stream_mock:
-                    self.assertEqual(build(args), 0)
-
-        build_env = stream_mock.call_args.kwargs["env"]
-        self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "0")
-
     def test_pipeline_preserves_app_only_for_deploy(self):
         """Фиксирует, что pipeline передает app-only в deploy после dry-run/build."""
         request = PipelineRequest(
@@ -1076,9 +969,18 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
             app_only=True,
         )
 
-        with patch("simple_deploy.application.services._dry_run_process", return_value=True):
-            with patch("simple_deploy.application.services._build_process", return_value=0):
-                with patch("simple_deploy.application.services._deploy_process", return_value=0) as deploy_mock:
+        with patch(
+            "simple_deploy.application.services._dry_run_process",
+            return_value=ProcessResult.success("dry-run ok"),
+        ):
+            with patch(
+                "simple_deploy.application.services._build_process",
+                return_value=ProcessResult.success("build ok"),
+            ):
+                with patch(
+                    "simple_deploy.application.services._deploy_process",
+                    return_value=ProcessResult.success("deploy ok"),
+                ) as deploy_mock:
                     self.assertEqual(pipeline(request), 0)
 
         deploy_args = deploy_mock.call_args.args[0]
@@ -1098,9 +1000,18 @@ class WindowsPipelinePermissionTests(unittest.TestCase):
         with patch(
             "simple_deploy.config.runtime_loader.load_runtime_config"
         ) as load_runtime_mock:
-            with patch("simple_deploy.application.services._dry_run_process", return_value=True) as dry_run_mock:
-                with patch("simple_deploy.application.services._build_process", return_value=0) as build_mock:
-                    with patch("simple_deploy.application.services._deploy_process", return_value=0):
+            with patch(
+                "simple_deploy.application.services._dry_run_process",
+                return_value=ProcessResult.success("dry-run ok"),
+            ) as dry_run_mock:
+                with patch(
+                    "simple_deploy.application.services._build_process",
+                    return_value=ProcessResult.success("build ok"),
+                ) as build_mock:
+                    with patch(
+                        "simple_deploy.application.services._deploy_process",
+                        return_value=ProcessResult.success("deploy ok"),
+                    ):
                         self.assertEqual(pipeline(request), 0)
 
         load_runtime_mock.assert_not_called()

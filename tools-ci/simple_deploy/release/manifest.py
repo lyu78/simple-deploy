@@ -13,7 +13,92 @@ from datetime import datetime
 import json
 from pathlib import Path
 
+from simple_deploy.entities.release import (
+    ReleaseArtifactRef,
+    ReleaseBundle,
+    SourceRepositoryRevision,
+    SourceSnapshot,
+)
+from simple_deploy.types.artifact import ArtifactKindEnum, ArtifactScopeEnum
+from simple_deploy.types.trigger import ReleaseTriggerTypeEnum
+
 RELEASE_MANIFEST_NAME = "release_manifest.json"
+
+
+def _created_at() -> str:
+    """Возвращает timestamp создания release manifest."""
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _repo_revision(repo_id: str, repo: dict[str, str]) -> SourceRepositoryRevision:
+    """Создает source revision из текущего manifest repository fragment."""
+    return SourceRepositoryRevision(
+        repo_id=repo_id,
+        ref=str(repo.get("branch", "")),
+        commit_sha=str(repo.get("commit_sha", "")),
+        origin_id=str(repo.get("source_remote_url") or repo_id),
+        metadata=repo,
+    )
+
+
+def release_bundle_from_manifest(
+    manifest: dict,
+    *,
+    build_attempt_id: int = 1,
+) -> ReleaseBundle:
+    """Преобразует переносимый manifest dict в доменный release bundle."""
+    repositories = manifest.get("repositories", {})
+    revisions = tuple(
+        _repo_revision(repo_id, repo)
+        for repo_id, repo in repositories.items()
+        if isinstance(repo, dict)
+    )
+    source_snapshot = SourceSnapshot(
+        revisions=revisions,
+        resolved_at=str(manifest.get("created_at", "")),
+        trigger_type=ReleaseTriggerTypeEnum.UNDEFINED,
+    )
+    artifacts = tuple(
+        ReleaseArtifactRef(
+            artifact_id=artifact_id,
+            kind=(
+                ArtifactKindEnum.DB_DATA
+                if artifact_id == "backend_db"
+                else ArtifactKindEnum.MANIFEST
+            ),
+            scope=ArtifactScopeEnum.SHARED,
+            metadata=metadata if isinstance(metadata, dict) else {},
+        )
+        for artifact_id, metadata in manifest.get("artifacts", {}).items()
+    )
+    return ReleaseBundle(
+        build_version=str(manifest.get("build_version", "")),
+        source_snapshot=source_snapshot,
+        artifacts=artifacts,
+        created_at=str(manifest.get("created_at", "")),
+        build_attempt_id=build_attempt_id,
+    )
+
+
+def manifest_from_release_bundle(bundle: ReleaseBundle) -> dict:
+    """Сериализует доменный release bundle в текущую форму release_manifest.json."""
+    repositories = {}
+    for revision in bundle.source_snapshot.revisions:
+        repo = dict(revision.metadata)
+        repo.setdefault("branch", revision.ref)
+        repo.setdefault("commit_sha", revision.commit_sha)
+        repo.setdefault("source_remote_url", revision.origin_id)
+        repositories[revision.repo_id] = repo
+    artifacts = {
+        artifact.artifact_id: dict(artifact.metadata)
+        for artifact in bundle.artifacts
+    }
+    return {
+        "build_version": bundle.build_version,
+        "created_at": bundle.created_at,
+        "repositories": repositories,
+        "artifacts": artifacts,
+    }
 
 
 def build_release_manifest(
@@ -29,17 +114,30 @@ def build_release_manifest(
     отвечает за получение метаданных и последующую запись manifest в директорию
     релиза.
     """
-    return {
-        "build_version": build_version,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "repositories": {
-            "backend": backend_repo,
-            "frontend": frontend_repo,
-        },
-        "artifacts": {
-            "backend_db": backend_artifacts or {},
-        },
-    }
+    created_at = _created_at()
+    source_snapshot = SourceSnapshot(
+        revisions=(
+            _repo_revision("backend", backend_repo),
+            _repo_revision("frontend", frontend_repo),
+        ),
+        resolved_at=created_at,
+        trigger_type=ReleaseTriggerTypeEnum.UNDEFINED,
+    )
+    bundle = ReleaseBundle(
+        build_version=build_version,
+        source_snapshot=source_snapshot,
+        artifacts=(
+            ReleaseArtifactRef(
+                artifact_id="backend_db",
+                kind=ArtifactKindEnum.DB_DATA,
+                scope=ArtifactScopeEnum.SHARED,
+                metadata=backend_artifacts or {},
+            ),
+        ),
+        created_at=created_at,
+        build_attempt_id=1,
+    )
+    return manifest_from_release_bundle(bundle)
 
 
 def write_release_manifest_file(release_dir: Path, manifest: dict) -> Path:
@@ -134,7 +232,9 @@ __all__ = [
     "RELEASE_MANIFEST_NAME",
     "build_release_manifest",
     "find_previous_release_manifest",
+    "manifest_from_release_bundle",
     "load_release_manifest",
+    "release_bundle_from_manifest",
     "release_backend_commit",
     "write_release_manifest_file",
 ]

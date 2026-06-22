@@ -546,7 +546,8 @@ Manifest SQL-артефакта перечисляет Django migration-файл
   `simple_deploy.release.state` является compatibility re-export-ом;
 - registry write/read границы вынесены в `simple_deploy.registry.commands` и
   `simple_deploy.registry.queries`;
-- SQLite schema расширена таблицами `local_jobs` и `external_requests` для будущего запуска долгих операций из web/API и учета заявок TEST/PROD;
+- SQLite schema расширена таблицами `local_jobs` и `external_requests`; jobs
+  создаются из web/API, а выполняются отдельным `simple-deploy worker`;
 - `simple_deploy.core.paths`, `core.commands`, `core.env`, `core.build_env`,
   `core.release_paths`, `core.ssh`, `core.db`, `core.email` и runtime loader теперь вынесены из `windows_pipeline.py`;
 - `processes.build`, `processes.mark`, `processes.dry_run`, `processes.data_sql` и
@@ -554,9 +555,16 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - dry-run проверки живут в `simple_deploy.processes.dry_run_checks`;
 - helper-ы app deploy, HTTP healthcheck и Outlook-уведомлений живут в
   `processes.app_deploy`, `processes.healthcheck` и `processes.notifications`;
-- read-only web/API v1 доступен как `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000`;
+- web/API v1 доступен как `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000`; `POST /api/jobs` создает queued job, `GET /api/jobs/{id}` читает одну job, `PATCH /api/jobs/{id}` меняет lifecycle status (`cancelled` для отмены queued job, `queued` для повторной постановки failed/cancelled job в очередь с тем же `id`), а `/ws/jobs/{id}` стримит job log file;
 - Ansible перенесен из корня в `legacy/ansible-ci`, дефолтные пути legacy Ansible поправлены на новую глубину каталога;
-- набор CLI-команд и аргументов не менялся, изменилась только точка запуска.
+- операторские build/deploy команды и аргументы не менялись; добавлена
+  сервисная команда `simple-deploy worker`.
 
-Следующий срез рефакторинга: продолжить перевод process boundary с
-namespace-like input на typed request DTO без изменения операторских команд.
+Последние срезы рефакторинга оформили операторские переходы jobs через REST
+изменение ресурса `PATCH /api/jobs/{id}`, без action-style путей
+`/retries`/`/cancellations`, и продолжили перевод операторского вывода на общий
+job logger. Сейчас `build`, `mark`, `core.release_paths`, `release.artifacts`,
+`healthcheck` и `notifications` пишут через `job_log()` с fallback на прежний
+stdout/stderr. Следующий безопасный срез: продолжить этот перевод в более
+крупных process-модулях `deploy`, `app_deploy` и `data_sql` без изменения текста
+и порядка log file.

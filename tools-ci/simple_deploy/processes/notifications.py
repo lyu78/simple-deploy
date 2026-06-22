@@ -12,6 +12,7 @@ from simple_deploy.core.email import (
     normalize_email_list,
 )
 from simple_deploy.core.env import require_value
+from simple_deploy.core.job_logging import job_log
 from simple_deploy.release.artifacts import Artifact
 from simple_deploy.release.manifest import (
     find_previous_release_manifest,
@@ -164,14 +165,14 @@ def send_outlook_success_email(
 ) -> None:
     """Отправляет Outlook-письмо об успешном deploy с manifest attachment."""
     if not runtime.get("outlook_email_enabled", False):
-        print("SKIP Outlook success email: отключено")
+        job_log("SKIP Outlook success email: отключено")
         return
 
     recipients = normalize_email_list(
         runtime.get("outlook_email_recipients", [])
     )
     if not recipients:
-        print("SKIP Outlook success email: список получателей пуст")
+        job_log("SKIP Outlook success email: список получателей пуст")
         return
 
     cc = normalize_email_list(runtime.get("outlook_email_cc", []))
@@ -186,7 +187,7 @@ def send_outlook_success_email(
             "ПРЕДУПРЕЖДЕНИЕ: не удалось построить список "
             f"изменений релиза: {exc}"
         )
-        print(f"WARN release changelog failed: {exc}", flush=True)
+        job_log(f"WARN release changelog failed: {exc}")
     context = {
         "build_version": build_version,
         "release_dir": str(release_dir),
@@ -204,14 +205,10 @@ def send_outlook_success_email(
     manifest_path = release_dir / RELEASE_MANIFEST_NAME
     attachment_paths = [str(manifest_path)] if manifest_path.is_file() else []
     if attachment_paths:
-        print(
-            f"INFO Outlook success email attachment: {manifest_path}",
-            flush=True,
-        )
+        job_log(f"INFO Outlook success email attachment: {manifest_path}")
     else:
-        print(
-            f"WARN Outlook success email attachment missing: {manifest_path}",
-            flush=True,
+        job_log(
+            f"WARN Outlook success email attachment missing: {manifest_path}"
         )
     payload = {
         "to": recipients,
@@ -250,7 +247,7 @@ $mail.Send()
 Write-Output 'sent'
 """.strip()
 
-    print(f"RUN Outlook success email: {', '.join(recipients)}", flush=True)
+    job_log(f"RUN Outlook success email: {', '.join(recipients)}")
     result = run_command(
         [
             "powershell.exe",
@@ -264,7 +261,7 @@ Write-Output 'sent'
         timeout=60,
     )
     if result.rc == 0:
-        print("PASS Outlook success email")
+        job_log("PASS Outlook success email")
         return
 
     detail = (result.stderr or result.stdout).strip() or f"rc={result.rc}"
@@ -272,7 +269,7 @@ Write-Output 'sent'
         raise RuntimeError(
             f"Не удалось отправить письмо через Outlook: {detail}"
         )
-    print(f"WARN Outlook success email failed: {detail}", flush=True)
+    job_log(f"WARN Outlook success email failed: {detail}")
 
 
 __all__ = [

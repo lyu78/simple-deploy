@@ -12,7 +12,10 @@ from __future__ import annotations
 from contextlib import closing
 from dataclasses import dataclass
 
+from simple_deploy.models.state import ExternalRequestReadModel, JobReadModel
+from simple_deploy.entities.release import ReleaseBundle
 from simple_deploy.registry import state
+from simple_deploy.release.manifest import manifest_from_release_bundle
 from simple_deploy.types.contour import ContourCodeEnum
 from simple_deploy.types.fields import ErrorText
 from simple_deploy.types.job import JobKindEnum
@@ -59,29 +62,29 @@ class ReleaseBundleRecordResult:
 class LocalJobCommandResult:
     """Результат registry-команды изменения local job."""
 
-    job: state.JobRecord
+    job: JobReadModel
 
 
 @dataclass(frozen=True)
 class ExternalRequestCommandResult:
     """Результат registry-команды изменения external request."""
 
-    request: state.ExternalRequest
+    request: ExternalRequestReadModel
 
 
-def _require_job(job: state.JobRecord | None, job_id: int) -> state.JobRecord:
+def _require_job(job: state.JobRecord | None, job_id: int) -> JobReadModel:
     """Возвращает job или поднимает ошибку нарушенного storage-инварианта."""
     if job is None:
         raise RuntimeError(
             f"Local job was not found after registry command: id={job_id}"
         )
-    return job
+    return JobReadModel.model_validate(job)
 
 
 def _require_external_request(
     request: state.ExternalRequest | None,
     request_id: int,
-) -> state.ExternalRequest:
+) -> ExternalRequestReadModel:
     """
     Возвращает external request или поднимает ошибку нарушенного storage-
     инварианта.
@@ -91,7 +94,7 @@ def _require_external_request(
             "External request was not found after registry command: "
             f"id={request_id}"
         )
-    return request
+    return ExternalRequestReadModel.model_validate(request)
 
 
 def record_release_bundle(
@@ -111,6 +114,27 @@ def record_release_bundle(
         )
     return ReleaseBundleRecordResult(
         build_version, backend_commit, frontend_commit or ""
+    )
+
+
+def _bundle_commit(bundle: ReleaseBundle, repo_id: str) -> str:
+    """Возвращает commit_sha source revision внутри release bundle."""
+    for revision in bundle.source_snapshot.revisions:
+        if revision.repo_id == repo_id:
+            return revision.commit_sha
+    return ""
+
+
+def record_release_bundle_aggregate(
+    bundle: ReleaseBundle,
+) -> ReleaseBundleRecordResult:
+    """Записывает успешный release bundle из доменного агрегата."""
+    manifest = manifest_from_release_bundle(bundle)
+    return record_release_bundle(
+        build_version=bundle.build_version,
+        backend_commit=_bundle_commit(bundle, "backend"),
+        frontend_commit=_bundle_commit(bundle, "frontend"),
+        artifacts=manifest["artifacts"],
     )
 
 
@@ -197,12 +221,50 @@ def mark_local_job_started(
     return LocalJobCommandResult(_require_job(job, job_id))
 
 
+def claim_next_local_job() -> LocalJobCommandResult | None:
+    """Atomically claims the oldest queued local job for a worker."""
+    with closing(state.connect_state_db()) as connection:
+        job = state.claim_next_job(connection)
+    if job is None:
+        return None
+    return LocalJobCommandResult(JobReadModel.model_validate(job))
+
+
+def set_local_job_log_path(
+    job_id: int, log_path: str
+) -> LocalJobCommandResult:
+    """Stores the log file path for a claimed local job."""
+    with closing(state.connect_state_db()) as connection:
+        state.set_job_log_path(connection, job_id, log_path)
+        job = state.get_job(connection, job_id)
+    return LocalJobCommandResult(_require_job(job, job_id))
+
+
 def finish_local_job(
     job_id: int, status: str, error: str = ""
 ) -> LocalJobCommandResult:
     """Помечает local job терминальным статусом."""
     with closing(state.connect_state_db()) as connection:
         state.mark_job_finished(connection, job_id, status=status, error=error)
+        job = state.get_job(connection, job_id)
+    return LocalJobCommandResult(_require_job(job, job_id))
+
+
+def cancel_local_job(
+    job_id: int,
+    error: str = "Cancelled by operator",
+) -> LocalJobCommandResult:
+    """Отменяет queued local job операторским transition-ом."""
+    with closing(state.connect_state_db()) as connection:
+        state.cancel_job(connection, job_id, error=error)
+        job = state.get_job(connection, job_id)
+    return LocalJobCommandResult(_require_job(job, job_id))
+
+
+def requeue_local_job(job_id: int) -> LocalJobCommandResult:
+    """Возвращает failed/cancelled local job в queued с тем же id."""
+    with closing(state.connect_state_db()) as connection:
+        state.requeue_job(connection, job_id)
         job = state.get_job(connection, job_id)
     return LocalJobCommandResult(_require_job(job, job_id))
 
@@ -316,6 +378,8 @@ __all__ = [
     "ExternalRequestCommandResult",
     "LocalJobCommandResult",
     "ReleaseBundleRecordResult",
+    "cancel_local_job",
+    "claim_next_local_job",
     "create_local_job",
     "create_release_external_request",
     "finish_build_attempt",
@@ -324,7 +388,10 @@ __all__ = [
     "record_deployment_applied",
     "record_deployment_failed",
     "record_release_bundle",
+    "record_release_bundle_aggregate",
+    "requeue_local_job",
     "set_contour_baseline",
+    "set_local_job_log_path",
     "start_build_attempt",
     "update_release_external_request_status",
 ]

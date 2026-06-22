@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
+from typing import Mapping
 
 from simple_deploy.types.artifact import ArtifactKindEnum, ArtifactScopeEnum
 from simple_deploy.types.contour import ContourCodeEnum
@@ -34,6 +36,12 @@ class SourceRepositoryRevision:
     ref: SourceRefString
     commit_sha: CommitShaString
     origin_id: SourceOriginIdString
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "metadata", MappingProxyType(dict(self.metadata))
+        )
 
 
 @dataclass(frozen=True)
@@ -68,6 +76,12 @@ class ReleaseArtifactRef:
     artifact_id: ArtifactIdString
     kind: ArtifactKindEnum
     scope: ArtifactScopeEnum
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "metadata", MappingProxyType(dict(self.metadata))
+        )
 
 
 @dataclass(frozen=True)

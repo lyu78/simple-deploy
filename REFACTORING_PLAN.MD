@@ -225,8 +225,27 @@ Web не должен становиться отдельной реализац
 
 REST-контракт для будущих write endpoints должен быть строгим:
 
+- Web/API является управляющей поверхностью toolkit-а: запуск, постановка в
+  очередь, отмена и статусные переходы должны дергаться и управляться через
+  REST, а не через прямой вызов Python-функций из UI;
 - `POST` к коллекции создает новый дочерний ресурс, например
   `POST /releases/{release_version}/build-attempts`;
+- для jobs `POST /api/jobs` является командой создания job и инициирования ее
+  выполнения или постановки в исполняемую очередь; это не "создать мертвую
+  заявку, которую потом надо запускать отдельным RPC endpoint-ом";
+- целевой механизм исполнения для Windows-local режима - отдельный
+  `simple-deploy worker` как SQLite-backed polling worker: он периодически
+  ищет `scheduled/queued` jobs в registry, атомарно claim-ит одну job и
+  выполняет ее вне HTTP-потока;
+- API не стартует отдельный subprocess на каждый `POST /api/jobs` и не
+  выполняет build/deploy синхронно; исполнитель - постоянный worker process;
+- REST остается внешней управляющей поверхностью для фронта/оператора:
+  `GET /api/jobs/{job_id}` читает состояние, `PATCH /api/jobs/{job_id}`
+  оформляет операторские переходы вроде cancel/retry, но внутренний worker
+  обновляет lifecycle через application/registry boundary напрямую, а не через
+  собственные HTTP-вызовы;
+- лог выполнения должен стримиться через WebSocket, а не через REST polling
+  log-файла;
 - если релиз уже успешно собран или сборка уже активна, API возвращает
   `409 Conflict`, а не существующий релиз как успешный результат `POST`;
 - `403 Forbidden` остается ошибкой доступа, а не способом сообщить о конфликте
@@ -335,8 +354,8 @@ adapters, application layer - use case boundary, а domain/registry/process
      фиксацией результата;
    - текущие владельцы: `processes.deploy`, `processes.data_sql`,
      `processes.app_deploy`, `processes.healthcheck`;
-   - следующий шаг: заменить namespace-like process input на typed process
-     request/result objects.
+   - следующий шаг: закрепить typed result objects для process boundary и
+     убрать возврат raw process/storage форм там, где это уже не CLI-контракт.
 4. Runtime Configuration and Topology:
    - владеет `tools-ci/.env`, secrets, `tools-ci/windows_pipeline.local.json`, typed runtime model
      и topology projection;
@@ -367,38 +386,51 @@ adapters, application layer - use case boundary, а domain/registry/process
 - runtime topology - представление машин, репозиториев и deploy targets,
   полученное из legacy env/config.
 
-### Ближайшие безопасные срезы
+### Выполненные безопасные срезы текущего этапа
 
-1. Process request/result boundary:
-   - убрать временный `_process_args` из `application.services`;
-   - перевести `processes.build`, `processes.deploy`, `processes.dry_run`,
-     `processes.mark` и `processes.data_sql` на typed input;
-   - сохранить CLI args, JSON config и runtime behavior без изменений.
+1. Process result boundary:
+   - добавлен `ProcessResult` для structured результата process/use-case;
+   - process modules возвращают result DTO, а CLI wrappers продолжают отдавать
+     прежние bool/int контракты;
+   - `application.services.result_for_request()` дает единую точку запуска для
+     local jobs и будущего web worker-а.
 2. Registry command/query hardening:
-   - зафиксировать command result DTO для state mutations;
-   - убрать прямую зависимость application/process code от raw SQLite rows там,
-     где уже есть read models;
-   - покрыть conflict cases для будущих web write endpoints.
+   - local job и external request command results возвращают read models, а не
+     raw storage dataclass;
+   - добавлен query helper чтения одной job без раскрытия storage API;
+   - покрыты conflict cases: contour-scoped job без contour и external request
+     на DEV-контур.
 3. Release bundle aggregate:
-   - описать release bundle/source snapshot/artifact list как доменную модель,
-     а не набор dict/dataclass fragments;
-   - сделать manifest serialization adapter-ом вокруг модели;
-   - сохранить текущий `release_manifest.json`.
+   - `release_manifest.json` теперь собирается через `ReleaseBundle`,
+     `SourceSnapshot` и `ReleaseArtifactRef`;
+   - добавлены adapter-ы `release_bundle_from_manifest()` и
+     `manifest_from_release_bundle()` с сохранением текущей JSON-формы;
+   - builder пишет release metadata через aggregate-aware registry command.
 4. Local jobs для write API:
-   - добавить запуск существующих use cases через local job runner;
-   - web/API должен создавать job resource и возвращать статус, а не выполнять
-     deploy/build внутри HTTP request;
-   - CLI остается синхронным операторским интерфейсом.
+   - добавлен `simple_deploy.jobs.runner` для создания и выполнения queued jobs;
+   - текущий `POST /api/jobs` создает job resource и возвращает `JobDto`, но
+     следующий срез должен привести его к целевому REST-контракту: `POST`
+     инициирует выполнение или постановку в исполняемую очередь;
+   - механизм исполнения: постоянный `simple-deploy worker` с SQLite polling,
+     atomic claim `scheduled/queued -> running` и выполнением job вне
+     HTTP-потока;
+   - API не стартует subprocess на каждый `POST /api/jobs`; прямой endpoint
+     вида `/run` не используется;
+   - `PATCH /api/jobs/{id}` остается REST-поверхностью для операторских
+     переходов вроде cancel/retry, а worker обновляет lifecycle через
+     application/registry boundary напрямую;
+   - лог выполнения должен стримиться через WebSocket;
+   - CLI остался синхронным операторским интерфейсом.
 5. Runtime topology adoption:
-   - начать использовать typed topology в dry-run/build/deploy проверках там,
-     где сейчас вручную читаются env keys;
-   - не менять формат `tools-ci/.env`, `tools-ci/local.secrets.env` и
-     `tools-ci/windows_pipeline.local.json` до отдельной миграции.
+   - dry-run начал использовать `runtime_topology_from_legacy_env()` для source
+     repository checks;
+   - формат `tools-ci/.env`, `tools-ci/local.secrets.env` и
+     `tools-ci/windows_pipeline.local.json` не менялся.
 6. Тестовая структура:
-   - разнести большой `tests/test_windows_pipeline_permissions.py` по процессным
-     и доменным областям после typed process boundary;
-   - не переносить тесты раньше, чтобы не смешивать поведенческие изменения и
-     механическую перекладку.
+   - build/process tests вынесены из `tests/test_windows_pipeline_permissions.py`
+     в `tests/test_process_build.py`;
+   - новые boundary покрыты отдельными тестами `tests/test_jobs_runner.py` и
+     точечными тестами registry/web/release aggregate.
 
 ## Статус первого среза
 
@@ -1045,6 +1077,112 @@ Web/API payload --------------/
 - тест package shim удален, потому что совместимость со старым import path больше
   не является контрактом;
 - документация пакета и текущий контекст обновлены под прямой CLI adapter.
+
+### Статус двадцать четвертого среза шага 6
+
+Двадцать четвертый безопасный срез закрепил typed process request boundary:
+
+- приватный `_process_args` удален из `application.services`;
+- `application.services` передает request DTO напрямую в process modules без
+  промежуточного `argparse.Namespace`;
+- `processes.build`, `processes.deploy`, `processes.dry_run` и
+  `processes.mark` принимают соответствующие application request DTO;
+- `data_sql_artifacts_enabled` больше не принимает произвольный args object и
+  работает от явного boolean-флага `skip_data_sql_artifacts`;
+- `argparse.Namespace` остался только во внешнем CLI adapter-е
+  `simple_deploy.cli.windows_pipeline` и в `simple_deploy.cli.requests`;
+- следующий DDD-срез по process boundary был выделен под result DTO для
+  web/API и local jobs; он закрыт двадцать пятым срезом.
+
+### Статус двадцать пятого среза шага 6
+
+Двадцать пятый безопасный срез закрыл оставшиеся DDD-пункты текущего плана:
+
+- добавлен `simple_deploy.application.results.ProcessResult`;
+- `processes.build`, `processes.deploy`, `processes.dry_run` и
+  `processes.mark` возвращают structured result, а CLI-compatible service
+  wrappers сохраняют прежние int/bool контракты;
+- `application.services.result_for_request()` стал общей точкой запуска typed
+  request для local job runner-а;
+- registry command results для local jobs и external requests возвращают
+  read models вместо raw storage dataclass;
+- добавлен `simple_deploy.jobs.runner`: создание queued job из application
+  request, восстановление request из payload и выполнение job с фиксацией
+  `running/success/failed`;
+- web/API получил первичный `POST /api/jobs`, который сейчас создает queued job
+  resource; принятое целевое решение: все управление идет через REST, поэтому
+  следующий срез должен сделать `POST /api/jobs` созданием scheduled job для
+  постоянного `simple-deploy worker`; worker исполняет jobs через SQLite
+  polling/atomic claim вне HTTP-потока, `PATCH /api/jobs/{id}` остается для
+  операторских переходов, а логи идут через WebSocket;
+- `release_manifest.json` строится через `ReleaseBundle`, `SourceSnapshot` и
+  `ReleaseArtifactRef`; manifest adapter сохраняет текущую JSON-форму;
+- builder пишет release metadata через aggregate-aware registry command;
+- dry-run начал использовать typed runtime topology для source repository
+  checks без изменения формата env/config файлов;
+- build/process tests вынесены из большого
+  `tests/test_windows_pipeline_permissions.py` в `tests/test_process_build.py`;
+- добавлены focused tests для local job runner, web write endpoint, release
+  manifest aggregate и registry conflict cases.
+
+### Статус двадцать шестого среза шага 6
+
+Двадцать шестой безопасный срез добавил постоянный local worker-контур поверх
+SQLite-backed jobs без введения отдельного task framework:
+
+- добавлен atomic claim `queued -> running` для `local_jobs` через короткую
+  SQLite-транзакцию `claim_next_job()`/`claim_next_local_job()`;
+- добавлен `simple_deploy.jobs.worker`: `run_worker_once()` и
+  `run_worker_loop()` исполняют уже claimed jobs через существующий
+  `run_claimed_job()`/`result_for_request()` boundary;
+- CLI получил команду `simple-deploy worker` с режимами `--once` и
+  `--poll-interval`, при этом build/deploy jobs остаются синхронными внутри
+  отдельного worker process, а не HTTP-потока;
+- общий `simple_deploy.core.job_logging` вынес tee/log-file механику из CLI,
+  worker пишет job log file и одновременно выводит тот же поток в консоль;
+- `stream_command()` и `run_or_raise()` начали писать через job logger с
+  fallback на прежний stdout/stderr, поэтому subprocess output попадает в тот
+  же job log file;
+- web/API получил WebSocket endpoint `GET /ws/jobs/{id}`: статус и `log_path`
+  читаются из SQLite, а человекочитаемый вывод стримится tail-ом из job log
+  file;
+- добавлены focused tests для concurrent atomic claim, `worker --once`,
+  idle worker exit code и WebSocket log streaming.
+
+### Статус двадцать седьмого среза шага 6
+
+Двадцать седьмой безопасный срез оформил операторские переходы local jobs как
+изменение REST-ресурса job:
+
+- добавлен `GET /api/jobs/{id}` для точечного чтения job;
+- добавлен `PATCH /api/jobs/{id}` с payload `{"status": "cancelled"}` для
+  отмены только `queued` job;
+- тот же `PATCH /api/jobs/{id}` с payload `{"status": "queued"}` возвращает
+  `failed` или `cancelled` job в очередь с тем же `id`, очищая `log_path`,
+  `error`, `started_at` и `finished_at`;
+- отдельные action-style пути `/retries` и `/cancellations` не вводились;
+- недопустимые переходы возвращают HTTP `409`, отсутствующие jobs - `404`;
+- ближайшие process-boundary сообщения в `build` и `mark` начали идти через
+  общий `job_log()` helper с fallback на прежний stdout/stderr;
+- добавлены focused tests для registry transitions, worker requeue и REST PATCH.
+
+### Статус двадцать восьмого среза шага 6
+
+Двадцать восьмой безопасный срез продолжил перевод операторского вывода на
+общий job logger без изменения текста сообщений:
+
+- `core.release_paths` пишет `RESOLVE ...` строки через `job_log()`;
+- `release.artifacts` пишет все `RESOLVE artifact/DB/maintenance` строки через
+  `job_log()`;
+- `processes.healthcheck` пишет `RUN/SKIP/PASS` строки portal version check,
+  maintenance stub HTTP check, HTTP healthcheck и remote healthcheck commands
+  через `job_log()`;
+- `processes.notifications` пишет Outlook `SKIP/INFO/WARN/RUN/PASS` строки
+  через `job_log()`;
+- `job_log()` сохраняет fallback на прежний stdout/stderr, поэтому CLI-поток
+  вне worker-а остается видимым без отдельной настройки logger-а;
+- focused tests вокруг deploy/healthcheck/worker и полный `pytest` остались
+  зелеными.
 
 ### Отложенное улучшение: data SQL set_default artifacts
 

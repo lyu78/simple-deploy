@@ -13,12 +13,13 @@ from src.infra import (
 )
 from simple_deploy.registry.commands import (
     finish_build_attempt,
-    record_release_bundle,
+    record_release_bundle_aggregate,
     start_build_attempt,
 )
 from src.utils import get_required_env
 from simple_deploy.release.manifest import (
     build_release_manifest,
+    release_bundle_from_manifest,
     write_release_manifest_file,
 )
 
@@ -52,6 +53,7 @@ def repo_manifest(repo_path: str) -> dict[str, str]:
 def write_release_manifest(
     build_version: str,
     backend_artifacts: dict[str, object] | None = None,
+    build_attempt_id: int = 1,
 ) -> dict:
     release_root = Path(get_required_env("RELEASE_ROOT_WINDOWS"))
     release_dir = release_root / build_version
@@ -63,13 +65,11 @@ def write_release_manifest(
     )
     manifest_path = write_release_manifest_file(release_dir, manifest)
     print(f"Release manifest created: {manifest_path}", flush=True)
-    backend_repo = manifest["repositories"]["backend"]
-    frontend_repo = manifest["repositories"]["frontend"]
-    record_release_bundle(
-        build_version=build_version,
-        backend_commit=backend_repo["commit_sha"],
-        frontend_commit=frontend_repo["commit_sha"],
-        artifacts=manifest["artifacts"],
+    record_release_bundle_aggregate(
+        release_bundle_from_manifest(
+            manifest,
+            build_attempt_id=build_attempt_id,
+        )
     )
     return manifest
 
@@ -126,7 +126,11 @@ def main() -> int:
             branch_name=branch_name,
         )
 
-        manifest = write_release_manifest(build_version, backend_artifacts=backend_artifacts)
+        manifest = write_release_manifest(
+            build_version,
+            backend_artifacts=backend_artifacts,
+            build_attempt_id=build_attempt.attempt_id,
+        )
         backend_repo = manifest["repositories"]["backend"]
         frontend_repo = manifest["repositories"]["frontend"]
         finish_build_attempt(

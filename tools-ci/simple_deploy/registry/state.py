@@ -143,6 +143,7 @@ def connect_state_db(path: Path | None = None) -> sqlite3.Connection:
     db_path = path or default_state_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(db_path)
+    connection.execute("pragma busy_timeout = 5000")
     connection.row_factory = sqlite3.Row
     ensure_schema(connection)
     return connection
@@ -643,6 +644,65 @@ def mark_job_started(
     connection.commit()
 
 
+def claim_next_job(connection: sqlite3.Connection) -> JobRecord | None:
+    """Atomically claims the oldest queued local job for a worker."""
+    try:
+        connection.execute("begin immediate")
+        row = connection.execute(
+            """
+            select *
+            from local_jobs
+            where status = ?
+            order by created_at, id
+            limit 1
+            """,
+            ("queued",),
+        ).fetchone()
+        if row is None:
+            connection.commit()
+            return None
+        job_id = int(row["id"])
+        cursor = connection.execute(
+            """
+            update local_jobs
+            set status = ?, started_at = ?
+            where id = ? and status = ?
+            """,
+            ("running", utc_now(), job_id, "queued"),
+        )
+        if cursor.rowcount != 1:
+            connection.rollback()
+            return None
+        row = connection.execute(
+            """
+            select *
+            from local_jobs
+            where id = ?
+            """,
+            (job_id,),
+        ).fetchone()
+        connection.commit()
+        return _job_from_row(row) if row else None
+    except Exception:
+        connection.rollback()
+        raise
+
+
+def set_job_log_path(
+    connection: sqlite3.Connection, job_id: int, log_path: str
+) -> None:
+    """Stores the log file path for a claimed local job."""
+    connection.execute(
+        """
+        update local_jobs
+        set log_path = coalesce(nullif(?, ''), log_path)
+        where id = ?
+        """,
+        (log_path, job_id),
+    )
+    connection.commit()
+
+
 def mark_job_finished(
     connection: sqlite3.Connection, job_id: int, status: str, error: str = ""
 ) -> None:
@@ -657,6 +717,89 @@ def mark_job_finished(
         (status, error, utc_now(), job_id),
     )
     connection.commit()
+
+
+def cancel_job(
+    connection: sqlite3.Connection,
+    job_id: int,
+    error: str = "Cancelled by operator",
+) -> None:
+    """Отменяет queued local job без попытки остановить running process."""
+    try:
+        connection.execute("begin immediate")
+        row = connection.execute(
+            """
+            select *
+            from local_jobs
+            where id = ?
+            """,
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            connection.rollback()
+            raise LookupError(f"Local job not found: id={job_id}")
+        status = row["status"]
+        if status != "queued":
+            connection.rollback()
+            raise ValueError(
+                f"Cannot cancel local job id={job_id} "
+                f"with status={status}; expected queued"
+            )
+        connection.execute(
+            """
+            update local_jobs
+            set status = ?, error = ?, finished_at = ?
+            where id = ?
+            """,
+            ("cancelled", error, utc_now(), job_id),
+        )
+        connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+
+
+def requeue_job(connection: sqlite3.Connection, job_id: int) -> None:
+    """Возвращает failed/cancelled local job в очередь с тем же id."""
+    try:
+        connection.execute("begin immediate")
+        row = connection.execute(
+            """
+            select *
+            from local_jobs
+            where id = ?
+            """,
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            connection.rollback()
+            raise LookupError(f"Local job not found: id={job_id}")
+        status = row["status"]
+        if status not in {"failed", "cancelled"}:
+            connection.rollback()
+            raise ValueError(
+                f"Cannot requeue local job id={job_id} "
+                f"with status={status}; expected failed or cancelled"
+            )
+        connection.execute(
+            """
+            update local_jobs
+            set
+                status = ?,
+                log_path = ?,
+                error = ?,
+                started_at = ?,
+                finished_at = ?
+            where id = ?
+            """,
+            ("queued", "", "", "", "", job_id),
+        )
+        connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
 
 
 def get_job(connection: sqlite3.Connection, job_id: int) -> JobRecord | None:
@@ -824,6 +967,8 @@ __all__ = [
     "ExternalRequest",
     "JobRecord",
     "all_contour_states",
+    "cancel_job",
+    "claim_next_job",
     "connect_state_db",
     "create_external_request",
     "create_job",
@@ -844,6 +989,8 @@ __all__ = [
     "record_build_attempt_finished",
     "record_build_attempt_started",
     "record_release",
+    "requeue_job",
+    "set_job_log_path",
     "update_external_request_status",
     "upsert_contour_state",
     "utc_now",

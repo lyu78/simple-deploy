@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import fnmatch
 from pathlib import Path
 
+from simple_deploy.core.job_logging import job_log
 from simple_deploy.registry.state import validate_contour
 from simple_deploy.types.fields import (
     ArtifactEntrypointDirString,
@@ -100,7 +101,7 @@ def resolve_artifacts(
     содержат локальные пути и удаленные target paths, но сама функция не
     загружает файлы и не меняет состояние релиза.
     """
-    print(f"RESOLVE artifacts in: {release_dir}", flush=True)
+    job_log(f"RESOLVE artifacts in: {release_dir}")
     if not release_dir.is_dir():
         raise RuntimeError(f"Директория релиза не существует: {release_dir}")
 
@@ -135,10 +136,7 @@ def resolve_artifacts(
                 f"В {release_dir} не найден архив по шаблону {pattern}"
             )
         newest = max(matches, key=lambda path: path.stat().st_mtime)
-        print(
-            f"RESOLVE artifact {name}: {newest.name} -> {extract_path}",
-            flush=True,
-        )
+        job_log(f"RESOLVE artifact {name}: {newest.name} -> {extract_path}")
         artifacts.append(Artifact(name, newest, remote_archive, extract_path))
     return artifacts
 
@@ -157,7 +155,7 @@ def resolve_db_schema_artifact(
     проверяет реальное состояние базы данных.
     """
     contour = validate_contour(contour)
-    print(f"RESOLVE DB schema artifact in: {release_dir}", flush=True)
+    job_log(f"RESOLVE DB schema artifact in: {release_dir}")
     if not release_dir.is_dir():
         raise RuntimeError(f"Директория релиза не существует: {release_dir}")
 
@@ -184,10 +182,9 @@ def resolve_db_schema_artifact(
         entrypoint_dir=".",
         entrypoint_pattern=f"summary_sql_{contour}_*.sql",
     )
-    print(
+    job_log(
         "RESOLVE DB schema artifact: "
-        f"{artifact.local_path.name} -> {artifact.remote_extract_path}",
-        flush=True,
+        f"{artifact.local_path.name} -> {artifact.remote_extract_path}"
     )
     return artifact
 
@@ -233,7 +230,7 @@ def resolve_db_data_artifact(
         remote_extract_name,
         entrypoint_pattern,
     ) = specs[kind]
-    print(f"RESOLVE DB data artifact {name} in: {release_dir}", flush=True)
+    job_log(f"RESOLVE DB data artifact {name} in: {release_dir}")
     matches = [
         path
         for path in release_dir.iterdir()
@@ -256,10 +253,9 @@ def resolve_db_data_artifact(
         entrypoint_dir=".",
         entrypoint_pattern=entrypoint_pattern,
     )
-    print(
+    job_log(
         f"RESOLVE DB data artifact {name}: "
-        f"{artifact.local_path.name} -> {artifact.remote_extract_path}",
-        flush=True,
+        f"{artifact.local_path.name} -> {artifact.remote_extract_path}"
     )
     return artifact
 
@@ -290,10 +286,9 @@ def resolve_maintenance_stub_artifact(
         remote_archive=f"{remote_dir}/maintenance_stub.tar.gz",
         extract_path=require_value(env, "FRONTEND_RELEASE_PATH"),
     )
-    print(
+    job_log(
         "RESOLVE maintenance stub: "
-        f"{artifact.local_path} -> {artifact.extract_path}",
-        flush=True,
+        f"{artifact.local_path} -> {artifact.extract_path}"
     )
     return artifact
 
