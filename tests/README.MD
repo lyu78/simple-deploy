@@ -15,6 +15,10 @@
 - `support/` - общая инфраструктурная поддержка.
 - `web/` - FastAPI/web UI adapters и API contracts.
 
-Крупные process/builder test files пока только переложены по директориям. Их
-можно дробить отдельным refactoring step, чтобы не смешивать rename и изменение
-test setup.
+Windows pipeline characterization tests в `processes/` разделены по сценариям:
+adapters, db SQL, runtime config, CLI/state, deploy flow, dry-run и
+notifications. Общие constants/imports/helpers лежат в
+`processes/windows_pipeline_test_support.py`.
+
+Крупный builder test file пока только переложен в `builder/`. Его можно дробить
+отдельным refactoring step, чтобы не смешивать перенос и изменение test setup.
