@@ -20,11 +20,11 @@
   "db_update_parallel_status_interval_seconds": 30,
   "sql_scripts": [
     {
-      "path": "sql/public_table_size_report.sql",
+      "path": "tools-ci/sql/reports/public_table_size_report.sql",
       "phase": "after_migrate"
     },
     {
-      "path": "sql/public_table_maintenance_diagnostics.sql",
+      "path": "tools-ci/sql/reports/public_table_maintenance_diagnostics.sql",
       "phase": "after_migrate"
     }
   ],

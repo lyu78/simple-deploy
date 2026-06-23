@@ -73,7 +73,12 @@ class RuntimeConfigModelTests(unittest.TestCase):
     def test_runtime_config_model_rejects_unknown_phases_structurally(self):
         """Фазы SQL и service steps проверяются на уровне schema."""
         runtime = json.loads(RUNTIME_EXAMPLE_PATH.read_text(encoding="utf-8"))
-        runtime["sql_scripts"] = [{"path": "sql/public_table_size_report.sql", "phase": "during_deploy"}]
+        runtime["sql_scripts"] = [
+            {
+                "path": "tools-ci/sql/reports/public_table_size_report.sql",
+                "phase": "during_deploy",
+            }
+        ]
         runtime["service_steps"] = [{"command": "echo ok", "phase": "during_deploy"}]
 
         with self.assertRaises(ValidationError) as context:

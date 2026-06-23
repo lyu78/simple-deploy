@@ -185,20 +185,22 @@ frontend вместо заглушки.
 {
   "sql_scripts": [
     {
-      "path": "sql/public_table_size_report.sql",
+      "path": "tools-ci/sql/reports/public_table_size_report.sql",
       "phase": "after_migrate"
     },
     {
-      "path": "sql/public_table_maintenance_diagnostics.sql",
+      "path": "tools-ci/sql/reports/public_table_maintenance_diagnostics.sql",
       "phase": "after_migrate"
     }
   ]
 }
 ```
 
-Runner выполняет `sql_scripts` последовательно в порядке JSON. Поэтому отчет
-по размеру таблиц должен идти первым, а диагностика обслуживания - сразу после
-него. Вывод этих скриптов попадает в консоль и в
+Runner выполняет `sql_scripts` последовательно в порядке JSON. Файлы в
+`tools-ci/sql/reports/` являются read-only отчетами runner-а, а не source data
+SQL backend repo. Поэтому отчет по размеру таблиц должен идти первым, а
+диагностика обслуживания - сразу после него. Вывод этих скриптов попадает в
+консоль и в
 `logs/<timestamp>-<command>.log`.
 
 Минимальный пример `service_steps`:
