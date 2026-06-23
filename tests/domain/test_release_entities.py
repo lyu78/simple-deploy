@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 TOOLS_CI_ROOT = ROOT / "tools-ci"
 TEST_BUILD_VERSION = "1.2.4"
 TEST_TIMESTAMP = "2026-06-11T10:00:00Z"

@@ -161,6 +161,7 @@ SQL-диапазон.
 - `legacy/ansible-ci/` - legacy Ansible/WSL flow.
 - `docs/` - runbooks, SQL contracts, one-off tasks, diagrams и дополнительные
   описания.
-- `tests/` - тесты builder, runner и вспомогательной логики.
+- `tests/` - тесты, разложенные по архитектурным зонам; карта лежит в
+  `tests/README.MD`.
 - `tools-ci/.env.example` - пример локальной конфигурации без секретов.
 - `tools-ci/local.secrets.env.example` - пример локального файла секретов PostgreSQL.

@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 TOOLS_CI_ROOT = ROOT / "tools-ci"
 
 sys.path.insert(0, str(TOOLS_CI_ROOT))

@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 TOOLS_CI_ROOT = ROOT / "tools-ci"
 RUNTIME_EXAMPLE_PATH = TOOLS_CI_ROOT / "windows_pipeline.example.json"
 

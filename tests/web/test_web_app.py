@@ -15,7 +15,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 TOOLS_CI_ROOT = ROOT / "tools-ci"
 STATE_DB_NAME = "state.sqlite3"
 TEST_BUILD_VERSION = "1.2.4"

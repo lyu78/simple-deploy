@@ -16,7 +16,7 @@ import sys
 from argparse import Namespace
 from unittest.mock import patch, sentinel
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 TOOLS_CI_ROOT = ROOT / "tools-ci"
 RUNTIME_EXAMPLE_PATH = TOOLS_CI_ROOT / "windows_pipeline.example.json"
 LEGACY_DB_MIGRATIONS_TASKS = ROOT / "legacy" / "ansible-ci" / "roles" / "db_migrations" / "tasks" / "main.yml"
