@@ -43,6 +43,7 @@ from simple_deploy.release.state import (
     update_external_request_status,
     upsert_contour_state,
 )
+from simple_deploy.registry.commands import record_worker_heartbeat
 import simple_deploy.web.app as web_app
 from simple_deploy.web.app import app
 
@@ -123,8 +124,13 @@ class WebAppTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as web_tmp:
                     web_index = write_react_index_fixture(web_tmp)
                     with patch.object(web_app, "WEB_UI_INDEX", web_index):
+                        record_worker_heartbeat(
+                            status="idle",
+                            message="test worker heartbeat",
+                        )
                         client = TestClient(app)
                         health_response = client.get("/api/health")
+                        worker_response = client.get("/api/worker")
                         state_response = client.get("/api/state")
                         releases_response = client.get("/api/releases")
                         jobs_response = client.get("/api/jobs")
@@ -159,6 +165,7 @@ class WebAppTests(unittest.TestCase):
                         dashboard_response = client.get("/")
 
         self.assertEqual(health_response.status_code, 200)
+        self.assertEqual(worker_response.status_code, 200)
         self.assertEqual(state_response.status_code, 200)
         self.assertEqual(releases_response.status_code, 200)
         self.assertEqual(jobs_response.status_code, 200)
@@ -167,6 +174,13 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(requests_response.status_code, 200)
         self.assertEqual(dashboard_response.status_code, 200)
         self.assertEqual(health_response.json(), {"status": "ok"})
+        worker_json = worker_response.json()
+        self.assertEqual(worker_json["status"], "idle")
+        self.assertEqual(worker_json["heartbeat"]["status"], "idle")
+        self.assertEqual(
+            worker_json["heartbeat"]["message"], "test worker heartbeat"
+        )
+        self.assertGreaterEqual(worker_json["queued_jobs"], 1)
         state_json = state_response.json()
         self.assertEqual(state_json["contours"]["dev"]["last_success_release"], TEST_BUILD_VERSION)
         self.assertEqual(

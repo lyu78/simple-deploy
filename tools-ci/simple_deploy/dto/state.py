@@ -110,6 +110,26 @@ class JobDto(_StateDto):
     finished_at: FinishedAtString
 
 
+class WorkerHeartbeatDto(_StateDto):
+    """Последний heartbeat локального polling worker-а для API."""
+
+    worker_id: str
+    status: str
+    current_job_id: int | None = None
+    message: str = ""
+    updated_at: UpdatedAtString
+
+
+class WorkerHealthDto(_StateDto):
+    """Операторский статус локального worker-а для API."""
+
+    status: str
+    heartbeat: WorkerHeartbeatDto | None = None
+    queued_jobs: int = 0
+    running_jobs: int = 0
+    stale_after_seconds: int = 10
+
+
 class ExternalRequestDto(_StateDto):
     """Запись внешней TEST/PROD заявки на релиз для API."""
 
@@ -163,6 +183,8 @@ __all__ = [
     "DeploymentAttemptDto",
     "ExternalRequestDto",
     "JobDto",
+    "WorkerHeartbeatDto",
+    "WorkerHealthDto",
     "ReleaseBundleDto",
     "ReleaseDto",
     "ReleaseReferenceDto",

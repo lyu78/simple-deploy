@@ -10,6 +10,7 @@ DTO.
 from __future__ import annotations
 
 from contextlib import closing
+from datetime import datetime, timezone
 
 from simple_deploy.models.state import (
     BuildAttemptReadModel,
@@ -21,11 +22,15 @@ from simple_deploy.models.state import (
     ReleaseReadModel,
     ReleaseReferenceReadModel,
     StateSnapshotReadModel,
+    WorkerHealthReadModel,
+    WorkerHeartbeatReadModel,
 )
 from simple_deploy.registry.state import (
     all_contour_states,
     connect_state_db,
+    count_jobs_by_status,
     get_job,
+    get_worker_heartbeat,
     list_build_attempts,
     list_deployment_attempts,
     list_external_requests,
@@ -38,6 +43,35 @@ from simple_deploy.types.status import BuildAttemptStatusEnum
 def bounded_limit(limit: int) -> int:
     """Ограничивает пользовательский ``limit`` безопасным диапазоном."""
     return max(1, min(limit, 200))
+
+
+def utc_timestamp_age_seconds(value: str) -> float | None:
+    """Возвращает возраст UTC timestamp в секундах или ``None``."""
+    if not value:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc) - timestamp).total_seconds()
+
+
+def worker_health_status(
+    heartbeat: WorkerHeartbeatReadModel | None,
+    *,
+    stale_after_seconds: int,
+) -> str:
+    """Классифицирует доступность worker-а для operator dashboard."""
+    if heartbeat is None or heartbeat.status == "stopped":
+        return "offline"
+    age_seconds = utc_timestamp_age_seconds(heartbeat.updated_at)
+    if age_seconds is None or age_seconds > stale_after_seconds:
+        return "stale"
+    if heartbeat.status == "running" or heartbeat.current_job_id is not None:
+        return "running"
+    if heartbeat.status == "error":
+        return "error"
+    return "idle"
 
 
 def release_sort_key(release: ReleaseReadModel) -> tuple[str, str]:
@@ -231,6 +265,30 @@ def external_request_read_models_from_state(
         ]
 
 
+def worker_health_read_model_from_state(
+    *,
+    stale_after_seconds: int = 10,
+) -> WorkerHealthReadModel:
+    """Читает heartbeat и счетчики jobs для operator dashboard."""
+    with closing(connect_state_db()) as connection:
+        heartbeat_record = get_worker_heartbeat(connection)
+        job_counts = count_jobs_by_status(connection)
+    heartbeat = (
+        WorkerHeartbeatReadModel.model_validate(heartbeat_record)
+        if heartbeat_record is not None
+        else None
+    )
+    return WorkerHealthReadModel(
+        status=worker_health_status(
+            heartbeat, stale_after_seconds=stale_after_seconds
+        ),
+        heartbeat=heartbeat,
+        queued_jobs=job_counts.get("queued", 0),
+        running_jobs=job_counts.get("running", 0),
+        stale_after_seconds=stale_after_seconds,
+    )
+
+
 def state_snapshot_read_model(limit: int = 50) -> StateSnapshotReadModel:
     """Собирает внутреннюю модель чтения локального состояния релизов."""
     limit = bounded_limit(limit)
@@ -283,4 +341,7 @@ __all__ = [
     "release_reference_read_model",
     "release_sort_key",
     "state_snapshot_read_model",
+    "utc_timestamp_age_seconds",
+    "worker_health_read_model_from_state",
+    "worker_health_status",
 ]

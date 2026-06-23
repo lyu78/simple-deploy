@@ -26,8 +26,8 @@ CLI, web/API, builder-интеграции и будущим локальным 
 Уже вынесены общие примитивы release/deploy toolkit:
 
 - `registry/state.py` - SQLite-состояние релизов, контуров, попыток build/deploy,
-  локальных заданий и внешних заявок; `release/state.py` оставлен compatibility
-  re-export-ом;
+  локальных заданий, worker heartbeat и внешних заявок; `release/state.py`
+  оставлен compatibility re-export-ом;
 - `registry/commands.py` и `registry/queries.py` - write/read boundary поверх SQLite;
 - `release/artifacts.py` - dataclass-модели и резолверы файлов релиза;
 - `release/manifest.py` - построение, чтение и запись `release_manifest.json`.
@@ -53,7 +53,7 @@ CLI, web/API, builder-интеграции и будущим локальным 
 - `core/` - общие вспомогательные функции для команд, путей, env, build-env,
   release-path resolving и SSH.
 - `dto/` - внешние JSON/API контракты, отделенные от SQLite rows и dataclass state.
-- `jobs/` - модель и будущий runner локальных долгих операций.
+- `jobs/` - local job runner и SQLite-backed polling worker.
 - `models/` - внутренние application/read модели между state/query и DTO.
 - `processes/` - целевое место для процессов `dry_run`, `build`, `deploy`, `mark`,
   `data_sql`.

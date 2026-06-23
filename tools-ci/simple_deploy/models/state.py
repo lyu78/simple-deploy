@@ -108,6 +108,26 @@ class JobReadModel(_StateReadModel):
     finished_at: FinishedAtString
 
 
+class WorkerHeartbeatReadModel(_StateReadModel):
+    """Последний heartbeat локального polling worker-а."""
+
+    worker_id: str
+    status: str
+    current_job_id: int | None = None
+    message: str = ""
+    updated_at: UpdatedAtString
+
+
+class WorkerHealthReadModel(_StateReadModel):
+    """Операторский снимок доступности локального worker-а."""
+
+    status: str
+    heartbeat: WorkerHeartbeatReadModel | None = None
+    queued_jobs: int = 0
+    running_jobs: int = 0
+    stale_after_seconds: int = 10
+
+
 class ExternalRequestReadModel(_StateReadModel):
     """Внешняя TEST/PROD заявка."""
 
@@ -152,6 +172,8 @@ ContourStateModel = ContourStateReadModel
 DeploymentAttemptModel = DeploymentAttemptReadModel
 ExternalRequestModel = ExternalRequestReadModel
 JobModel = JobReadModel
+WorkerHeartbeatModel = WorkerHeartbeatReadModel
+WorkerHealthModel = WorkerHealthReadModel
 ReleaseBundleModel = ReleaseBundleReadModel
 ReleaseModel = ReleaseReadModel
 ReleaseReferenceModel = ReleaseReferenceReadModel
@@ -173,6 +195,10 @@ __all__ = [
     "ExternalRequestModel",
     "JobReadModel",
     "JobModel",
+    "WorkerHeartbeatReadModel",
+    "WorkerHeartbeatModel",
+    "WorkerHealthReadModel",
+    "WorkerHealthModel",
     "ReleaseBundleReadModel",
     "ReleaseBundleModel",
     "ReleaseReadModel",

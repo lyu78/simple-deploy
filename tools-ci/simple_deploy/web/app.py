@@ -25,6 +25,7 @@ from simple_deploy.dto.state import (
     JobDto,
     ReleaseDto,
     StateSnapshotDto,
+    WorkerHealthDto,
 )
 from simple_deploy.jobs.runner import REQUEST_MODELS, create_job_for_request
 from simple_deploy.models.state import StateSnapshotReadModel
@@ -45,6 +46,9 @@ _release_read_models_from_state = (
     _registry_queries.release_read_models_from_state
 )
 _state_snapshot_read_model = _registry_queries.state_snapshot_read_model
+_worker_health_read_model_from_state = (
+    _registry_queries.worker_health_read_model_from_state
+)
 
 app = FastAPI(title="simple-deploy", version="0.1.0")
 WEB_UI_DIST = Path(__file__).resolve().parents[2] / "web-ui" / "dist"
@@ -98,6 +102,12 @@ def state_snapshot(limit: int = 50) -> dict:
 def health() -> dict:
     """Возвращает статус самого web/API процесса."""
     return {"status": "ok"}
+
+
+@app.get("/api/worker", response_model=WorkerHealthDto)
+def api_worker() -> WorkerHealthDto:
+    """Возвращает операторский статус локального job worker-а."""
+    return WorkerHealthDto.model_validate(_worker_health_read_model_from_state())
 
 
 @app.get("/api/state", response_model=StateSnapshotDto)

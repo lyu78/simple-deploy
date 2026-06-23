@@ -57,6 +57,9 @@ JOB_KIND_CODES = JOB_KINDS
 JOB_STATUSES = JOB_STATUS_CODES
 REQUEST_TYPES = EXTERNAL_REQUEST_TYPES
 REQUEST_STATUSES = EXTERNAL_REQUEST_STATUSES
+WORKER_STATUSES = frozenset(
+    {"starting", "idle", "running", "stopped", "error"}
+)
 CONTOUR_SCOPED_JOB_KINDS = frozenset(
     {
         JobKindEnum.DEPLOY.value,
@@ -92,6 +95,17 @@ class JobRecord:
     created_at: CreatedAtString
     started_at: StartedAtString
     finished_at: FinishedAtString
+
+
+@dataclass(frozen=True)
+class WorkerHeartbeat:
+    """Последний heartbeat локального polling worker-а."""
+
+    worker_id: str
+    status: str
+    current_job_id: int | None
+    message: str
+    updated_at: UpdatedAtString
 
 
 @dataclass(frozen=True)
@@ -210,6 +224,14 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         create index if not exists idx_local_jobs_contour_build
             on local_jobs(contour, build_version);
 
+        create table if not exists worker_heartbeat (
+            worker_id text primary key,
+            status text not null,
+            current_job_id integer,
+            message text not null,
+            updated_at text not null
+        );
+
         create table if not exists external_requests (
             id integer primary key autoincrement,
             contour text not null,
@@ -251,6 +273,17 @@ def validate_job_kind(kind: str) -> str:
         expected = ", ".join(JOB_KIND_CODES)
         raise ValueError(
             f"Unknown job kind: {kind}. Expected one of: {expected}"
+        )
+    return normalized
+
+
+def validate_worker_status(status: str) -> str:
+    """Нормализует и валидирует статус локального worker heartbeat."""
+    normalized = status.strip().lower()
+    if normalized not in WORKER_STATUSES:
+        expected = ", ".join(sorted(WORKER_STATUSES))
+        raise ValueError(
+            f"Unknown worker status: {status}. Expected one of: {expected}"
         )
     return normalized
 
@@ -492,6 +525,20 @@ def _job_from_row(row: sqlite3.Row) -> JobRecord:
         created_at=row["created_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
+    )
+
+
+def _worker_heartbeat_from_row(row: sqlite3.Row) -> WorkerHeartbeat:
+    """Преобразует строку ``worker_heartbeat`` в read dataclass."""
+    current_job_id = row["current_job_id"]
+    return WorkerHeartbeat(
+        worker_id=row["worker_id"],
+        status=row["status"],
+        current_job_id=int(current_job_id)
+        if current_job_id is not None
+        else None,
+        message=row["message"],
+        updated_at=row["updated_at"],
     )
 
 
@@ -831,6 +878,66 @@ def list_jobs(
     return [_job_from_row(row) for row in rows]
 
 
+def count_jobs_by_status(connection: sqlite3.Connection) -> dict[str, int]:
+    """Возвращает количество local jobs по lifecycle status."""
+    rows = connection.execute(
+        """
+        select status, count(*) as count
+        from local_jobs
+        group by status
+        """
+    ).fetchall()
+    return {row["status"]: int(row["count"]) for row in rows}
+
+
+def upsert_worker_heartbeat(
+    connection: sqlite3.Connection,
+    *,
+    worker_id: str = "local",
+    status: str = "idle",
+    current_job_id: int | None = None,
+    message: str = "",
+) -> None:
+    """Записывает последний heartbeat локального polling worker-а."""
+    worker_id = worker_id.strip() or "local"
+    status = validate_worker_status(status)
+    connection.execute(
+        """
+        insert into worker_heartbeat (
+            worker_id,
+            status,
+            current_job_id,
+            message,
+            updated_at
+        )
+        values (?, ?, ?, ?, ?)
+        on conflict(worker_id) do update set
+            status = excluded.status,
+            current_job_id = excluded.current_job_id,
+            message = excluded.message,
+            updated_at = excluded.updated_at
+        """,
+        (worker_id, status, current_job_id, message, utc_now()),
+    )
+    connection.commit()
+
+
+def get_worker_heartbeat(
+    connection: sqlite3.Connection, worker_id: str = "local"
+) -> WorkerHeartbeat | None:
+    """Возвращает последний heartbeat локального worker-а."""
+    worker_id = worker_id.strip() or "local"
+    row = connection.execute(
+        """
+        select *
+        from worker_heartbeat
+        where worker_id = ?
+        """,
+        (worker_id,),
+    ).fetchone()
+    return _worker_heartbeat_from_row(row) if row else None
+
+
 def create_external_request(
     connection: sqlite3.Connection,
     contour: str,
@@ -963,13 +1070,16 @@ __all__ = [
     "JOB_STATUSES",
     "REQUEST_TYPES",
     "REQUEST_STATUSES",
+    "WORKER_STATUSES",
     "ContourState",
     "ExternalRequest",
     "JobRecord",
+    "WorkerHeartbeat",
     "all_contour_states",
     "cancel_job",
     "claim_next_job",
     "connect_state_db",
+    "count_jobs_by_status",
     "create_external_request",
     "create_job",
     "default_state_db_path",
@@ -977,6 +1087,7 @@ __all__ = [
     "get_contour_state",
     "get_external_request",
     "get_job",
+    "get_worker_heartbeat",
     "list_build_attempts",
     "list_deployment_attempts",
     "list_external_requests",
@@ -992,10 +1103,12 @@ __all__ = [
     "requeue_job",
     "set_job_log_path",
     "update_external_request_status",
+    "upsert_worker_heartbeat",
     "upsert_contour_state",
     "utc_now",
     "validate_contour",
     "validate_external_request_type",
     "validate_job_kind",
     "validate_status",
+    "validate_worker_status",
 ]

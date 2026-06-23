@@ -33,16 +33,21 @@ Web/API v1 запускается отдельно и не заменяет CLI.
 аварийным путем, а web-панель дает операторский интерфейс поверх того же
 локального состояния и API:
 
+В двух отдельных терминалах:
+
 ```bash
 .venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
+.venv/Scripts/simple-deploy.exe worker --poll-interval 2
 ```
 
 Панель доступна на `http://127.0.0.1:8000/`, API состояния - на
-`http://127.0.0.1:8000/api/state`. React UI показывает контуры, релизы,
-build/deploy attempts, локальные jobs и внешние заявки TEST/PROD, а также
-создает локальные jobs через API. Исходники UI лежат в `tools-ci/web-ui`; после
-изменений фронтенда выполните `npm install && npm run build` из этого каталога,
-чтобы FastAPI начал отдавать свежую сборку.
+`http://127.0.0.1:8000/api/state`, статус worker-а - на
+`http://127.0.0.1:8000/api/worker`. React UI показывает контуры, релизы,
+build/deploy attempts, локальные jobs, состояние worker-а и внешние заявки
+TEST/PROD, а также создает локальные jobs через API. Долгие операции выполняет
+отдельный `simple-deploy worker`, а не HTTP request. Исходники UI лежат в
+`tools-ci/web-ui`; после изменений фронтенда выполните `npm install && npm run
+build` из этого каталога, чтобы FastAPI начал отдавать свежую сборку.
 
 Практическая настройка рабочей машины, `tools-ci/.env`,
 `tools-ci/local.secrets.env`, `tools-ci/windows_pipeline.local.json`,
@@ -110,6 +115,8 @@ SQL-диапазон.
   как основа для BPMN.
 - `REFACTORING_PLAN.MD` - зафиксированный план перехода к release/deploy toolkit,
   web/API и масштабированию по контурам.
+- `PRODUCT_BACKLOG.MD` - отдельный backlog новых продуктовых срезов поверх
+  текущего CLI/API/UI.
 - `tools-ci/README.MD` - установка и запуск основного Windows/Python runner.
 - `tools-ci/PIPELINE.MD` - технический E2E-процесс Windows/Python runner.
 - `legacy/ansible-ci/PIPELINE.MD` - legacy E2E-процесс через Ansible/WSL.

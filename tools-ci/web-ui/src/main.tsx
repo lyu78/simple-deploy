@@ -2,12 +2,15 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import {
   Activity,
+  ArrowLeft,
   Ban,
   FileText,
+  ListFilter,
   Play,
   Plus,
   RefreshCw,
-  RotateCcw
+  RotateCcw,
+  Server
 } from "lucide-react";
 import "./styles.css";
 
@@ -67,6 +70,22 @@ type Job = {
   finished_at: string;
 };
 
+type WorkerHeartbeat = {
+  worker_id: string;
+  status: string;
+  current_job_id: number | null;
+  message: string;
+  updated_at: string;
+};
+
+type WorkerHealth = {
+  status: string;
+  heartbeat: WorkerHeartbeat | null;
+  queued_jobs: number;
+  running_jobs: number;
+  stale_after_seconds: number;
+};
+
 type ExternalRequest = {
   id: number;
   contour: Contour;
@@ -100,6 +119,17 @@ type JobFormState = {
   appOnly: boolean;
 };
 
+type JobStatusFilter = "all" | JobStatus;
+type JobKindFilter = "all" | JobKind;
+type PollStatus = "idle" | "polling" | "ok" | "failed";
+type StreamStatus = "connecting" | "open" | "closed" | "failed";
+
+type PollState = {
+  status: PollStatus;
+  label: string;
+  lastOkAt: string;
+};
+
 const jobKindLabels: Record<JobKind, string> = {
   dry_run: "Dry-run",
   build: "Build",
@@ -122,6 +152,8 @@ const defaultForm: JobFormState = {
   skipDataSqlArtifacts: false,
   appOnly: false
 };
+
+const DASHBOARD_REFRESH_INTERVAL_MS = 3000;
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -190,20 +222,52 @@ function jobPayload(form: JobFormState): Record<string, unknown> {
   };
 }
 
-function useStateSnapshot() {
+function useDashboardData() {
   const [snapshot, setSnapshot] = React.useState<StateSnapshot | null>(null);
+  const [worker, setWorker] = React.useState<WorkerHealth | null>(null);
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(true);
+  const [pollState, setPollState] = React.useState<PollState>({
+    status: "idle",
+    label: "waiting",
+    lastOkAt: ""
+  });
 
-  const load = React.useCallback(async () => {
-    setLoading(true);
-    setError("");
+  const load = React.useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setLoading(true);
+      setError("");
+    }
+    setPollState((current) => ({
+      ...current,
+      status: "polling",
+      label: "/api/state + /api/worker"
+    }));
     try {
-      setSnapshot(await apiJson<StateSnapshot>("/api/state"));
+      const [nextSnapshot, nextWorker] = await Promise.all([
+        apiJson<StateSnapshot>("/api/state"),
+        apiJson<WorkerHealth>("/api/worker")
+      ]);
+      setSnapshot(nextSnapshot);
+      setWorker(nextWorker);
+      setError("");
+      setPollState({
+        status: "ok",
+        label: "/api/state + /api/worker",
+        lastOkAt: new Date().toLocaleTimeString()
+      });
     } catch (exc) {
-      setError(exc instanceof Error ? exc.message : String(exc));
+      const message = exc instanceof Error ? exc.message : String(exc);
+      setError(message);
+      setPollState((current) => ({
+        ...current,
+        status: "failed",
+        label: message
+      }));
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -211,7 +275,14 @@ function useStateSnapshot() {
     void load();
   }, [load]);
 
-  return { snapshot, error, loading, load };
+  React.useEffect(() => {
+    const timerId = window.setInterval(() => {
+      void load({ silent: true });
+    }, DASHBOARD_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timerId);
+  }, [load]);
+
+  return { snapshot, worker, error, loading, pollState, load };
 }
 
 function App() {
@@ -223,7 +294,7 @@ function App() {
 }
 
 function Dashboard() {
-  const { snapshot, error, loading, load } = useStateSnapshot();
+  const { snapshot, worker, error, loading, pollState, load } = useDashboardData();
   const [form, setForm] = React.useState<JobFormState>(defaultForm);
   const [submitError, setSubmitError] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
@@ -264,9 +335,16 @@ function Dashboard() {
           <h1>simple-deploy</h1>
           <p>Release registry, local jobs and deploy operations</p>
         </div>
-        <button className="icon-button" type="button" onClick={() => void load()} title="Refresh">
-          <RefreshCw size={18} />
-        </button>
+        <div className="topbar-actions">
+          <PollIndicator
+            label="Dashboard poll"
+            status={pollState.status}
+            detail={pollState.lastOkAt || pollState.label}
+          />
+          <button className="icon-button" type="button" onClick={() => void load()} title="Refresh">
+            <RefreshCw size={18} />
+          </button>
+        </div>
       </header>
 
       {error ? <div className="alert">{error}</div> : null}
@@ -285,12 +363,16 @@ function Dashboard() {
             />
           </section>
           <section className="band">
+            <SectionHeader title="Worker" icon={<Server size={18} />} />
+            <WorkerPanel worker={worker} />
+          </section>
+          <section className="band">
             <SectionHeader title="Contours" icon={<Activity size={18} />} />
             <ContourGrid contours={snapshot.contours} />
           </section>
           <section className="band">
             <SectionHeader title="Jobs" icon={<Play size={18} />} />
-            <JobsTable jobs={snapshot.jobs} onUpdate={updateJob} />
+            <JobsSection jobs={snapshot.jobs} onUpdate={updateJob} />
           </section>
           <DataTables snapshot={snapshot} />
         </main>
@@ -299,11 +381,40 @@ function Dashboard() {
   );
 }
 
-function SectionHeader({ title, icon }: { title: string; icon: React.ReactNode }) {
+function PollIndicator({
+  label,
+  status,
+  detail
+}: {
+  label: string;
+  status: PollStatus | StreamStatus;
+  detail?: string;
+}) {
+  const title = detail ? `${label}: ${status} (${detail})` : `${label}: ${status}`;
+  return (
+    <span className={`poll-indicator poll-${status}`} title={title} aria-label={title}>
+      <span className="poll-dot" />
+      <span className="poll-label">{label}</span>
+    </span>
+  );
+}
+
+function SectionHeader({
+  title,
+  icon,
+  action
+}: {
+  title: string;
+  icon: React.ReactNode;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="section-header">
-      <span>{icon}</span>
-      <h2>{title}</h2>
+      <div className="section-title">
+        <span>{icon}</span>
+        <h2>{title}</h2>
+      </div>
+      {action ? <div className="section-action">{action}</div> : null}
     </div>
   );
 }
@@ -420,6 +531,94 @@ function ContourGrid({ contours }: { contours: StateSnapshot["contours"] }) {
   );
 }
 
+function WorkerPanel({ worker }: { worker: WorkerHealth | null }) {
+  if (!worker) {
+    return <p className="empty">Worker state unavailable</p>;
+  }
+  const heartbeat = worker.heartbeat;
+  return (
+    <div className="worker-grid">
+      <div className="metric-tile">
+        <span>Status</span>
+        <strong><Status value={worker.status} /></strong>
+        <small>{heartbeat?.message || "no heartbeat"}</small>
+      </div>
+      <div className="metric-tile">
+        <span>Queue</span>
+        <strong>{worker.queued_jobs}</strong>
+        <small>queued jobs</small>
+      </div>
+      <div className="metric-tile">
+        <span>Running</span>
+        <strong>{worker.running_jobs}</strong>
+        <small>{heartbeat?.current_job_id ? `job ${heartbeat.current_job_id}` : "no active job"}</small>
+      </div>
+      <div className="metric-tile">
+        <span>Last seen</span>
+        <strong>{heartbeat?.updated_at || "never"}</strong>
+        <small>{worker.stale_after_seconds}s stale threshold</small>
+      </div>
+    </div>
+  );
+}
+
+function JobsSection({ jobs, onUpdate }: { jobs: Job[]; onUpdate: (jobId: number, status: "cancelled" | "queued") => Promise<void> }) {
+  const [statusFilter, setStatusFilter] = React.useState<JobStatusFilter>("all");
+  const [kindFilter, setKindFilter] = React.useState<JobKindFilter>("all");
+  const [query, setQuery] = React.useState("");
+
+  const filteredJobs = React.useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return jobs.filter((job) => {
+      if (statusFilter !== "all" && job.status !== statusFilter) return false;
+      if (kindFilter !== "all" && job.kind !== kindFilter) return false;
+      if (!normalizedQuery) return true;
+      return [
+        String(job.id),
+        job.kind,
+        job.contour,
+        job.build_version,
+        job.status,
+        job.error
+      ].some((value) => value.toLowerCase().includes(normalizedQuery));
+    });
+  }, [jobs, statusFilter, kindFilter, query]);
+
+  return (
+    <>
+      <div className="table-toolbar">
+        <span className="toolbar-icon"><ListFilter size={16} /></span>
+        <label>
+          Status
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as JobStatusFilter)}>
+            <option value="all">all</option>
+            <option value="queued">queued</option>
+            <option value="running">running</option>
+            <option value="success">success</option>
+            <option value="failed">failed</option>
+            <option value="cancelled">cancelled</option>
+          </select>
+        </label>
+        <label>
+          Kind
+          <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value as JobKindFilter)}>
+            <option value="all">all</option>
+            {(Object.keys(jobKindLabels) as JobKind[]).map((kind) => (
+              <option value={kind} key={kind}>{jobKindLabels[kind]}</option>
+            ))}
+          </select>
+        </label>
+        <label className="toolbar-search">
+          Search
+          <input value={query} onChange={(event) => setQuery(event.target.value)} />
+        </label>
+        <span className="toolbar-count">{filteredJobs.length} / {jobs.length}</span>
+      </div>
+      <JobsTable jobs={filteredJobs} onUpdate={onUpdate} />
+    </>
+  );
+}
+
 function JobsTable({ jobs, onUpdate }: { jobs: Job[]; onUpdate: (jobId: number, status: "cancelled" | "queued") => Promise<void> }) {
   if (!jobs.length) {
     return <p className="empty">No jobs</p>;
@@ -520,16 +719,80 @@ function Status({ value }: { value: string }) {
   return <span className={`status status-${value}`}>{value}</span>;
 }
 
+function prettyPayload(payloadJson: string): string {
+  try {
+    return JSON.stringify(JSON.parse(payloadJson || "{}"), null, 2);
+  } catch {
+    return payloadJson || "{}";
+  }
+}
+
+function JobDetail({
+  job,
+  onUpdate
+}: {
+  job: Job | null;
+  onUpdate: (status: "cancelled" | "queued") => Promise<void>;
+}) {
+  if (!job) {
+    return <p className="empty">Loading job...</p>;
+  }
+  const fields = [
+    ["Kind", jobKindLabels[job.kind]],
+    ["Contour", job.contour || "-"],
+    ["Build version", job.build_version || "-"],
+    ["Created", job.created_at || "-"],
+    ["Started", job.started_at || "-"],
+    ["Finished", job.finished_at || "-"],
+    ["Log path", job.log_path || "-"]
+  ];
+  return (
+    <div className="job-detail">
+      <div className="job-detail-header">
+        <Status value={job.status} />
+        <div className="row-actions">
+          {job.status === "queued" ? (
+            <button className="icon-button danger" type="button" title="Cancel" onClick={() => void onUpdate("cancelled")}>
+              <Ban size={16} />
+            </button>
+          ) : null}
+          {job.status === "failed" || job.status === "cancelled" ? (
+            <button className="icon-button" type="button" title="Requeue" onClick={() => void onUpdate("queued")}>
+              <RotateCcw size={16} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div className="job-detail-grid">
+        {fields.map(([label, value]) => (
+          <div className="detail-cell" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+      {job.error ? <div className="alert">{job.error}</div> : null}
+      <pre className="payload-view">{prettyPayload(job.payload_json)}</pre>
+    </div>
+  );
+}
+
 function JobLogPage({ jobId }: { jobId: number }) {
   const [job, setJob] = React.useState<Job | null>(null);
   const [log, setLog] = React.useState("");
   const [error, setError] = React.useState("");
+  const [streamStatus, setStreamStatus] = React.useState<StreamStatus>("connecting");
+  const logRef = React.useRef<HTMLPreElement | null>(null);
 
   React.useEffect(() => {
     let closed = false;
+    setStreamStatus("connecting");
     apiJson<Job>(`/api/jobs/${jobId}`).then(setJob).catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}`);
+    socket.addEventListener("open", () => {
+      if (!closed) setStreamStatus("open");
+    });
     socket.addEventListener("message", (event) => {
       if (closed) return;
       const message = JSON.parse(event.data) as { type: string; text?: string; status?: JobStatus; job?: Job; message?: string };
@@ -538,12 +801,37 @@ function JobLogPage({ jobId }: { jobId: number }) {
       if (message.type === "log" && message.text) setLog((current) => current + message.text);
       if (message.type === "error" && message.message) setError(message.message);
     });
-    socket.addEventListener("error", () => setError("WebSocket connection failed"));
+    socket.addEventListener("error", () => {
+      setStreamStatus("failed");
+      setError("WebSocket connection failed");
+    });
+    socket.addEventListener("close", () => {
+      if (!closed) setStreamStatus((current) => current === "failed" ? current : "closed");
+    });
     return () => {
       closed = true;
       socket.close();
     };
   }, [jobId]);
+
+  React.useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [log]);
+
+  async function updateJob(status: "cancelled" | "queued") {
+    setError("");
+    try {
+      const updated = await apiJson<Job>(`/api/jobs/${jobId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+      setJob(updated);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -553,14 +841,28 @@ function JobLogPage({ jobId }: { jobId: number }) {
           <p>{job ? `${jobKindLabels[job.kind]} / ${job.status}` : "Loading job log"}</p>
         </div>
         <a className="icon-link" href="/" title="Dashboard">
-          <Activity size={18} />
+          <ArrowLeft size={18} />
         </a>
       </header>
       {error ? <div className="alert">{error}</div> : null}
       <main className="workspace">
         <section className="band">
-          <SectionHeader title="Live log" icon={<FileText size={18} />} />
-          <pre className="log-view">{log || "Waiting for log output..."}</pre>
+          <SectionHeader title="Job detail" icon={<Activity size={18} />} />
+          <JobDetail job={job} onUpdate={updateJob} />
+        </section>
+        <section className="band">
+          <SectionHeader
+            title="Live log"
+            icon={<FileText size={18} />}
+            action={
+              <PollIndicator
+                label="Log stream"
+                status={streamStatus}
+                detail={`/ws/jobs/${jobId}`}
+              />
+            }
+          />
+          <pre className="log-view" ref={logRef}>{log || "Waiting for log output..."}</pre>
         </section>
       </main>
     </div>

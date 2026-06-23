@@ -32,6 +32,7 @@ from simple_deploy.registry.commands import (
     record_deployment_applied,
     record_deployment_failed,
     record_release_bundle,
+    record_worker_heartbeat,
     requeue_local_job,
     set_contour_baseline,
     set_local_job_log_path,
@@ -46,6 +47,7 @@ from simple_deploy.registry.state import (
     list_external_requests,
     list_jobs,
     list_releases,
+    get_worker_heartbeat,
 )
 
 
@@ -240,6 +242,30 @@ class RegistryCommandTests(unittest.TestCase):
             with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
                 with self.assertRaisesRegex(ValueError, "requires contour"):
                     create_local_job("DEPLOY", build_version=TEST_BUILD_VERSION)
+
+    def test_worker_heartbeat_command_records_status(self):
+        """Worker heartbeat пишется в SQLite как отдельный operator status."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / STATE_DB_NAME
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
+                created = create_local_job(
+                    "BUILD", build_version=TEST_BUILD_VERSION
+                )
+                result = record_worker_heartbeat(
+                    status="RUNNING",
+                    current_job_id=created.job.id,
+                    message="claimed test job",
+                )
+
+            with closing(connect_state_db(db_path)) as connection:
+                heartbeat = get_worker_heartbeat(connection)
+
+        self.assertEqual(result.heartbeat.worker_id, "local")
+        self.assertEqual(result.heartbeat.status, "running")
+        self.assertEqual(result.heartbeat.current_job_id, created.job.id)
+        self.assertEqual(result.heartbeat.message, "claimed test job")
+        self.assertIsNotNone(heartbeat)
+        self.assertEqual(heartbeat.status, "running")
 
     def test_cancel_local_job_only_allows_queued_jobs(self):
         """Cancel transition переводит только queued job в cancelled."""

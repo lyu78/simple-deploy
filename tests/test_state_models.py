@@ -37,6 +37,10 @@ from simple_deploy.models.state import (
     ReleaseRecordReadModel,
     StateSnapshotModel,
     StateSnapshotReadModel,
+    WorkerHeartbeatModel,
+    WorkerHeartbeatReadModel,
+    WorkerHealthModel,
+    WorkerHealthReadModel,
 )
 from simple_deploy.release.state import ContourState
 
@@ -51,6 +55,8 @@ class StateModelTests(unittest.TestCase):
         self.assertIs(DeploymentAttemptModel, DeploymentAttemptReadModel)
         self.assertIs(ExternalRequestModel, ExternalRequestReadModel)
         self.assertIs(JobModel, JobReadModel)
+        self.assertIs(WorkerHeartbeatModel, WorkerHeartbeatReadModel)
+        self.assertIs(WorkerHealthModel, WorkerHealthReadModel)
         self.assertIs(ReleaseModel, ReleaseReadModel)
         self.assertIs(ReleaseReferenceModel, ReleaseReferenceReadModel)
         self.assertIs(ReleaseRecordModel, ReleaseBundleReadModel)
@@ -93,6 +99,7 @@ class StateModelTests(unittest.TestCase):
         release_schema = ReleaseBundleReadModel.model_json_schema()
         job_schema = JobReadModel.model_json_schema()
         request_schema = ExternalRequestReadModel.model_json_schema()
+        worker_schema = WorkerHealthReadModel.model_json_schema()
 
         self.assertIn(
             "UTC timestamp",
@@ -106,6 +113,7 @@ class StateModelTests(unittest.TestCase):
             "Строковый идентификатор",
             request_schema["properties"]["external_id"]["description"],
         )
+        self.assertIn("status", worker_schema["properties"])
 
     def test_state_snapshot_read_model_converts_to_api_dto(self):
         """Снимок состояния конвертируется во внешний DTO без смены формы JSON."""

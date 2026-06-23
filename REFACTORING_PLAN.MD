@@ -18,7 +18,7 @@
 
 Цель рефакторинга - сохранить текущий рабочий CLI, но разложить систему вокруг процессов и контуров.
 
-## Текущий статус на 2026-06-19
+## Текущий статус на 2026-06-22
 
 Монолитный Windows runner больше не является исполняемым файлом проекта.
 Поддерживаемая операторская точка входа одна:
@@ -45,7 +45,8 @@
 - shared infrastructure вынесена в `core`, `config`, `release`, `registry`,
   `types`, `models` и `dto`;
 - SQLite implementation принадлежит `simple_deploy.registry.state`;
-- read-only web/API v1 уже работает поверх той же SQLite-базы.
+- web/API v1 и React UI работают поверх той же SQLite-базы, создают local jobs
+  через REST и показывают worker heartbeat.
 
 ## Packaging contract
 
@@ -235,8 +236,8 @@ REST-контракт для будущих write endpoints должен быт�
   заявку, которую потом надо запускать отдельным RPC endpoint-ом";
 - целевой механизм исполнения для Windows-local режима - отдельный
   `simple-deploy worker` как SQLite-backed polling worker: он периодически
-  ищет `scheduled/queued` jobs в registry, атомарно claim-ит одну job и
-  выполняет ее вне HTTP-потока;
+  ищет `queued` jobs в registry, атомарно claim-ит одну job и выполняет ее вне
+  HTTP-потока;
 - API не стартует отдельный subprocess на каждый `POST /api/jobs` и не
   выполняет build/deploy синхронно; исполнитель - постоянный worker process;
 - REST остается внешней управляющей поверхностью для фронта/оператора:
@@ -411,9 +412,8 @@ adapters, application layer - use case boundary, а domain/registry/process
    - текущий `POST /api/jobs` создает job resource и возвращает `JobDto`, но
      следующий срез должен привести его к целевому REST-контракту: `POST`
      инициирует выполнение или постановку в исполняемую очередь;
-   - механизм исполнения: постоянный `simple-deploy worker` с SQLite polling,
-     atomic claim `scheduled/queued -> running` и выполнением job вне
-     HTTP-потока;
+    - механизм исполнения: постоянный `simple-deploy worker` с SQLite polling,
+      atomic claim `queued -> running` и выполнением job вне HTTP-потока;
    - API не стартует subprocess на каждый `POST /api/jobs`; прямой endpoint
      вида `/run` не используется;
    - `PATCH /api/jobs/{id}` остается REST-поверхностью для операторских
@@ -1256,9 +1256,8 @@ logger:
 - полный regression suite: `182 passed`.
 
 Следующий рекомендуемый срез выполнен: `update` и `set_default` data SQL
-разделены на уровне artifacts/deploy chain. Расширение dashboard для создания
-jobs из формы остается следующим UI-срезом после стабилизации SQL artifact
-contract.
+разделены на уровне artifacts/deploy chain. После стабилизации SQL artifact
+contract UI-срез с формой создания jobs закрыт тридцать третьим срезом.
 
 ### Статус тридцать второго среза шага 6
 
@@ -1282,5 +1281,92 @@ artifacts:
   `pytest` - `182 passed`; `git diff --check` - без whitespace errors, только
   стандартные CRLF warnings.
 
-Следующий рекомендуемый срез: расширить operator dashboard формой создания
-local jobs поверх уже стабилизированного REST/job worker контракта.
+Следующий рекомендуемый срез выполнен тридцать третьим срезом: operator
+dashboard получил React-форму создания local jobs поверх уже стабилизированного
+REST/job worker контракта.
+
+### Статус тридцать третьего среза шага 6
+
+Тридцать третий безопасный срез заменил legacy HTML dashboard на React UI без
+изменения CLI и REST-контрактов:
+
+- `tools-ci/web-ui` получил Vite/React приложение, которое читает `/api/state`,
+  создает jobs через `POST /api/jobs`, управляет lifecycle через
+  `PATCH /api/jobs/{id}` и открывает `/jobs/{id}` для live log;
+- `simple_deploy.web.app` отдает собранный React shell и сохраняет legacy HTML
+  fallback для окружений без `tools-ci/web-ui/dist`;
+- документация обновлена: CLI остается основным и аварийным путем, Web/API -
+  операторская поверхность поверх той же SQLite-базы;
+- добавлен `AGENTS.md`, где зафиксировано правило UI-проверок через
+  изолированный Playwright/Chromium, без использования основного Chrome-профиля;
+- проверка среза: `npm run build`, focused web tests, полный `pytest` -
+  `182 passed`, `git diff --check` без whitespace errors.
+
+### Статус тридцать четвертого среза шага 6
+
+Тридцать четвертый безопасный срез закрыл ближайший operator UX вокруг web +
+worker без перехода к новым глубоким сущностям:
+
+- SQLite registry расширен совместимой таблицей `worker_heartbeat`;
+- `simple-deploy worker` пишет heartbeat при старте, idle polling, claim-е job,
+  завершении job и штатной остановке `--once`;
+- Web/API получил ресурс `GET /api/worker`, который показывает `offline`,
+  `stale`, `idle`, `running` или `error`, а также queued/running job counts;
+- React dashboard показывает worker panel, фильтры jobs по status/kind/search и
+  расширенную React-страницу job detail с payload, metadata, actions и live log;
+- React dashboard тихо обновляет `/api/state` и `/api/worker`, чтобы worker
+  status и очередь jobs менялись без ручной перезагрузки страницы;
+- UI показывает пульсирующие индикаторы dashboard polling и live log stream:
+  здоровый poll/stream пульсирует зеленым, активный запрос - желтым, ошибка -
+  красным;
+- Web/API по-прежнему только создает/меняет job resources, а долгие операции
+  исполняет отдельный SQLite-backed worker process;
+- focused проверки среза: `tests/test_web_app.py`, `tests/test_jobs_runner.py`,
+  `tests/test_registry_commands.py`, `tests/test_state_models.py`; полный
+  `pytest` - `183 passed`, React `npm run build` зеленый, `git diff --check`
+  без whitespace errors.
+
+### Оставшийся рефакторинговый хвост
+
+Новые продуктовые сценарии вынесены в `PRODUCT_BACKLOG.MD` и больше не являются
+критерием завершения этого плана. `REFACTORING_PLAN.MD` дальше оценивает только
+докатывание старой release/deploy функциональности на новой структуре.
+
+Критерии успеха рефакторинга:
+
+- поддерживаемая публичная точка запуска - `.venv/Scripts/simple-deploy.exe`;
+- старые operator команды `dry-run`, `build`, `deploy`, `pipeline`,
+  `set-baseline`, `mark-applied` и `mark-failed` сохраняют прежнее поведение и
+  аргументы;
+- TEST/PROD ручной flow остается через существующие CLI-команды фиксации
+  результата;
+- web/API, React UI, local jobs и worker являются операторской оболочкой поверх
+  тех же use cases и общей SQLite-базы, а не отдельной логикой deploy;
+- документация не ведет оператора к удаленным wrapper-ам или старым import
+  paths;
+- regression suite, React build и whitespace check зеленые.
+
+Следующий практический рефакторинговый срез: закрепить операционный запуск пары
+web + worker для локальной машины или Task Scheduler, затем проверить, что
+старая функциональность соответствует требованиям выше. Глубокие сущности без
+конкретного нового сценария пока не трогать.
+
+Чеклист закрытия рефакторинга:
+
+- [ ] Описать операционный запуск `web + worker`: две локальные команды,
+  ожидаемые статусы `/api/worker`, поведение при остановленном worker-е и
+  recovery после failed job.
+- [ ] Обновить или подтвердить Windows Task Scheduler/runbook, чтобы scheduled
+  запуск использовал только `.venv/Scripts/simple-deploy.exe` и актуальные
+  команды.
+- [ ] Пройти документацию поиском старых entrypoint-ов, wrapper-ов и устаревших
+  ссылок на legacy paths; оставить legacy только там, где он явно помечен как
+  legacy.
+- [ ] Зафиксировать acceptance checklist старой функциональности:
+  `dry-run`, `build`, `deploy`, `pipeline`, `set-baseline`, `mark-applied`,
+  `mark-failed`, SQL artifacts и ручной TEST/PROD flow.
+- [ ] Подтвердить локальный operator smoke: web server стартует, worker
+  стартует, UI видит worker status, job создается через UI/API, live log
+  открывается через `/jobs/{id}`.
+- [ ] После зеленых проверок закрыть `REFACTORING_PLAN.MD` как завершенный
+  refactoring track, а новые задачи вести только через `PRODUCT_BACKLOG.MD`.

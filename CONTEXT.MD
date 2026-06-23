@@ -564,31 +564,38 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - операторские build/deploy команды и аргументы не менялись; добавлена
   сервисная команда `simple-deploy worker`.
 
-Последние срезы рефакторинга оформили операторские переходы jobs через REST
-изменение ресурса `PATCH /api/jobs/{id}`, без action-style путей
-`/retries`/`/cancellations`, и продолжили перевод операторского вывода на общий
-job logger. Сейчас `build`, `mark`, `core.release_paths`, `release.artifacts`,
-`healthcheck`, `notifications`, `deploy`, `app_deploy` и `data_sql` пишут через
-`job_log()` с fallback на прежний stdout/stderr; dry-run `Reporter` тоже пишет
-отчет через `job_log()` без изменения формата строк. В `tools-ci/simple_deploy`
-остались только намеренные прямые `print()`: CLI error fallback, fallback
-helpers в `core.commands`/`core.job_logging`, строка `RUN LOG ...` при открытии
-log file и один строковый литерал команды
-`print(os.environ['DJANGO_SETTINGS_MODULE'])`. Следующий безопасный срез был
-выполнен: data SQL `update` и `set_default` разделены на отдельные artifacts и
-deploy steps. `run_all_update_*` теперь содержит только `kind=update`;
-`run_all_set_default_*` содержит только `kind=set_default`; флаг
-`--include-set-default-sql` запускает отдельный set_default step после update и
-больше не прокидывает `SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT` в update runner.
-Расширение operator UI для создания jobs из dashboard остается следующим
-UI-срезом после стабилизации SQL artifact contract.
+Последние срезы рефакторинга закрыли SQL artifact contract, React operator UI
+и web + worker operator UX:
+
+- data SQL `update` и `set_default` разделены на отдельные artifacts и deploy
+  steps; `--include-set-default-sql` запускает отдельный set_default step после
+  update и больше не прокидывает `SIMPLE_DEPLOY_INCLUDE_SET_DEFAULT` в update
+  runner;
+- React UI читает `/api/state`, создает local jobs через `POST /api/jobs`,
+  управляет lifecycle через `PATCH /api/jobs/{id}` и открывает React job detail
+  с live log stream;
+- worker heartbeat хранится в SQLite, `GET /api/worker` показывает
+  `offline`/`stale`/`idle`/`running`/`error`, а UI обновляет state/worker status
+  без ручной перезагрузки;
+- dashboard и job detail показывают пульсирующие индикаторы polling/stream:
+  зеленый для здорового обновления, желтый для активного запроса, красный для
+  ошибки;
+- `web/API`, React UI, local jobs и worker остаются оболочкой поверх той же
+  SQLite-базы и application/process use cases; CLI остается основным и
+  аварийным путем.
+
+Новые продуктовые идеи больше не входят в критерии завершения рефакторинга и
+вынесены в `PRODUCT_BACKLOG.MD`: TEST/PROD external requests в API/UI, release
+contents/change set, bundle validation pipeline и будущие operator UX срезы.
+
+Оставшийся фокус рефакторинга: закрепить операционный запуск пары web + worker
+для локальной машины или Task Scheduler и подтвердить старые CLI/process
+сценарии на новой структуре.
 
 Последняя зафиксированная точка ветки `refactor/create-deploy-toolkit`:
 
-- `1365658 Refactor local jobs and job logging`;
-- `6a7de54 Route deploy progress through job logger`;
-- `179fefa Route dry-run reporter through job logger`;
-- `ac2fcfd Add local jobs operator controls`.
+- `eb6df57 Add React web UI`.
 
-Проверенный baseline после этих срезов: полный `pytest` - `182 passed`;
-`git diff --check` - без whitespace errors, только стандартные CRLF warnings.
+Проверенный baseline после последних срезов: полный `pytest` - `183 passed`;
+React `npm run build` зеленый; `git diff --check` - без whitespace errors,
+только стандартные CRLF warnings.

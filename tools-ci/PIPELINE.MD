@@ -26,10 +26,13 @@ attempts и deploy attempts: успешные build попадают в `release
 фиксируются в `build_attempts`, упавшие deploy - в `deployment_attempts` без
 сдвига baseline.
 
-В этой же SQLite-базе есть таблицы `local_jobs` и `external_requests`.
+В этой же SQLite-базе есть таблицы `local_jobs`, `external_requests` и
+`worker_heartbeat`.
 Они используются web/API v1: локальные jobs отражают queued/running/terminal
 операции, созданные через API или CLI-совместимый runner, а external requests -
-заявки TEST/PROD и ручную фиксацию внешнего процесса.
+заявки TEST/PROD и ручную фиксацию внешнего процесса. `worker_heartbeat`
+показывает operator UI, запущен ли локальный polling worker и какую job он
+обрабатывает.
 
 ## Команды оператора
 
@@ -66,6 +69,19 @@ attempts и deploy attempts: успешные build попадают в `release
 ```bash
 .venv/Scripts/simple-deploy.exe pipeline --contour dev
 ```
+
+Web/API и local worker:
+
+```bash
+.venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
+.venv/Scripts/simple-deploy.exe worker --poll-interval 2
+```
+
+`POST /api/jobs` только создает queued job в SQLite. Выполнение делает
+отдельный `simple-deploy worker`, который атомарно забирает queued jobs,
+пишет job log и обновляет heartbeat для `/api/worker`. Разовый режим
+`.venv/Scripts/simple-deploy.exe worker --once` удобен для проверки очереди и
+возвращает отдельный idle exit code, если queued jobs нет.
 
 `dry-run` проверяет data SQL по умолчанию, а `build` и `pipeline` генерируют
 data SQL-артефакты по умолчанию. Явный schema-only режим для аварийных случаев:

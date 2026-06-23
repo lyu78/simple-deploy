@@ -28,7 +28,10 @@ from simple_deploy.registry.commands import (  # noqa: E402
     cancel_local_job,
     requeue_local_job,
 )
-from simple_deploy.registry.queries import job_read_model_from_state  # noqa: E402
+from simple_deploy.registry.queries import (  # noqa: E402
+    job_read_model_from_state,
+    worker_health_read_model_from_state,
+)
 
 
 class LocalJobRunnerTests(unittest.TestCase):
@@ -95,6 +98,7 @@ class LocalJobRunnerTests(unittest.TestCase):
                         exit_code = run_worker_loop(once=True)
                 restored = request_from_job(created)
                 updated = job_read_model_from_state(created.id)
+                health = worker_health_read_model_from_state()
 
             log_text = log_path.read_text(encoding="utf-8")
 
@@ -103,6 +107,11 @@ class LocalJobRunnerTests(unittest.TestCase):
         self.assertIsNotNone(updated)
         self.assertEqual(updated.status, "success")
         self.assertEqual(updated.log_path, str(log_path))
+        self.assertEqual(health.status, "offline")
+        self.assertIsNotNone(health.heartbeat)
+        self.assertEqual(health.heartbeat.status, "stopped")
+        self.assertEqual(health.queued_jobs, 0)
+        self.assertEqual(health.running_jobs, 0)
         self.assertIn("WORKER claimed job", log_text)
         self.assertIn("WORKER finished job", log_text)
 
@@ -112,8 +121,12 @@ class LocalJobRunnerTests(unittest.TestCase):
             db_path = Path(tmp) / STATE_DB_NAME
             with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}):
                 exit_code = run_worker_loop(once=True)
+                health = worker_health_read_model_from_state()
 
         self.assertEqual(exit_code, WORKER_IDLE_EXIT_CODE)
+        self.assertEqual(health.status, "offline")
+        self.assertIsNotNone(health.heartbeat)
+        self.assertEqual(health.heartbeat.status, "stopped")
 
     def test_worker_ignores_cancelled_job_and_runs_requeued_job(self):
         """Worker не claim-ит cancelled job, но выполняет requeued job."""

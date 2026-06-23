@@ -12,7 +12,11 @@ from __future__ import annotations
 from contextlib import closing
 from dataclasses import dataclass
 
-from simple_deploy.models.state import ExternalRequestReadModel, JobReadModel
+from simple_deploy.models.state import (
+    ExternalRequestReadModel,
+    JobReadModel,
+    WorkerHeartbeatReadModel,
+)
 from simple_deploy.entities.release import ReleaseBundle
 from simple_deploy.registry import state
 from simple_deploy.release.manifest import manifest_from_release_bundle
@@ -72,6 +76,13 @@ class ExternalRequestCommandResult:
     request: ExternalRequestReadModel
 
 
+@dataclass(frozen=True)
+class WorkerHeartbeatCommandResult:
+    """Результат registry-команды записи worker heartbeat."""
+
+    heartbeat: WorkerHeartbeatReadModel
+
+
 def _require_job(job: state.JobRecord | None, job_id: int) -> JobReadModel:
     """Возвращает job или поднимает ошибку нарушенного storage-инварианта."""
     if job is None:
@@ -95,6 +106,19 @@ def _require_external_request(
             f"id={request_id}"
         )
     return ExternalRequestReadModel.model_validate(request)
+
+
+def _require_worker_heartbeat(
+    heartbeat: state.WorkerHeartbeat | None,
+    worker_id: str,
+) -> WorkerHeartbeatReadModel:
+    """Возвращает heartbeat или поднимает ошибку storage-инварианта."""
+    if heartbeat is None:
+        raise RuntimeError(
+            "Worker heartbeat was not found after registry command: "
+            f"worker_id={worker_id}"
+        )
+    return WorkerHeartbeatReadModel.model_validate(heartbeat)
 
 
 def record_release_bundle(
@@ -269,6 +293,28 @@ def requeue_local_job(job_id: int) -> LocalJobCommandResult:
     return LocalJobCommandResult(_require_job(job, job_id))
 
 
+def record_worker_heartbeat(
+    *,
+    worker_id: str = "local",
+    status: str = "idle",
+    current_job_id: int | None = None,
+    message: str = "",
+) -> WorkerHeartbeatCommandResult:
+    """Записывает heartbeat локального polling worker-а."""
+    with closing(state.connect_state_db()) as connection:
+        state.upsert_worker_heartbeat(
+            connection,
+            worker_id=worker_id,
+            status=status,
+            current_job_id=current_job_id,
+            message=message,
+        )
+        heartbeat = state.get_worker_heartbeat(connection, worker_id)
+    return WorkerHeartbeatCommandResult(
+        _require_worker_heartbeat(heartbeat, worker_id)
+    )
+
+
 def create_release_external_request(
     contour: str,
     build_version: str,
@@ -378,6 +424,7 @@ __all__ = [
     "ExternalRequestCommandResult",
     "LocalJobCommandResult",
     "ReleaseBundleRecordResult",
+    "WorkerHeartbeatCommandResult",
     "cancel_local_job",
     "claim_next_local_job",
     "create_local_job",
@@ -389,6 +436,7 @@ __all__ = [
     "record_deployment_failed",
     "record_release_bundle",
     "record_release_bundle_aggregate",
+    "record_worker_heartbeat",
     "requeue_local_job",
     "set_contour_baseline",
     "set_local_job_log_path",

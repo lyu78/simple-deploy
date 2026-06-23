@@ -40,12 +40,25 @@ Web/API v1 запускается поверх той же SQLite-базы. CLI 
 аварийным путем, а React UI дает операторскую панель для просмотра состояния и
 создания локальных jobs через API:
 
+В двух отдельных терминалах:
+
 ```bash
 .venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
+.venv/Scripts/simple-deploy.exe worker --poll-interval 2
 ```
 
 UI: `http://127.0.0.1:8000/`.
 API: `http://127.0.0.1:8000/api/state`.
+Worker status: `http://127.0.0.1:8000/api/worker`.
+
+Web/API только создает queued jobs и управляет их lifecycle через REST. Для
+реального выполнения очереди рядом должен работать `simple-deploy worker`; его
+удобно запускать во втором терминале или отдельной задаче Task Scheduler.
+Разовый режим для проверки очереди:
+
+```bash
+.venv/Scripts/simple-deploy.exe worker --once
+```
 
 Исходники UI лежат в `tools-ci/web-ui`. После изменения фронтенда соберите
 статические assets:
