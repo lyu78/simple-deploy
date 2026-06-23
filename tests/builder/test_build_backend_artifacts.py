@@ -9,6 +9,7 @@
 import importlib.util
 import io
 import json
+import os
 import shutil
 import sys
 import subprocess
@@ -16,6 +17,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,15 +52,24 @@ sys.path.insert(0, str(BUILDER_ROOT))
 from src.build_backend import (  # noqa: E402
     _add_run_all_includes_to_tar,
     _add_shell_runner_includes_to_tar,
+    _backend_app_root_dir,
+    _backend_build_requirements_path,
     _cleanup_build_scripts,
     _create_db_migrations_archives,
     _create_db_sql_artifact,
     _ensure_backend_build_venv,
+    _include_data_sql_artifacts,
     _install_backend_build_requirements,
+    _pip_trusted_host_args,
     _prepare_build_scripts,
+    _python_path_from_activation_script,
+    _run_git_bash,
+    _run_logged_command,
     _run_additional_artifact_generators,
     _run_all_include_paths,
+    _schema_baselines_json,
     _shell_runner_include_paths,
+    _validate_db_script_include_path,
     build_backend,
 )
 from src.files import sync_source_top_level_items  # noqa: E402
@@ -240,6 +251,107 @@ class BuildBackendArtifactTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _run_all_include_paths(self.repo, run_all)
 
+    def test_include_paths_reject_absolute_parent_and_wrong_prefix(self):
+        """SQL includes ограничены docs/database/scripts внутри source repo."""
+        owner = self._write("run_all_update.sql", "")
+
+        bad_paths = [
+            r"C:\temp\evil.sql",
+            "../outside.sql",
+            "docs/not-database/script.sql",
+        ]
+        for include_text in bad_paths:
+            with self.subTest(include_text=include_text):
+                with self.assertRaises(RuntimeError):
+                    _validate_db_script_include_path(
+                        self.repo,
+                        owner,
+                        include_text,
+                    )
+
+    def test_backend_build_helper_env_defaults_and_overrides(self):
+        """Фиксирует небольшие env-driven backend build helper contracts."""
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+        default_requirements = source_repo / "requirements.txt"
+        custom_requirements = source_repo / "requirements" / "prod.txt"
+        default_requirements.write_text("Django==4.2\n", encoding="utf-8")
+        custom_requirements.parent.mkdir()
+        custom_requirements.write_text("Django==4.2\n", encoding="utf-8")
+
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertTrue(_include_data_sql_artifacts())
+            self.assertEqual(_backend_app_root_dir(), "example_backend_app")
+            self.assertEqual(
+                _backend_build_requirements_path(source_repo),
+                default_requirements,
+            )
+        with patch.dict(
+            "os.environ",
+            {
+                "SIMPLE_DEPLOY_INCLUDE_DATA_SQL": "off",
+                "BACKEND_APP_ROOT_DIR": "src/backend",
+                "BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH": "requirements/prod.txt",
+            },
+            clear=True,
+        ):
+            self.assertFalse(_include_data_sql_artifacts())
+            self.assertEqual(_backend_app_root_dir(), "src/backend")
+            self.assertEqual(
+                _backend_build_requirements_path(source_repo),
+                custom_requirements,
+            )
+        self.assertEqual(
+            _pip_trusted_host_args(),
+            [
+                "--trusted-host",
+                "pypi.org",
+                "--trusted-host",
+                "files.pythonhosted.org",
+                "--trusted-host",
+                "pypi.python.org",
+            ],
+        )
+
+    def test_python_path_from_activation_script_requires_python_exe(self):
+        """Backend venv activation script должен вести к Scripts/python.exe."""
+        activate_path = self.root / "source" / ".venv" / "Scripts" / "activate.bat"
+        activate_path.parent.mkdir(parents=True)
+        activate_path.write_text("", encoding="utf-8")
+
+        with self.assertRaisesRegex(RuntimeError, "Backend venv python not found"):
+            _python_path_from_activation_script(activate_path)
+
+        python_path = activate_path.parent / "python.exe"
+        python_path.write_text("", encoding="utf-8")
+        self.assertEqual(
+            _python_path_from_activation_script(activate_path),
+            python_path,
+        )
+
+    def test_run_logged_command_streams_success_and_reports_failure_tail(self):
+        """Logged command helper сохраняет tail вывода в RuntimeError."""
+        _run_logged_command(
+            [sys.executable, "-c", "print('ok')"],
+            cwd=self.root,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Last output lines"):
+            _run_logged_command(
+                [
+                    sys.executable,
+                    "-c",
+                    "print('line-before-fail'); raise SystemExit(7)",
+                ],
+                cwd=self.root,
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "Command executable not found"):
+            _run_logged_command(
+                ["missing-simple-deploy-command.exe"],
+                cwd=self.root,
+            )
+
     def test_build_scripts_directory_is_cleaned_after_generation(self):
         """Проверяет очистку временной build_scripts директории после подготовки."""
         stale_file = self._write("build_scripts/stale.sql")
@@ -254,6 +366,66 @@ class BuildBackendArtifactTests(unittest.TestCase):
         _cleanup_build_scripts(build_scripts_dir)
 
         self.assertFalse(build_scripts_dir.exists())
+
+    def test_prepare_build_scripts_rejects_file_target_and_cleans_copy_error(self):
+        """Ошибки подготовки transient build_scripts не оставляют мусор."""
+        target_file = self.repo / "build_scripts"
+        target_file.write_text("not a directory", encoding="utf-8")
+
+        with self.assertRaisesRegex(RuntimeError, "exists but is not a directory"):
+            _prepare_build_scripts(self.repo)
+
+        target_file.unlink()
+        with patch("src.build_backend.shutil.copy2", side_effect=OSError("boom")):
+            with self.assertRaises(OSError):
+                _prepare_build_scripts(self.repo)
+
+        self.assertFalse((self.repo / "build_scripts").exists())
+
+    def test_schema_baselines_json_collects_all_contours_or_reports_missing(self):
+        """Schema baseline helper сериализует contour baselines и требует все contour-ы."""
+
+        class FakeConnection:
+            def close(self):
+                pass
+
+        states = {
+            "dev": SimpleNamespace(last_success_backend_commit="abc"),
+            "test": SimpleNamespace(last_success_backend_commit="def"),
+        }
+        with patch("src.build_backend.CONTOURS", ("dev", "test")):
+            with patch("src.build_backend.connect_state_db", return_value=FakeConnection()):
+                with patch(
+                    "src.build_backend.get_contour_state",
+                    side_effect=lambda _connection, contour: states[contour],
+                ):
+                    self.assertEqual(
+                        json.loads(_schema_baselines_json()),
+                        {"dev": "abc", "test": "def"},
+                    )
+                with patch(
+                    "src.build_backend.get_contour_state",
+                    side_effect=lambda _connection, contour: (
+                        states.get(contour) if contour == "dev" else None
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "Missing schema SQL baselines",
+                    ):
+                        _schema_baselines_json()
+
+    def test_run_git_bash_uses_configured_git_bash_path(self):
+        """Git Bash wrapper берет путь из env helper и запускает bash -lc."""
+        with patch("src.build_backend.get_required_env", return_value="bash.exe"):
+            with patch("src.build_backend.subprocess.run") as run_mock:
+                _run_git_bash("echo ok", cwd=self.root)
+
+        run_mock.assert_called_once_with(
+            ["bash.exe", "-lc", "echo ok"],
+            cwd=self.root,
+            check=True,
+        )
 
     def test_run_all_preamble_contains_postgres_session_settings(self):
         """Фиксирует Postgres session settings в run_all INSERT entrypoint."""
@@ -470,6 +642,23 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertIn("/.venv", args[0])
         self.assertEqual(kwargs["cwd"], source_repo)
 
+    def test_missing_backend_build_venv_after_creation_is_reported(self):
+        """Если venv command не создала activate.bat, builder падает понятно."""
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+
+        env = {
+            "BACKEND_BUILD_VENV_RELATIVE_PATH": ".venv/Scripts/activate.bat",
+            "GIT_BASH_PATH": "bash",
+        }
+        with patch.dict("os.environ", env):
+            with patch("src.build_backend._run_git_bash"):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Backend venv activation script not found after creation",
+                ):
+                    _ensure_backend_build_venv(source_repo)
+
     def test_artifact_generators_run_through_source_venv_python(self):
         """Запускает pip/schema/run_all generators через python из source repo venv."""
         source_repo = self.root / "source"
@@ -617,6 +806,55 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertNotIn("db_set_default_parallel_archive", manifest)
         self.assertEqual(set(manifest["db_schema_archives"]), {"dev", "test", "prod"})
 
+    def test_db_migrations_archives_reports_missing_schema_sql_and_restores_baseline_env(self):
+        """Missing schema entrypoint падает и возвращает прежний baseline env."""
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+        build_scripts_dir = source_repo / "build_scripts"
+        build_scripts_dir.mkdir()
+        python_path = source_repo / ".venv/Scripts/python.exe"
+
+        def fake_run_artifact_generator(*args):
+            metadata = {
+                "contours": {
+                    "dev": {"entrypoint": "missing_dev.sql"},
+                    "test": {"entrypoint": "missing_test.sql"},
+                    "prod": {"entrypoint": "missing_prod.sql"},
+                }
+            }
+            (build_scripts_dir / "schema_migrations_metadata.json").write_text(
+                json.dumps(metadata),
+                encoding="utf-8",
+            )
+
+        env = {
+            "RELEASE_ROOT_WINDOWS": str(self.release_dir),
+            "SIMPLE_DEPLOY_INCLUDE_DATA_SQL": "0",
+            "SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON": '{"old": "baseline"}',
+        }
+        with patch.dict("os.environ", env, clear=True):
+            with patch("src.build_backend.git_output", return_value=TEST_COMMIT):
+                with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
+                    with patch("src.build_backend._schema_baselines_json", return_value="{}"):
+                        with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
+                            with patch(
+                                "src.build_backend._run_artifact_generator",
+                                side_effect=fake_run_artifact_generator,
+                            ):
+                                with self.assertRaisesRegex(
+                                    RuntimeError,
+                                    "Schema SQL was not generated for dev",
+                                ):
+                                    _create_db_migrations_archives(
+                                        str(source_repo),
+                                        TEST_BUILD_VERSION,
+                                    )
+
+            self.assertEqual(
+                os.environ["SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"],
+                '{"old": "baseline"}',
+            )
+
     def test_db_migrations_archives_include_data_sql_by_default(self):
         """По умолчанию builder добавляет schema, insert/update/set_default data SQL archives."""
         source_repo = self.root / "source"
@@ -719,6 +957,18 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(run_mock.call_count, 1)
         self.assertIn(str(requirements_path), run_mock.call_args_list[0].args[0])
 
+    def test_backend_build_requirements_path_reports_missing_file(self):
+        """Отсутствующий requirements файл считается ошибкой подготовки backend build."""
+        source_repo = self.root / "source"
+        source_repo.mkdir()
+
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Backend build requirements file not found",
+            ):
+                _backend_build_requirements_path(source_repo)
+
     def test_source_top_level_sync_preserves_target_only_items(self):
         """Синхронизация top-level source repo сохраняет target-only директории."""
         source_repo = self.root / "source"
@@ -775,6 +1025,101 @@ class BuildBackendArtifactTests(unittest.TestCase):
         archive_env = run_mock.call_args.kwargs["env"]
         self.assertEqual(archive_env["BACKEND_REPO_ROOT_BASH"], BACKEND_SOURCE_REPO_BASH)
         self.assertEqual(archive_env["BACKEND_APP_ROOT_DIR"], BACKEND_APP_ROOT)
+
+    def test_backend_build_exits_on_each_failed_pre_archive_step(self):
+        """Backend build прекращается на первом failed git/sync step."""
+        env = {
+            "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
+            "BACKEND_TARGET_REPO_PATH": BACKEND_TARGET_REPO_WINDOWS,
+            "GIT_BASH_PATH": "bash",
+        }
+        scenarios = [
+            (
+                "source repo invalid",
+                lambda mocks: setattr(mocks["check_repo"], "return_value", False),
+            ),
+            (
+                "target repo invalid",
+                lambda mocks: setattr(mocks["check_repo"], "side_effect", [True, False]),
+            ),
+            (
+                "source checkout",
+                lambda mocks: setattr(mocks["git_checkout_dev"], "return_value", False),
+            ),
+            (
+                "source pull",
+                lambda mocks: setattr(mocks["git_pull"], "return_value", False),
+            ),
+            (
+                "target checkout",
+                lambda mocks: setattr(mocks["git_checkout_dev"], "side_effect", [True, False]),
+            ),
+            (
+                "target pull",
+                lambda mocks: setattr(mocks["git_pull"], "side_effect", [True, False]),
+            ),
+            (
+                "target branch",
+                lambda mocks: setattr(
+                    mocks["git_checkout_new_branch"],
+                    "return_value",
+                    False,
+                ),
+            ),
+            (
+                "sync",
+                lambda mocks: setattr(
+                    mocks["sync_source_top_level_items"],
+                    "return_value",
+                    False,
+                ),
+            ),
+            (
+                "commit push",
+                lambda mocks: setattr(mocks["git_add_commit_push"], "return_value", False),
+            ),
+        ]
+
+        for name, setup_failure in scenarios:
+            with self.subTest(name=name):
+                with patch.dict("os.environ", env):
+                    patchers = {
+                        "check_repo": patch("src.build_backend.check_repo", return_value=True),
+                        "git_checkout_dev": patch(
+                            "src.build_backend.git_checkout_dev",
+                            return_value=True,
+                        ),
+                        "git_pull": patch("src.build_backend.git_pull", return_value=True),
+                        "git_checkout_new_branch": patch(
+                            "src.build_backend.git_checkout_new_branch",
+                            return_value=True,
+                        ),
+                        "sync_source_top_level_items": patch(
+                            "src.build_backend.sync_source_top_level_items",
+                            return_value=True,
+                        ),
+                        "git_add_commit_push": patch(
+                            "src.build_backend.git_add_commit_push",
+                            return_value=True,
+                        ),
+                        "_create_db_migrations_archives": patch(
+                            "src.build_backend._create_db_migrations_archives",
+                            return_value={},
+                        ),
+                        "subprocess.run": patch("src.build_backend.subprocess.run"),
+                    }
+                    mocks = {
+                        key: patcher.start()
+                        for key, patcher in patchers.items()
+                    }
+                    try:
+                        setup_failure(mocks)
+                        with self.assertRaises(SystemExit) as cm:
+                            build_backend(TEST_BUILD_VERSION, TEST_RELEASE_BRANCH)
+                        self.assertEqual(cm.exception.code, 1)
+                    finally:
+                        for patcher in reversed(list(patchers.values())):
+                            patcher.stop()
 
     def test_backend_archive_script_excludes_python_cache(self):
         """Backend archive shell script исключает Python cache файлы."""
