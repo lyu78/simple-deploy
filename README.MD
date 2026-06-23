@@ -122,11 +122,12 @@ SQL-диапазон.
 - `tools-ci/README.MD` - установка и запуск основного Windows/Python runner.
 - `tools-ci/PIPELINE.MD` - технический E2E-процесс Windows/Python runner.
 - `legacy/ansible-ci/PIPELINE.MD` - legacy E2E-процесс через Ansible/WSL.
-- `instructions/manual-schema-sql-deploy.md` - ручное применение schema SQL на
-  TEST/PROD.
-- `instructions/data-sql-script-markup.md` - правила разметки data SQL-скриптов
-  backend repo.
-- `instructions/data-sql-validation-rules.md` - read-only правила проверки
+- `docs/README.MD` - навигация по runbooks, SQL contracts, tasks и diagrams.
+- `docs/runbooks/manual-sql-release-run.md` - ручное применение schema и data
+  SQL artifacts на TEST/PROD.
+- `docs/sql/data-script-markup.md` - правила разметки data SQL-скриптов backend
+  repo.
+- `docs/sql/data-validation-rules.md` - read-only правила проверки
   идемпотентности и бизнес-ключей data SQL.
 - `CONTEXT.MD` - текущий технический контекст, решения и ограничения для
   сопровождающих проект.
@@ -134,21 +135,22 @@ SQL-диапазон.
   истории и Git.
 - `AGENTS.md` - правила работы AI-агентов в репозитории.
 
-Диаграммы SQL release flow лежат в `docs/`:
+Диаграммы SQL release flow лежат в `docs/diagrams/sql-release/`:
 
-- `docs/release-sql-migrations-flow.puml` - общий pipeline от dry-run до
-  DEV/TEST/PROD.
-- `docs/release-sql-migrations-build-dev.puml` - сборка и DEV-размещение.
-- `docs/release-sql-migrations-test-prod.puml` - продвижение релиза на TEST и
-  PROD.
+- `docs/diagrams/sql-release/release-sql-migrations-flow.puml` - общий pipeline
+  от dry-run до DEV/TEST/PROD.
+- `docs/diagrams/sql-release/release-sql-migrations-build-dev.puml` - сборка и
+  DEV-размещение.
+- `docs/diagrams/sql-release/release-sql-migrations-test-prod.puml` -
+  продвижение релиза на TEST и PROD.
 
 ## Структура репозитория
 
 - `tools-ci/` - основной Windows/Python runner, builder, React web UI, настройки
   и вспомогательные tools.
 - `legacy/ansible-ci/` - legacy Ansible/WSL flow.
-- `instructions/` - ручные операционные процедуры и правила подготовки SQL.
-- `docs/` - диаграммы и дополнительные описания.
+- `docs/` - runbooks, SQL contracts, one-off tasks, diagrams и дополнительные
+  описания.
 - `tests/` - тесты builder, runner и вспомогательной логики.
 - `tools-ci/.env.example` - пример локальной конфигурации без секретов.
 - `tools-ci/local.secrets.env.example` - пример локального файла секретов PostgreSQL.

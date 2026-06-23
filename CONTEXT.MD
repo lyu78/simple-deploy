@@ -461,7 +461,7 @@ remote `psql` через SSH, а SQL подает в stdin. Это соотве�
 - `public_table_maintenance_diagnostics.sql` оптимизирован по объему логов: таблицы выводят summary, все non-OK строки и top 30 крупнейших OK-таблиц; индексы выводят summary, все non-OK строки и top 50 крупнейших OK-индексов; optional `pgstattuple_approx` по-прежнему проверяет top 20 крупнейших таблиц только при наличии функции. Это сохраняет сигналы для `ANALYZE`/`VACUUM_ANALYZE`/bloat/index review, но не печатает сотни OK-строк в каждом deploy.
 - После `69c4820` dry-run на DEV подтвержден: bare `systemctl status ...` без sudo не требует sudoers; inactive unit с rc=3 считается успешной permission-проверкой, если статус читается. Health/status failures в реальном deploy остаются runtime-проверками после start.
 - Сгенерированный schema SQL не коммитится обратно в backend source repo и не хранится в `docs/database/summary`: источником для деплоя являются только релизные архивы и manifest.
-- Ручное применение schema archive на TEST/PROD описано в `instructions/manual-schema-sql-deploy.md`; после успешного ручного применения оператор simple-deploy двигает baseline через `mark-applied`.
+- Ручное применение schema и data SQL artifacts на TEST/PROD описано в `docs/runbooks/manual-sql-release-run.md`; после успешного ручного применения оператор simple-deploy двигает baseline через `mark-applied`.
 - Вспомогательные функции для git output, строгого поиска одного файла и добавления файлов в tar лежат в `tools-ci/builder/src/utils.py`; `build_backend.py` оставляет у себя только backend-specific orchestration.
 - Логи backend DB artifacts показывают создание/копирование/запуск и удаление `build_scripts`, точные команды генераторов и директории/паттерны поиска сгенерированных SQL-файлов.
 - Шаг копирования генераторов пересоздает `<BACKEND_SOURCE_REPO_PATH>/build_scripts` на каждый build и падает, если такой путь уже существует, но не является директорией.
@@ -505,13 +505,14 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 
 Документация процесса вынесена в `docs/`:
 
-- `release-sql-migrations-flow.puml/pdf` - полный поток от dry-run до DEV/TEST/PROD;
-- `release-sql-migrations-build-dev.puml/pdf` - сборка и размещение на DEV;
-- `release-sql-migrations-test-prod.puml/pdf` - продвижение на TEST и PROD.
+- `docs/README.MD` - навигация по runbooks, SQL contracts, tasks и diagrams;
+- `diagrams/sql-release/release-sql-migrations-flow.puml/pdf` - полный поток от dry-run до DEV/TEST/PROD;
+- `diagrams/sql-release/release-sql-migrations-build-dev.puml/pdf` - сборка и размещение на DEV;
+- `diagrams/sql-release/release-sql-migrations-test-prod.puml/pdf` - продвижение на TEST и PROD.
 
 ## Внутренний контекст ревью data SQL markup
 
-Инструкция для сотрудника по исправлению разметки лежит в `instructions/sql-script-markup-remediation-plan.md`.
+Инструкция для сотрудника по исправлению разметки лежит в `docs/tasks/data-sql-markup-remediation.md`.
 Она не должна содержать тестовые команды и критерии приемки: это рабочее задание, а не checklist для исполнителя.
 
 Ожидания для внутренней проверки результата:

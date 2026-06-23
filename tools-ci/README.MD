@@ -469,8 +469,8 @@ Full deploy сначала выполняет DB data update preflight cleanup, 
 Для TEST/PROD, если применение выполнялось внешним или ручным процессом,
 используйте `mark-applied` или `mark-failed`.
 
-Ручное применение schema SQL на TEST/PROD описано в
-`../instructions/manual-schema-sql-deploy.md`.
+Ручное применение schema и data SQL на TEST/PROD описано в
+`../docs/runbooks/manual-sql-release-run.md`.
 
 ## Outlook email
 

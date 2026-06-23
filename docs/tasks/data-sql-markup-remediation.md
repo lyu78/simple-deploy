@@ -11,7 +11,7 @@ C:\cps-repo\app-backend-v\app-backend\docs\database\scripts
 Базовая инструкция по формату разметки:
 
 ```text
-C:\vibe-repo\simple-deploy\instructions\data-sql-script-markup.md
+C:\vibe-repo\simple-deploy\docs\sql\data-script-markup.md
 ```
 
 ## Цель

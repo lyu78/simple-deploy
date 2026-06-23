@@ -14,7 +14,7 @@
 - отделять критичные скрипты от необязательных или повторяемых операций.
 
 SQL-семантика и read-only preflight-правила описаны отдельно:
-`instructions/data-sql-validation-rules.md`.
+`docs/sql/data-validation-rules.md`.
 
 ## Формат заголовка
 
