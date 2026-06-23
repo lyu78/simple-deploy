@@ -555,7 +555,7 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - dry-run проверки живут в `simple_deploy.processes.dry_run_checks`;
 - helper-ы app deploy, HTTP healthcheck и Outlook-уведомлений живут в
   `processes.app_deploy`, `processes.healthcheck` и `processes.notifications`;
-- web/API v1 доступен как `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000`; `POST /api/jobs` создает queued job, `GET /api/jobs/{id}` читает одну job, `PATCH /api/jobs/{id}` меняет lifecycle status (`cancelled` для отмены queued job, `queued` для повторной постановки failed/cancelled job в очередь с тем же `id`), а `/ws/jobs/{id}` стримит job log file;
+- web/API v1 и local worker на Windows запускаются через идемпотентный `start-simple-deploy.bat`, который открывает два терминала: `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000` и `simple-deploy worker --poll-interval 2`. Повторный запуск пропускает уже работающие web/worker процессы и стартует только отсутствующий. `POST /api/jobs` создает queued job, `GET /api/jobs/{id}` читает одну job, `PATCH /api/jobs/{id}` меняет lifecycle status (`cancelled` для отмены queued job, `queued` для повторной постановки failed/cancelled job в очередь с тем же `id`), а `/ws/jobs/{id}` стримит job log file;
 - dashboard jobs table показывает `Log`, `Cancel` и `Requeue` actions поверх
   REST `PATCH /api/jobs/{id}`; `GET /jobs/{id}` открывает HTML live log page,
   которая подключается к `/ws/jobs/{id}`;

@@ -70,7 +70,13 @@ attempts и deploy attempts: успешные build попадают в `release
 .venv/Scripts/simple-deploy.exe pipeline --contour dev
 ```
 
-Web/API и local worker:
+Web/API и local worker на Windows:
+
+```bat
+.\start-simple-deploy.bat
+```
+
+Ручной эквивалент:
 
 ```bash
 .venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000

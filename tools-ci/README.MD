@@ -40,7 +40,17 @@ Web/API v1 запускается поверх той же SQLite-базы. CLI 
 аварийным путем, а React UI дает операторскую панель для просмотра состояния и
 создания локальных jobs через API:
 
-В двух отдельных терминалах:
+На Windows запустите web/API и worker одним батником из корня репозитория:
+
+```bat
+.\start-simple-deploy.bat
+```
+
+Он откроет два отдельных терминала: `simple-deploy web` и
+`simple-deploy worker`. Повторный запуск не дублирует уже работающие процессы и
+стартует только отсутствующий web или worker.
+
+Эквивалентные команды для ручного запуска:
 
 ```bash
 .venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
@@ -64,6 +74,27 @@ Web/API только создает queued jobs и управляет их lifec
 
 `web` и `worker` запускаются как два независимых локальных процесса с общей
 SQLite-базой `local_state/simple_deploy.sqlite3`.
+
+Основной Windows entrypoint:
+
+```bat
+.\start-simple-deploy.bat
+```
+
+Батник проверяет `.venv`, запускает web/API на `127.0.0.1:8000` и worker с
+`--poll-interval 2` в двух отдельных терминалах. Запуск идемпотентный:
+повторное выполнение батника пропускает уже найденный web/worker process и
+стартует только отсутствующий. Параметры можно переопределить переменными
+окружения:
+
+```bat
+set SIMPLE_DEPLOY_WEB_HOST=127.0.0.1
+set SIMPLE_DEPLOY_WEB_PORT=8000
+set SIMPLE_DEPLOY_WORKER_POLL_INTERVAL=2
+.\start-simple-deploy.bat
+```
+
+Ручной эквивалент:
 
 Терминал 1 - web/API:
 

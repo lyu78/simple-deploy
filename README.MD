@@ -33,7 +33,17 @@ Web/API v1 запускается отдельно и не заменяет CLI.
 аварийным путем, а web-панель дает операторский интерфейс поверх того же
 локального состояния и API:
 
-В двух отдельных терминалах:
+На Windows запустите web/API и worker одним батником:
+
+```bat
+.\start-simple-deploy.bat
+```
+
+Он откроет два отдельных терминала: `simple-deploy web` и
+`simple-deploy worker`. Повторный запуск не дублирует уже работающие процессы и
+стартует только отсутствующий web или worker.
+
+Эквивалентные команды для ручного запуска:
 
 ```bash
 .venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
