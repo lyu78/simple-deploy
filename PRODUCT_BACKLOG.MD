@@ -67,6 +67,40 @@ checks и не менять `ContourState`, `ReleasePlacement` или baseline. 
 - подсказки по recovery после failed job;
 - операционный экран web + worker health.
 
+### Scheduled local jobs via worker
+
+Цель: создавать local jobs с временем запуска без внешнего Windows Task
+Scheduler.
+
+Текущий worker исполняет уже созданные `queued` jobs. Для расписания достаточно
+добавить к job поле `run_after`: worker должен claim-ить только jobs, у которых
+`run_after` пустой или уже наступил. Это сохраняет один executor-контур и не
+вводит отдельный scheduler-сервис.
+
+Минимальная приемка:
+
+- `POST /api/jobs` принимает optional `run_after` в UTC;
+- React форма создания job позволяет указать дату и время запуска;
+- worker не запускает future jobs раньше `run_after`;
+- UI показывает future queued jobs как ожидающие запуска;
+- cancel/requeue имеют явное правило сохранения или сброса `run_after`.
+
+### Optional web/worker autostart supervisor
+
+Цель: при необходимости поднимать `web` и `worker` после логина или старта
+машины без возвращения старого Task Scheduler pipeline.
+
+Это не должно запускать `pipeline` по расписанию. Допустимая роль внешнего
+supervisor-а - только держать процессы `uvicorn` и `simple-deploy worker`
+запущенными.
+
+Минимальная приемка:
+
+- есть инструкция autostart для `web` и `worker`;
+- supervisor не создает deploy jobs сам;
+- основной путь остается ручным CLI/API созданием jobs и постоянным worker
+executor-ом.
+
 ## Правила ведения backlog
 
 - Не смешивать новые продуктовые задачи с критериями завершения рефакторинга.

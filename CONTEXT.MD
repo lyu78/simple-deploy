@@ -244,8 +244,6 @@ COM. Доступные переменные шаблонов: `{build_version}`
   shell-архиваторы и настройки frontend-сборки.
 - `tools-ci/simple_deploy/cli/windows_pipeline.py` - CLI adapter, на который
   указывает console script `simple-deploy`.
-- `tools-ci/tools/windows_task_scheduler/` - пример запуска pipeline по
-  расписанию через Task Scheduler.
 - `tools-ci/requirements.dev.txt` - Python-зависимости сборщика из `tools-ci/builder/`.
 - `legacy/ansible-ci/requirements.ansible.txt` - Python-зависимости Ansible-слоя.
 - `legacy/ansible-ci/playbooks/` - legacy Ansible pipeline, dry run и внутренние этапы.
@@ -534,8 +532,8 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 Текущий безопасный срез:
 
 - публичная точка запуска переведена на console script `.venv/Scripts/simple-deploy.exe`;
-- старый executable wrapper в `tools-ci/tools/` удален, операторы и Task Scheduler
-  больше не запускают Python-файл напрямую;
+- старый executable wrapper в `tools-ci/tools/` удален, операторы больше не
+  запускают Python-файл напрямую;
 - фактическая реализация Windows runner находится в
   `tools-ci/simple_deploy/cli/windows_pipeline.py`;
 - package shim `simple_deploy.windows_pipeline` удален: поддерживаемая точка
@@ -588,9 +586,16 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 вынесены в `PRODUCT_BACKLOG.MD`: TEST/PROD external requests в API/UI, release
 contents/change set, bundle validation pipeline и будущие operator UX срезы.
 
-Оставшийся фокус рефакторинга: закрепить операционный запуск пары web + worker
-для локальной машины или Task Scheduler и подтвердить старые CLI/process
-сценарии на новой структуре.
+Refactoring track старой release/deploy функциональности закрыт: операционный
+запуск пары web + worker описан в `tools-ci/README.MD`, старый Windows Task
+Scheduler runbook для запуска `pipeline` удален из поддерживаемого пути, а
+будущие scheduled jobs ведутся в `PRODUCT_BACKLOG.MD`.
+
+Последняя проверка закрытия: `git diff --check`, React `npm run build`, полный
+`pytest` (`183 passed`) и локальный operator smoke на изолированной SQLite-базе
+для web/API, worker heartbeat, создания job и live log. Реальный DEV
+`dry-run`/`deploy` остается операторской runtime-проверкой, потому что требует
+окруженческих доступов к VM/DB.
 
 Последняя зафиксированная точка ветки `refactor/create-deploy-toolkit`:
 

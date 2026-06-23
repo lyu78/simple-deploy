@@ -1,18 +1,26 @@
-# DDD-рефакторинг simple-deploy
+# Архитектура simple-deploy
 
-Дата фиксации черновика: 2026-06-10.
+## Назначение
 
-## Зачем нужен этот документ
+Этот документ описывает доменный язык, архитектурные границы и принятые решения
+`simple-deploy`. Это не backlog и не активный план работ.
 
-После шага 5 код уже начал раскладываться по процессам, но язык модели все еще
-смешивает несколько разных понятий: релиз как желание обновиться, релиз как
-набор архивов, релиз как запись в SQLite и релиз как состояние контуров.
+Активные задачи и новые продуктовые срезы ведутся в `PRODUCT_BACKLOG.MD`.
+История завершенного refactoring track зафиксирована в `REFACTORING_PLAN.MD`.
 
-Цель этого документа - зафиксировать общий доменный язык перед переходом к
-Pydantic DTO и следующим переносам модулей. Это не финальная схема БД и не
-обязательство немедленно переименовать весь код. Документ задает направление,
-по которому можно постепенно отделять доменные сущности, DTO, хранилище и
-прикладные процессы.
+Документ нужен, чтобы не смешивать разные понятия: релиз как желание
+обновиться, релиз как набор архивов, релиз как запись в SQLite и релиз как
+состояние контуров. Описанные здесь термины задают направление развития, но не
+требуют немедленного переименования всего кода или изменения схемы БД.
+
+## Текущий статус
+
+Инфраструктурный refactoring track закрыт: CLI, process modules, registry,
+read models/DTO, web/API, React UI и local worker уже работают поверх общей
+SQLite-базы.
+
+Невыполненные доменные сценарии не считаются долгом закрытого рефакторинга.
+Они вынесены в backlog и берутся только как отдельные продуктовые срезы.
 
 ## Главная доменная идея
 
@@ -891,29 +899,39 @@ application services:
 - фиксация baseline после успешного размещения;
 - best-effort запись failed attempts.
 
-## Предлагаемый порядок миграции
+## Статус реализации
 
-1. Зафиксировать этот документ и обсудить спорные места.
-2. Добавить минимальные Pydantic DTO для read-only state/API без изменения
-   бизнес-логики.
-3. Разделить в именах `release bundle` и `release registry/state`, не двигая
-   файлы широким переносом.
-4. Ввести `types` и первые models/value objects для `SourceSelection`, `SourceSnapshot`,
-   `ReleaseVersion` и `Contour`.
-5. Ввести read-only models/configs для `SourceRepository`, `SourceOrigin`, `Component`,
-   `DeploymentLandscape` и `DeploymentTarget` поверх текущей runtime
-   конфигурации.
-6. Ввести read-only models/configs для `VirtualMachine`, `ExecutionEnvironment` и
-   `BundleValidationAttempt`, чтобы тестовые pipeline-ы могли работать с
-   bundle-ом без влияния на DEV contour state.
-7. Добавить read-only модель `ReleaseChangeSet` поверх Git/manifest данных без
-   обязательной интеграции с issue tracker-ом.
-8. Явно записывать artifact scope в manifest/read model: shared,
-   contour-specific или target-specific.
-9. Вынести SQLite registry из `release/state.py` в более точную область.
-10. Постепенно заменить словари и произвольные строки на `types`, `models`,
-    `dto` и `configs` на границах процессов.
-11. Только после стабилизации языка двигать директории и публичные module paths.
+- [x] Архитектурный словарь и спорные доменные решения зафиксированы.
+- [x] Минимальные Pydantic DTO/read models добавлены для state/API без изменения
+  бизнес-логики.
+- [x] `release bundle` и `release registry/state` разделены в именах и module
+  boundaries.
+- [x] SQLite registry вынесен из `release/state.py` в `registry/state.py`;
+  старый import path оставлен только как compatibility re-export.
+- [x] Введены `types`, read models и DTO для contour, release/build version,
+  attempts, jobs, worker heartbeat и external requests.
+- [x] Добавлены первые immutable entities/value objects:
+  `SourceSnapshot`, `ReleaseBundle`, `ReleasePlacement` и `Release`.
+- [x] `release_manifest.json` строится через `ReleaseBundle` и сохраняет
+  прежнюю JSON-форму.
+- [x] Web/API, React UI, local jobs и polling worker работают поверх той же
+  SQLite-базы и не заменяют CLI.
+- [ ] `ReleaseIntent`/`ReleaseRequest` как persisted entity не реализован; брать
+  только вместе с конкретным сценарием создания релиза.
+- [ ] `SourceSelection` как отдельный входной use case не реализован; текущий
+  build пока опирается на runtime/source repo контекст.
+- [ ] Частично: `SourceRepository`, `SourceOrigin`, `Component`,
+  `DeploymentLandscape`, `DeploymentTarget`, `VirtualMachine` и
+  `ExecutionEnvironment` существуют как read/config модели, но не как
+  полноценные доменные сценарии.
+- [ ] Частично: artifact scope фиксируется в текущем manifest/read model
+  contract, но target-specific модель не вводилась.
+- [ ] `ReleaseChangeSet` остается будущим read-only продуктовым срезом из
+  `PRODUCT_BACKLOG.MD`.
+- [ ] `BundleValidationAttempt` остается будущим worker/job сценарием из
+  `PRODUCT_BACKLOG.MD`.
+- [ ] Scheduled local jobs и TEST/PROD external request mutation API/UI ведутся
+  только через `PRODUCT_BACKLOG.MD`.
 
 ## Принятые решения по открытым вопросам
 
@@ -968,17 +986,19 @@ application services:
     bundle-а, attempts и contour state не дублируются как источники истины.
     Денормализация допустима только в read models, DTO и HTTP responses.
 
-## Оставшиеся открытые вопросы
+## Открытые архитектурные вопросы
 
 На текущем уровне обсуждения ключевые доменные вопросы закрыты. Новые вопросы
-лучше добавлять уже рядом с конкретным шагом внедрения DTO или изменением
-схемы SQLite.
+лучше добавлять рядом с конкретным backlog-срезом, изменением API или
+изменением схемы SQLite.
 
-## Ближайшее практическое решение
+## Как использовать документ
 
-Документ остается рабочим словарем. Первый безопасный срез после обсуждения
-реализован как read-only `types`/`models`/`configs`/DTO слой поверх текущего
-`release/state.py` и web/API: это начинает переход к Pydantic без изменения
-поведения CLI, builder и deploy-процессов. Первый `configs`-срез разделяет
-структурную Pydantic-модель runtime config и runtime preflight/policy validation
-в `config/validation.py`. Доменные `entities` в этом срезе еще не вводятся.
+Используйте этот файл как справочник терминов и архитектурных решений перед
+изменениями в release/deploy логике, API, registry schema, jobs/worker и
+product backlog задачах.
+
+Если изменение вводит новую возможность, сначала опишите ее в
+`PRODUCT_BACKLOG.MD` и только затем уточняйте этот архитектурный словарь. Если
+изменение только поддерживает старую функциональность, сверяйте его с
+`REFACTORING_PLAN.MD` как с историей уже закрытого refactoring track.

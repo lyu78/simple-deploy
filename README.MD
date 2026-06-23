@@ -51,8 +51,8 @@ build` из этого каталога, чтобы FastAPI начал отда�
 
 Практическая настройка рабочей машины, `tools-ci/.env`,
 `tools-ci/local.secrets.env`, `tools-ci/windows_pipeline.local.json`,
-service steps, Outlook email и запуск по
-расписанию описаны в `tools-ci/README.MD`.
+service steps, Outlook email и операционный запуск `web + worker` описаны в
+`tools-ci/README.MD`.
 
 Legacy-вариант через Ansible/WSL сохранен в `legacy/ansible-ci/PIPELINE.MD`, но не
 является основным путем для новых запусков.
@@ -113,8 +113,10 @@ SQL-диапазон.
 
 - `PIPELINE.MD` - продуктовая схема release flow без привязки к runtime; подходит
   как основа для BPMN.
-- `REFACTORING_PLAN.MD` - зафиксированный план перехода к release/deploy toolkit,
-  web/API и масштабированию по контурам.
+- `ARCHITECTURE.MD` - доменный язык, архитектурные границы и статус реализации
+  модели.
+- `REFACTORING_PLAN.MD` - история завершенного refactoring track перехода к
+  release/deploy toolkit, web/API и worker-контуру.
 - `PRODUCT_BACKLOG.MD` - отдельный backlog новых продуктовых срезов поверх
   текущего CLI/API/UI.
 - `tools-ci/README.MD` - установка и запуск основного Windows/Python runner.
@@ -126,12 +128,11 @@ SQL-диапазон.
   backend repo.
 - `instructions/data-sql-validation-rules.md` - read-only правила проверки
   идемпотентности и бизнес-ключей data SQL.
-- `tools-ci/tools/windows_task_scheduler/README.md` - пример запуска pipeline по
-  расписанию через Windows Task Scheduler.
 - `CONTEXT.MD` - текущий технический контекст, решения и ограничения для
   сопровождающих проект.
-- `DEVELOPMENT_RULES.MD` - правила разработки, документации, безопасности истории
-  и взаимодействия с AI-агентом.
+- `DEVELOPMENT_RULES.MD` - правила разработки, документации, безопасности
+  истории и Git.
+- `AGENTS.md` - правила работы AI-агентов в репозитории.
 
 Диаграммы SQL release flow лежат в `docs/`:
 

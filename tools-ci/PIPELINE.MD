@@ -190,6 +190,7 @@ baseline двигается только после завершенного dep
 - `healthcheck_commands`;
 - `outlook_email_*`.
 
-Практическая настройка runner описана в `README.MD`. Пример запуска по
-расписанию через Windows Task Scheduler лежит в
-`tools-ci/tools/windows_task_scheduler/`.
+Практическая настройка runner и операционный запуск пары `web + worker`
+описаны в `README.MD`. Внешний Windows Task Scheduler больше не является
+поддерживаемым способом запуска `pipeline` по расписанию; будущие scheduled
+local jobs ведутся в `../PRODUCT_BACKLOG.MD`.

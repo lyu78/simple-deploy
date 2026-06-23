@@ -53,12 +53,61 @@ Worker status: `http://127.0.0.1:8000/api/worker`.
 
 Web/API только создает queued jobs и управляет их lifecycle через REST. Для
 реального выполнения очереди рядом должен работать `simple-deploy worker`; его
-удобно запускать во втором терминале или отдельной задаче Task Scheduler.
+удобно запускать во втором терминале или отдельном process supervisor-е.
 Разовый режим для проверки очереди:
 
 ```bash
 .venv/Scripts/simple-deploy.exe worker --once
 ```
+
+## Операционный запуск web + worker
+
+`web` и `worker` запускаются как два независимых локальных процесса с общей
+SQLite-базой `local_state/simple_deploy.sqlite3`.
+
+Терминал 1 - web/API:
+
+```bash
+.venv/Scripts/python.exe -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000
+```
+
+Терминал 2 - постоянный worker:
+
+```bash
+.venv/Scripts/simple-deploy.exe worker --poll-interval 2
+```
+
+Проверки после запуска:
+
+- `http://127.0.0.1:8000/api/health` возвращает `{"status":"ok"}`;
+- `http://127.0.0.1:8000/api/worker` показывает `idle`, `running`, `error`,
+  `stale` или `offline`;
+- dashboard на `http://127.0.0.1:8000/` показывает worker panel и индикатор
+  polling;
+- создание job через UI или `POST /api/jobs` добавляет запись в `local_jobs`;
+- worker забирает due `queued` job, пишет log file и переводит job в terminal
+  status;
+- live log доступен через `/jobs/{id}` и WebSocket `/ws/jobs/{id}`.
+
+Ожидаемые состояния worker-а:
+
+- `offline` - heartbeat еще не записывался или база пустая;
+- `idle` - worker запущен и очередь пуста;
+- `running` - worker исполняет job;
+- `error` - worker зафиксировал ошибку;
+- `stale` - последний heartbeat старше допустимого интервала, процесс нужно
+  проверить или перезапустить.
+
+Recovery:
+
+- если worker остановлен, уже созданные `queued` jobs остаются в SQLite и будут
+  выполнены после нового запуска worker-а;
+- failed/cancelled job можно вернуть в очередь через UI или
+  `PATCH /api/jobs/{id}` со статусом `queued`;
+- если нужно проверить только одну итерацию без постоянного процесса, используйте
+  `.venv/Scripts/simple-deploy.exe worker --once`;
+- CLI команды `dry-run`, `build`, `deploy`, `pipeline`, `set-baseline`,
+  `mark-applied` и `mark-failed` остаются прямым fallback без web/worker.
 
 Исходники UI лежат в `tools-ci/web-ui`. После изменения фронтенда соберите
 статические assets:
@@ -445,9 +494,12 @@ Full deploy сначала выполняет DB data update preflight cleanup, 
 `outlook_email_required` равен `false`, ошибка Outlook будет записана как
 `WARN` и не превратит уже успешный deploy в ошибку.
 
-## Запуск по расписанию
+## Расписание
 
-Пример Windows Task Scheduler лежит в
-`tools-ci/tools/windows_task_scheduler/README.md`. Используйте одну задачу,
-которая запускает полный `pipeline`; не ставьте отдельные пересекающиеся задачи
-для `build` и `deploy --latest`.
+Старый Windows Task Scheduler runbook для запуска `pipeline` удален из
+поддерживаемого пути. Текущий локальный executor - постоянный
+`simple-deploy worker`, который исполняет уже созданные queued jobs.
+
+Будущее расписание должно создаваться внутри API/UI как local jobs с временем
+`run_after`, а worker должен запускать их после наступления этого времени.
+Эта задача ведется в `../PRODUCT_BACKLOG.MD`.

@@ -6,8 +6,9 @@ CLI, web/API, builder-интеграции и будущим локальным 
 прикладной логики.
 
 Этот README не заменяет операторские инструкции запуска. Для запуска команд,
-настройки `tools-ci/.env`, `tools-ci/windows_pipeline.local.json`, Task Scheduler и практического
-потока деплоя читайте `../README.MD` и корневой `../../README.MD`.
+настройки `tools-ci/.env`, `tools-ci/windows_pipeline.local.json`,
+операционного запуска `web + worker` и практического потока деплоя читайте
+`../README.MD` и корневой `../../README.MD`.
 
 ## Текущее состояние
 

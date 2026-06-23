@@ -333,7 +333,7 @@ git diff --check
 ## DDD-план дальнейшего рефакторинга
 
 Цель следующего этапа - не добавлять новые слои ради слоев, а убрать остатки
-скриптовой формы из границ системы. CLI, web/API и Task Scheduler должны быть
+скриптовой формы из границ системы. CLI и web/API должны быть
 adapters, application layer - use case boundary, а domain/registry/process
 слои должны говорить на языке release/deploy toolkit.
 
@@ -365,8 +365,8 @@ adapters, application layer - use case boundary, а domain/registry/process
    - следующий шаг: сделать topology не read-only справкой, а входом для
      process boundary там, где это не меняет runtime-поведение.
 5. Interfaces:
-   - CLI, web/API и Task Scheduler не владеют бизнес-логикой;
-   - текущие владельцы: `cli`, `web`, scheduler wrapper;
+   - CLI и web/API не владеют бизнес-логикой;
+   - текущие владельцы: `cli`, `web`;
    - следующий шаг: web write endpoints должны создавать local jobs и вызывать
      application use cases, а не дублировать orchestration.
 
@@ -628,7 +628,7 @@ helper-слои config/runtime, command execution, SSH, app/db operations, servi
 steps, healthcheck, email и summary. Механический перенос этих блоков без
 согласованных доменных границ даст много churn и мало архитектурной ясности.
 
-Рабочий словарь и целевая модель зафиксированы в `DDD_REFACTORING.MD`.
+Рабочий словарь и целевая модель зафиксированы в `ARCHITECTURE.MD`.
 Реализационные слои для постепенного перехода:
 
 - `types` - enum-ы, справочники и custom primitive types без бизнес-логики;
@@ -1057,10 +1057,10 @@ Web/API payload --------------/
 
 - добавлена packaging metadata в `pyproject.toml` и console script
   `simple-deploy = simple_deploy.cli.windows_pipeline:main`;
-- операторские инструкции, контекст проекта и пример Windows Task Scheduler
-  переведены на `.venv/Scripts/simple-deploy.exe`;
+- операторские инструкции и контекст проекта переведены на
+  `.venv/Scripts/simple-deploy.exe`;
 - старая executable-точка входа в `tools-ci/tools/` удалена, чтобы операторы и
-  планировщик больше не зависели от script path;
+  внешние wrappers больше не зависели от script path;
 - `simple_deploy.windows_pipeline` на этом срезе еще оставлен как package-level
   compatibility shim для старых Python imports;
 - тест совместимости больше не проверяет старый wrapper import и фиксировал
@@ -1326,7 +1326,7 @@ worker без перехода к новым глубоким сущностям
   `pytest` - `183 passed`, React `npm run build` зеленый, `git diff --check`
   без whitespace errors.
 
-### Оставшийся рефакторинговый хвост
+### Закрытие refactoring track
 
 Новые продуктовые сценарии вынесены в `PRODUCT_BACKLOG.MD` и больше не являются
 критерием завершения этого плана. `REFACTORING_PLAN.MD` дальше оценивает только
@@ -1346,27 +1346,53 @@ worker без перехода к новым глубоким сущностям
   paths;
 - regression suite, React build и whitespace check зеленые.
 
-Следующий практический рефакторинговый срез: закрепить операционный запуск пары
-web + worker для локальной машины или Task Scheduler, затем проверить, что
-старая функциональность соответствует требованиям выше. Глубокие сущности без
-конкретного нового сценария пока не трогать.
+Итог: refactoring track старой функциональности закрыт. Дальнейшие новые
+сценарии, включая scheduled local jobs, ведутся через `PRODUCT_BACKLOG.MD`.
+Глубокие сущности без конкретного нового сценария пока не трогать.
 
 Чеклист закрытия рефакторинга:
 
-- [ ] Описать операционный запуск `web + worker`: две локальные команды,
+- [x] Описать операционный запуск `web + worker`: две локальные команды,
   ожидаемые статусы `/api/worker`, поведение при остановленном worker-е и
   recovery после failed job.
-- [ ] Обновить или подтвердить Windows Task Scheduler/runbook, чтобы scheduled
-  запуск использовал только `.venv/Scripts/simple-deploy.exe` и актуальные
-  команды.
-- [ ] Пройти документацию поиском старых entrypoint-ов, wrapper-ов и устаревших
+- [x] Пройти документацию поиском старых entrypoint-ов, wrapper-ов и устаревших
   ссылок на legacy paths; оставить legacy только там, где он явно помечен как
   legacy.
-- [ ] Зафиксировать acceptance checklist старой функциональности:
+- [x] Зафиксировать acceptance checklist старой функциональности:
   `dry-run`, `build`, `deploy`, `pipeline`, `set-baseline`, `mark-applied`,
   `mark-failed`, SQL artifacts и ручной TEST/PROD flow.
-- [ ] Подтвердить локальный operator smoke: web server стартует, worker
+- [x] Подтвердить локальный operator smoke: web server стартует, worker
   стартует, UI видит worker status, job создается через UI/API, live log
   открывается через `/jobs/{id}`.
-- [ ] После зеленых проверок закрыть `REFACTORING_PLAN.MD` как завершенный
+- [x] После зеленых проверок закрыть `REFACTORING_PLAN.MD` как завершенный
   refactoring track, а новые задачи вести только через `PRODUCT_BACKLOG.MD`.
+
+Acceptance checklist старой функциональности:
+
+- [x] `dry-run` остается read-only preflight без build/deploy side effects.
+- [x] `build` собирает release artifacts, SQL artifacts и `release_manifest.json`.
+- [x] `deploy` применяет выбранный release на DEV и двигает baseline только
+  после успешного завершения.
+- [x] `pipeline` выполняет `dry-run -> build -> deploy latest` через те же
+  process boundaries.
+- [x] `set-baseline` задает contour baseline по backend commit или build
+  version.
+- [x] `mark-applied` и `mark-failed` фиксируют ручной TEST/PROD результат без
+  web/API dependency.
+- [x] SQL artifacts сохраняют контракт: schema per contour, data insert/update,
+  отдельный set_default step только при `--include-set-default-sql`.
+- [x] Ручной TEST/PROD flow остается CLI-first: external/manual apply, затем
+  явная фиксация результата в simple-deploy.
+- [x] Web/API и worker не заменяют CLI, а только создают и исполняют local jobs
+  поверх тех же use cases.
+
+Подтверждение закрытия:
+
+- `git diff --check` - без whitespace errors, только стандартные CRLF warnings;
+- React `npm run build` - зеленый;
+- полный regression suite - `183 passed`;
+- локальный operator smoke на изолированной SQLite-базе - web/API стартует,
+  worker показывает `idle`, job создается через `POST /api/jobs`, React UI
+  показывает job/status, live log открывается через `/jobs/{id}`;
+- реальный DEV `dry-run`/`deploy` не запускался в этом срезе, потому что требует
+  окруженческих доступов к VM/DB и остается операторской runtime-проверкой.
