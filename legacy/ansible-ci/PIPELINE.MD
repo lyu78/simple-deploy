@@ -3,9 +3,9 @@
 ## Статус
 
 Это legacy-вариант для Linux/WSL control node. Он сохраняется в репозитории, но
-основной текущий путь - Windows/Python runner из `../tools-ci/PIPELINE.MD`.
+основной текущий путь - Windows/Python runner из `../../tools-ci/PIPELINE.MD`.
 
-Общий продуктовый процесс описан в `../PIPELINE.MD`.
+Общий продуктовый процесс описан в `../../PIPELINE.MD`.
 
 ## Общая схема
 

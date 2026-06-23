@@ -39,21 +39,23 @@
 4. Сборочный этап создает версию релиза в формате
    `<BUILD_VERSION_BASE>.<ddMMyyyy_HHmm>`, например `1.2.3.30052026_1437`.
    В директорию релиза попадают runtime-архивы приложения, schema SQL-архивы,
-   data SQL-архивы при включенном data SQL build и `release_manifest.json`.
+   data SQL-архивы по умолчанию и `release_manifest.json`. Schema-only режим
+   является явным исключением для аварийных запусков.
 5. Внутренние рабочие копии получают синхронизационные ветки; код публикуется во
    внутренний GitLab, а runtime-архивы остаются в release storage.
 6. Для full deploy DEV app-сервисы останавливаются, а в `FRONTEND_RELEASE_PATH`
    раскладывается универсальная maintenance-заглушка. Пока backend остановлен,
    DB VM применяет schema SQL, `run_all_insert_*.sql`, parallel update runner
-   `run_all_update_parallel_*.sh` и DB maintenance.
+   `run_all_update_parallel_*.sh`, опциональный
+   `run_all_set_default_parallel_*.sh` и DB maintenance.
 7. После успешной DB-части App VM получает настоящий backend, выполняет
    `after_unpack`, Django `migrate --fake`, `sync_action_role` и `after_migrate`
    service steps. Настоящий frontend раскладывается последним и заменяет
    заглушку только после успешного старта backend.
 8. Рабочая машина выполняет healthcheck стенда и проверку версии портала.
 9. Результат релиза фиксируется как успешный или неуспешный. Успех двигает
-    baseline выбранного контура на backend commit релиза; ошибка записывает
-    попытку без изменения baseline.
+   baseline выбранного контура на backend commit релиза; ошибка записывает
+   попытку без изменения baseline.
 
 ## Развилки
 
@@ -64,6 +66,8 @@
 - Если app deploy или healthcheck завершается ошибкой, baseline не двигается.
 - Если deploy успешен, release storage и локальное состояние контуров становятся
   источником для следующего диапазона SQL-миграций.
+- `kind=set_default` data SQL выполняется только по явному решению оператора; по
+  умолчанию full deploy применяет schema, insert и update artifacts.
 
 ## Контуры
 
@@ -106,7 +110,8 @@ TEST и PROD могут продвигаться внешним или ручн�
   `run_all_set_default_sequential_<commit>.sql`.
 - `db_set_default_parallel_r_<release>-c_<commit>.tar.gz` - data SQL-архив
   параллельных wave set_default-миграций с
-  `run_all_set_default_parallel_<commit>.sh`.
+  `run_all_set_default_parallel_<commit>.sh`; применяется только при явном
+  включении set_default step.
 - `success` - релиз применен и baseline контура можно двигать вперед.
 - `failed` - попытка зафиксирована, baseline остается прежним.
 

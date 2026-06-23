@@ -108,6 +108,7 @@ data SQL-артефакты по умолчанию. Явный schema-only ре
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
 - идемпотентность data INSERT SQL, которые попадут в `run_all_insert`, если
   не передан `--skip-data-sql-artifacts`;
+- наличие maintenance stub archive, если `maintenance_stub_enabled=true`;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
 - SSH-доступ к app VM и DB VM;
@@ -128,8 +129,11 @@ data SQL-артефакты по умолчанию. Явный schema-only ре
 Результат build:
 
 - backend runtime archive;
-- frontend runtime archive для DEV;
+- frontend runtime archives для DEV, TEST и PROD;
 - schema SQL-архивы `db_schema_dev_*`, `db_schema_test_*`, `db_schema_prod_*`;
+- data SQL-архивы `db_insert_*`, `db_update_sequential_*`,
+  `db_update_parallel_*`, `db_set_default_sequential_*` и
+  `db_set_default_parallel_*`, если не передан `--skip-data-sql-artifacts`;
 - `release_manifest.json` с commit SHA и `db_schema_metadata`.
 
 Schema SQL генерируется offline по Git-диапазону `baseline..HEAD` backend source
@@ -142,9 +146,9 @@ repo. Если baseline хотя бы одного контура не зада�
 SQL-архив по `--contour` и выполняет порядок:
 
 1. DB data update preflight cleanup на DB VM: остановка хвостов
-   `run_all_update_parallel_*.sh`/их `psql` процессов после прерванного deploy
-   и завершение PostgreSQL backend-ов с
-   `application_name=simple-deploy-data-update`.
+   `run_all_update_parallel_*.sh`, `run_all_set_default_parallel_*.sh` и их
+   `psql` процессов после прерванного deploy, затем завершение PostgreSQL
+   backend-ов с `application_name=simple-deploy-data-update`.
 2. Создание remote staging-директории на app VM.
 3. Загрузка backend/frontend/maintenance-stub архивов через `scp`.
 4. Backup текущих директорий, если `backup_enabled: true`.
