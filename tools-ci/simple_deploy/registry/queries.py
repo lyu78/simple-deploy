@@ -30,6 +30,7 @@ from simple_deploy.registry.state import (
     connect_state_db,
     count_jobs_by_status,
     get_job,
+    get_release,
     get_worker_heartbeat,
     list_build_attempts,
     list_deployment_attempts,
@@ -194,6 +195,17 @@ def release_read_models_from_state(limit: int = 50) -> list[ReleaseReadModel]:
     )
 
 
+def release_bundle_read_model_from_state(
+    build_version: str,
+) -> ReleaseBundleReadModel | None:
+    """Читает один release bundle из registry state по build version."""
+    with closing(connect_state_db()) as connection:
+        release = get_release(connection, build_version)
+    if release is None:
+        return None
+    return ReleaseBundleReadModel.model_validate(release)
+
+
 def release_reference_read_model(
     release: ReleaseReadModel,
 ) -> ReleaseReferenceReadModel:
@@ -338,6 +350,7 @@ __all__ = [
     "job_read_models_from_state",
     "release_read_models",
     "release_read_models_from_state",
+    "release_bundle_read_model_from_state",
     "release_reference_read_model",
     "release_sort_key",
     "state_snapshot_read_model",

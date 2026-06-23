@@ -188,6 +188,12 @@ class SetBaselineRequest(_EnvFilesRequestBase):
             "Deploy-контур, baseline которого задается вручную."
         ),
     )
+    config_file: Path = Field(
+        default=DEFAULT_CONFIG_FILE,
+        description=(
+            "Runtime config path used for initial_schema_baselines bootstrap."
+        ),
+    )
     build_version: OptionalBuildVersionString = Field(
         default="",
         description=(

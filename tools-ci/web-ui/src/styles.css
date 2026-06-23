@@ -221,6 +221,30 @@ select {
   color: var(--fg);
 }
 
+.readonly-field {
+  display: grid;
+  gap: 4px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--fg);
+}
+
+.readonly-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.readonly-field strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .wide-field {
   grid-column: span 2;
 }

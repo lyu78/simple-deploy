@@ -398,6 +398,21 @@ def record_release(
     connection.commit()
 
 
+def get_release(
+    connection: sqlite3.Connection, build_version: str
+) -> dict | None:
+    """Возвращает один успешно собранный release bundle по build version."""
+    row = connection.execute(
+        """
+        select *
+        from releases
+        where build_version = ?
+        """,
+        (build_version,),
+    ).fetchone()
+    return _dict_from_row(row) if row else None
+
+
 def record_build_attempt_started(
     connection: sqlite3.Connection,
     build_version: str,
@@ -1087,6 +1102,7 @@ __all__ = [
     "get_contour_state",
     "get_external_request",
     "get_job",
+    "get_release",
     "get_worker_heartbeat",
     "list_build_attempts",
     "list_deployment_attempts",

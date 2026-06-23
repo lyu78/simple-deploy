@@ -103,6 +103,7 @@ def set_baseline_request_from_args(
     """Собирает request ручной установки baseline из legacy CLI args."""
     return SetBaselineRequest(
         **_env_file_kwargs(args),
+        **_runtime_config_kwargs(args),
         contour=getattr(args, "contour"),
         build_version=getattr(args, "build_version", ""),
         backend_commit=getattr(args, "backend_commit", ""),

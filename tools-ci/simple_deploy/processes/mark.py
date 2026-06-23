@@ -16,7 +16,12 @@ from simple_deploy.application.requests import (
     MarkFailedRequest,
     SetBaselineRequest,
 )
+from simple_deploy.application.release_catalog import (
+    initial_schema_baseline_reference,
+    resolve_release_commit,
+)
 from simple_deploy.application.results import ProcessResult
+from simple_deploy.config.runtime_loader import load_runtime_config
 from simple_deploy.core.env import load_env
 from simple_deploy.core.job_logging import job_log
 from simple_deploy.core.release_paths import resolve_release_dir
@@ -26,7 +31,6 @@ from simple_deploy.registry.commands import (
     set_contour_baseline,
 )
 from simple_deploy.registry.state import validate_contour
-from simple_deploy.release.manifest import release_backend_commit
 
 
 def mark_contour_applied(
@@ -38,8 +42,12 @@ def mark_contour_applied(
     Функция делегирует запись ``contour_state`` и ``deployment_attempts`` в
     ``simple_deploy.registry.commands``.
     """
-    backend_commit = release_backend_commit(release_dir)
-    result = record_deployment_applied(contour, build_version, backend_commit)
+    release_ref = resolve_release_commit(
+        build_version, release_dir=release_dir
+    )
+    result = record_deployment_applied(
+        contour, release_ref.build_version, release_ref.backend_commit
+    )
     job_log(
         f"MARK applied: contour={result.contour} "
         f"build_version={result.build_version} "
@@ -57,7 +65,9 @@ def mark_contour_failed(
     переносимый пакет мог быть неполным.
     """
     try:
-        backend_commit = release_backend_commit(release_dir)
+        backend_commit = resolve_release_commit(
+            build_version, release_dir=release_dir
+        ).backend_commit
     except Exception:
         backend_commit = ""
     result = record_deployment_failed(
@@ -105,15 +115,24 @@ def set_baseline(request: SetBaselineRequest) -> ProcessResult:
         request.env_file, request.secrets_file, require_secrets=False
     )
     contour = validate_contour(request.contour.value)
-    if request.backend_commit:
-        build_version = request.build_version or "manual-baseline"
-        backend_commit = request.backend_commit.strip()
-    else:
+    if request.build_version:
         build_version, release_dir = resolve_release_dir(
             env, request.build_version, latest=False
         )
-        backend_commit = release_backend_commit(release_dir)
-    result = set_contour_baseline(contour, build_version, backend_commit)
+        release_ref = resolve_release_commit(
+            build_version, release_dir=release_dir
+        )
+    elif request.backend_commit:
+        release_ref = resolve_release_commit(
+            request.build_version,
+            backend_commit=request.backend_commit,
+        )
+    else:
+        runtime, _defaulted_keys = load_runtime_config(request.config_file)
+        release_ref = initial_schema_baseline_reference(runtime, contour)
+    result = set_contour_baseline(
+        contour, release_ref.build_version, release_ref.backend_commit
+    )
     job_log(
         f"BASELINE set: contour={result.contour} "
         f"build_version={result.build_version} "
@@ -121,7 +140,7 @@ def set_baseline(request: SetBaselineRequest) -> ProcessResult:
     )
     return ProcessResult.success(
         "baseline set",
-        build_version=build_version,
+        build_version=release_ref.build_version,
         contour=request.contour,
     )
 

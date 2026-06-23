@@ -39,6 +39,7 @@ DEFAULT_RUNTIME_CONFIG = {
     "db_update_parallel_max_workers": 8,
     "db_update_parallel_status_interval_seconds": 30,
     "sql_scripts": [],
+    "initial_schema_baselines": {},
     "management_commands": [],
     "service_permission_checks_enabled": True,
     "service_steps": [],

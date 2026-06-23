@@ -66,6 +66,7 @@ class RuntimeConfigValidationTests(unittest.TestCase):
         runtime["db_maintenance_sql_phase"] = "after_frontend_unpack"
         runtime["db_maintenance_sql"] = ["VACUUM;", ""]
         runtime["healthcheck_commands"] = "curl http://example"
+        runtime["initial_schema_baselines"] = []
         runtime["outlook_email_recipients"] = ["ops@example.test", ""]
         runtime["outlook_email_subject"] = None
         runtime["sql_scripts"] = {"path": "script.sql"}
@@ -89,6 +90,7 @@ class RuntimeConfigValidationTests(unittest.TestCase):
         self.assertIn("runtime db_maintenance_sql_phase", issues)
         self.assertIn("runtime db_maintenance_sql", issues)
         self.assertIn("runtime healthcheck_commands: expected list", issues)
+        self.assertIn("runtime initial_schema_baselines: expected object", issues)
         self.assertIn("runtime outlook_email_recipients", issues)
         self.assertIn("runtime outlook_email_subject: expected string", issues)
         self.assertIn("runtime sql_scripts: expected list", issues)
@@ -141,6 +143,36 @@ class RuntimeConfigValidationTests(unittest.TestCase):
         self.assertIn("permission_check_command must not use nginx restart/reload", issues)
         self.assertIn("phase must be one of", issues)
         self.assertIn("command must be a non-empty string", issues)
+
+    def test_check_runtime_config_validates_initial_schema_baselines(self):
+        runtime = default_runtime()
+        runtime["initial_schema_baselines"] = {
+            "qa": {
+                "build_version": "bootstrap-qa",
+                "backend_commit": "abc123",
+            },
+            "test": {
+                "build_version": "",
+                "backend_commit": "not-a-sha",
+            },
+            "prod": "bad",
+        }
+        reporter = Reporter()
+
+        self.assertFalse(
+            check_runtime_config(
+                reporter,
+                runtime,
+                root=Path.cwd(),
+                default_runtime_config=DEFAULT_RUNTIME_CONFIG,
+            )
+        )
+
+        issues = "\n".join(reporter.issues)
+        self.assertIn("runtime initial_schema_baselines qa", issues)
+        self.assertIn("build_version has invalid format", issues)
+        self.assertIn("backend_commit has invalid format", issues)
+        self.assertIn("runtime initial_schema_baselines prod", issues)
 
 
 if __name__ == "__main__":

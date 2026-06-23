@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import shlex
 from typing import Mapping, Protocol
 
+from simple_deploy.types.contour import CONTOUR_CODES
+from simple_deploy.types.release import RELEASE_VERSION_PATTERN
 from simple_deploy.types.runtime import (
     MAINTENANCE_SQL_PHASES,
     NGINX_STOP_START_ACTIONS,
@@ -13,6 +16,7 @@ from simple_deploy.types.runtime import (
     SERVICE_STEP_PHASES,
     SYSTEMCTL_ACTIONS,
 )
+from simple_deploy.types.source import COMMIT_SHA_PATTERN
 
 DB_MAINTENANCE_PHASES = frozenset(MAINTENANCE_SQL_PHASES)
 SERVICE_PHASES = frozenset(SERVICE_STEP_PHASES)
@@ -213,6 +217,40 @@ def check_runtime_config(
                 + ", ".join(bad_indexes),
             )
             ok = False
+
+    initial_schema_baselines = runtime.get("initial_schema_baselines")
+    if not isinstance(initial_schema_baselines, dict):
+        reporter.fail("runtime initial_schema_baselines", "expected object")
+        ok = False
+    else:
+        for contour, baseline in initial_schema_baselines.items():
+            label = f"runtime initial_schema_baselines {contour}"
+            if contour not in CONTOUR_CODES:
+                reporter.fail(
+                    label,
+                    "contour must be one of: "
+                    + ", ".join(sorted(CONTOUR_CODES)),
+                )
+                ok = False
+                continue
+            if not isinstance(baseline, dict):
+                reporter.fail(
+                    label, "expected object with build_version and backend_commit"
+                )
+                ok = False
+                continue
+            build_version = baseline.get("build_version")
+            backend_commit = baseline.get("backend_commit")
+            if not isinstance(build_version, str) or not re.fullmatch(
+                RELEASE_VERSION_PATTERN, build_version.strip()
+            ):
+                reporter.fail(label, "build_version has invalid format")
+                ok = False
+            if not isinstance(backend_commit, str) or not re.fullmatch(
+                COMMIT_SHA_PATTERN, backend_commit.strip()
+            ):
+                reporter.fail(label, "backend_commit has invalid format")
+                ok = False
 
     for field in ("outlook_email_recipients", "outlook_email_cc"):
         value = runtime.get(field)

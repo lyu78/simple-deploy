@@ -37,6 +37,9 @@ from simple_deploy.types.runtime import (
     MaintenanceSqlPhaseEnum,
     ServiceStepPhaseEnum,
 )
+from simple_deploy.types.contour import ContourCodeEnum
+from simple_deploy.types.release import BuildVersionString
+from simple_deploy.types.source import CommitShaString
 
 NonEmptyString = Annotated[
     StrictStr, StringConstraints(strip_whitespace=True, min_length=1)
@@ -66,6 +69,13 @@ class ServiceStepConfigModel(_RuntimeConfigBaseModel):
     permission_check_command: StrictStr | None = None
 
 
+class InitialSchemaBaselineConfigModel(_RuntimeConfigBaseModel):
+    """Bootstrap baseline for a contour before the first tracked deploy."""
+
+    build_version: BuildVersionString
+    backend_commit: CommitShaString
+
+
 class RuntimeConfigModel(_RuntimeConfigBaseModel):
     """Структурная модель текущей формы ``tools-ci/windows_pipeline.local.json``.
 
@@ -92,6 +102,9 @@ class RuntimeConfigModel(_RuntimeConfigBaseModel):
     db_update_parallel_max_workers: PositiveStrictInt
     db_update_parallel_status_interval_seconds: PositiveStrictInt
     sql_scripts: list[SqlScriptConfigModel]
+    initial_schema_baselines: dict[
+        ContourCodeEnum, InitialSchemaBaselineConfigModel
+    ]
     management_commands: list[NonEmptyString]
     service_permission_checks_enabled: StrictBool
     service_steps: list[ServiceStepConfigModel]
@@ -116,6 +129,7 @@ def runtime_config_model(runtime: Mapping[str, object]) -> RuntimeConfigModel:
 
 
 __all__ = [
+    "InitialSchemaBaselineConfigModel",
     "MaintenanceSqlPhaseEnum",
     "RuntimeConfigModel",
     "ServiceStepConfigModel",

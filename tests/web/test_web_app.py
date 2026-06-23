@@ -133,6 +133,7 @@ class WebAppTests(unittest.TestCase):
                         worker_response = client.get("/api/worker")
                         state_response = client.get("/api/state")
                         releases_response = client.get("/api/releases")
+                        build_options_response = client.get("/api/build-options")
                         jobs_response = client.get("/api/jobs")
                         created_job_response = client.post(
                             "/api/jobs",
@@ -168,6 +169,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(worker_response.status_code, 200)
         self.assertEqual(state_response.status_code, 200)
         self.assertEqual(releases_response.status_code, 200)
+        self.assertEqual(build_options_response.status_code, 200)
         self.assertEqual(jobs_response.status_code, 200)
         self.assertEqual(created_job_response.status_code, 201)
         self.assertEqual(created_deploy_job_response.status_code, 201)
@@ -228,6 +230,14 @@ class WebAppTests(unittest.TestCase):
             },
         )
         self.assertEqual(releases_response.json(), state_json["releases"])
+        build_options_json = build_options_response.json()
+        self.assertEqual(len(build_options_json), 1)
+        self.assertEqual(
+            build_options_json[0]["build_version"], TEST_BUILD_VERSION
+        )
+        self.assertEqual(
+            build_options_json[0]["backend_commit"], TEST_BACKEND_COMMIT
+        )
         self.assertEqual(jobs_response.json(), state_json["jobs"])
         created_job = created_job_response.json()
         self.assertEqual(created_job["kind"], "build")

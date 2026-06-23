@@ -158,6 +158,17 @@ class ReleaseDto(_StateDto):
     external_requests: list[ExternalRequestDto]
 
 
+class BuildOptionDto(_StateDto):
+    """Selectable release build for operator forms."""
+
+    build_version: BuildVersionString
+    backend_commit: CommitShaString
+    frontend_commit: OptionalCommitShaString = ""
+    created_at: CreatedAtString = ""
+    build_status: BuildAttemptStatusEnum = BuildAttemptStatusEnum.SUCCESS
+    source: str = "registry"
+
+
 class StateSnapshotDto(_StateDto):
     """Агрегированный снимок состояния для dashboard и API."""
 
@@ -179,6 +190,7 @@ ReleaseRecordDto = ReleaseBundleDto
 
 __all__ = [
     "BuildAttemptDto",
+    "BuildOptionDto",
     "ContourStateDto",
     "DeploymentAttemptDto",
     "ExternalRequestDto",

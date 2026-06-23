@@ -46,6 +46,15 @@ type Release = {
   frontend_commit: string;
 };
 
+type BuildOption = {
+  build_version: string;
+  backend_commit: string;
+  frontend_commit: string;
+  created_at: string;
+  build_status: string;
+  source: string;
+};
+
 type Attempt = {
   id: number;
   contour?: string;
@@ -110,7 +119,6 @@ type JobFormState = {
   kind: JobKind;
   contour: Contour;
   buildVersion: string;
-  backendCommit: string;
   error: string;
   timeout: string;
   latest: boolean;
@@ -140,11 +148,17 @@ const jobKindLabels: Record<JobKind, string> = {
   mark_failed: "Mark failed"
 };
 
+function jobKindOptionLabel(kind: JobKind, contour: Contour): string {
+  if (kind === "pipeline") {
+    return `Pipeline [dry-run -> build -> deploy ${contour}]`;
+  }
+  return jobKindLabels[kind];
+}
+
 const defaultForm: JobFormState = {
   kind: "deploy",
   contour: "dev",
   buildVersion: "",
-  backendCommit: "",
   error: "",
   timeout: "3600",
   latest: true,
@@ -205,8 +219,7 @@ function jobPayload(form: JobFormState): Record<string, unknown> {
   if (form.kind === "set_baseline") {
     return {
       contour: form.contour,
-      build_version: form.buildVersion.trim(),
-      backend_commit: form.backendCommit.trim()
+      build_version: form.buildVersion.trim()
     };
   }
   if (form.kind === "mark_applied") {
@@ -225,6 +238,7 @@ function jobPayload(form: JobFormState): Record<string, unknown> {
 function useDashboardData() {
   const [snapshot, setSnapshot] = React.useState<StateSnapshot | null>(null);
   const [worker, setWorker] = React.useState<WorkerHealth | null>(null);
+  const [buildOptions, setBuildOptions] = React.useState<BuildOption[]>([]);
   const [error, setError] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [pollState, setPollState] = React.useState<PollState>({
@@ -241,19 +255,21 @@ function useDashboardData() {
     setPollState((current) => ({
       ...current,
       status: "polling",
-      label: "/api/state + /api/worker"
+      label: "/api/state + /api/worker + /api/build-options"
     }));
     try {
-      const [nextSnapshot, nextWorker] = await Promise.all([
+      const [nextSnapshot, nextWorker, nextBuildOptions] = await Promise.all([
         apiJson<StateSnapshot>("/api/state"),
-        apiJson<WorkerHealth>("/api/worker")
+        apiJson<WorkerHealth>("/api/worker"),
+        apiJson<BuildOption[]>("/api/build-options")
       ]);
       setSnapshot(nextSnapshot);
       setWorker(nextWorker);
+      setBuildOptions(nextBuildOptions);
       setError("");
       setPollState({
         status: "ok",
-        label: "/api/state + /api/worker",
+        label: "/api/state + /api/worker + /api/build-options",
         lastOkAt: new Date().toLocaleTimeString()
       });
     } catch (exc) {
@@ -282,7 +298,7 @@ function useDashboardData() {
     return () => window.clearInterval(timerId);
   }, [load]);
 
-  return { snapshot, worker, error, loading, pollState, load };
+  return { snapshot, worker, buildOptions, error, loading, pollState, load };
 }
 
 function App() {
@@ -294,7 +310,7 @@ function App() {
 }
 
 function Dashboard() {
-  const { snapshot, worker, error, loading, pollState, load } = useDashboardData();
+  const { snapshot, worker, buildOptions, error, loading, pollState, load } = useDashboardData();
   const [form, setForm] = React.useState<JobFormState>(defaultForm);
   const [submitError, setSubmitError] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
@@ -356,6 +372,7 @@ function Dashboard() {
             <SectionHeader title="Create local job" icon={<Plus size={18} />} />
             <JobCreateForm
               form={form}
+              buildOptions={buildOptions}
               setForm={setForm}
               onSubmit={createJob}
               submitting={submitting}
@@ -421,12 +438,14 @@ function SectionHeader({
 
 function JobCreateForm({
   form,
+  buildOptions,
   setForm,
   onSubmit,
   submitting,
   error
 }: {
   form: JobFormState;
+  buildOptions: BuildOption[];
   setForm: React.Dispatch<React.SetStateAction<JobFormState>>;
   onSubmit: (event: React.FormEvent) => void;
   submitting: boolean;
@@ -435,6 +454,15 @@ function JobCreateForm({
   const needsContour = ["deploy", "pipeline", "set_baseline", "mark_applied", "mark_failed"].includes(form.kind);
   const needsBuildVersion = ["deploy", "set_baseline", "mark_applied", "mark_failed"].includes(form.kind) && !(form.kind === "deploy" && form.latest);
   const needsTimeout = ["build", "pipeline"].includes(form.kind);
+  const selectedBuild = buildOptions.find((option) => option.build_version === form.buildVersion) ?? null;
+  const submitDisabled = submitting || (needsBuildVersion && !selectedBuild) || (form.kind === "mark_failed" && !form.error.trim());
+
+  React.useEffect(() => {
+    if (!needsBuildVersion || form.buildVersion || !buildOptions.length) {
+      return;
+    }
+    setForm((current) => ({ ...current, buildVersion: buildOptions[0].build_version }));
+  }, [buildOptions, form.buildVersion, needsBuildVersion, setForm]);
 
   return (
     <form className="job-form" onSubmit={onSubmit}>
@@ -443,7 +471,7 @@ function JobCreateForm({
         <select value={form.kind} onChange={(event) => setForm((current) => ({ ...current, kind: event.target.value as JobKind }))}>
           {(Object.keys(jobKindLabels) as JobKind[]).map((kind) => (
             <option value={kind} key={kind}>
-              {jobKindLabels[kind]}
+              {jobKindOptionLabel(kind, form.contour)}
             </option>
           ))}
         </select>
@@ -467,14 +495,25 @@ function JobCreateForm({
       {needsBuildVersion ? (
         <label>
           Build version
-          <input value={form.buildVersion} onChange={(event) => setForm((current) => ({ ...current, buildVersion: event.target.value }))} />
+          <select
+            value={form.buildVersion}
+            disabled={!buildOptions.length}
+            onChange={(event) => setForm((current) => ({ ...current, buildVersion: event.target.value }))}
+          >
+            {!buildOptions.length ? <option value="">No successful builds</option> : null}
+            {buildOptions.map((option) => (
+              <option value={option.build_version} key={option.build_version}>
+                {option.build_version}
+              </option>
+            ))}
+          </select>
         </label>
       ) : null}
-      {form.kind === "set_baseline" ? (
-        <label>
-          Backend commit
-          <input value={form.backendCommit} onChange={(event) => setForm((current) => ({ ...current, backendCommit: event.target.value }))} />
-        </label>
+      {needsBuildVersion ? (
+        <div className="readonly-field">
+          <span>Backend commit</span>
+          <strong>{selectedBuild?.backend_commit || "select build version"}</strong>
+        </div>
       ) : null}
       {form.kind === "mark_failed" ? (
         <label className="wide-field">
@@ -508,7 +547,7 @@ function JobCreateForm({
           </label>
         ) : null}
       </div>
-      <button className="primary-button" disabled={submitting} type="submit">
+      <button className="primary-button" disabled={submitDisabled} type="submit">
         <Plus size={17} />
         Queue job
       </button>

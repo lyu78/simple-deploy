@@ -243,6 +243,81 @@ class WindowsPipelineCliStateTests(WindowsPipelineTestCase):
         self.assertEqual(state.last_success_backend_commit, TEST_BACKEND_COMMIT)
         self.assertEqual(attempts, [])
 
+    def test_set_baseline_with_build_version_uses_registry_commit(self):
+        """set-baseline by build version reads backend commit from registry."""
+        args = Namespace(
+            env_file=DEFAULT_ENV_FILE,
+            secrets_file=DEFAULT_SECRETS_FILE,
+            contour="test",
+            build_version=TEST_BUILD_VERSION,
+            backend_commit="",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "state.sqlite3"
+            release_root = root / "releases"
+            env = {"RELEASE_ROOT_WINDOWS": str(release_root)}
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}, clear=True):
+                with closing(connect_state_db(db_path)) as connection:
+                    record_release(
+                        connection,
+                        TEST_BUILD_VERSION,
+                        TEST_BACKEND_COMMIT,
+                        TEST_FRONTEND_COMMIT,
+                        {"backend": "backend.tar.gz"},
+                    )
+                with patch("simple_deploy.processes.mark.load_env", return_value=env):
+                    self.assertEqual(set_baseline(args), 0)
+
+                with closing(connect_state_db(db_path)) as connection:
+                    state = get_contour_state(connection, "test")
+                    attempts = list_deployment_attempts(connection, contour="test")
+
+        self.assertEqual(state.last_success_release, TEST_BUILD_VERSION)
+        self.assertEqual(state.last_success_backend_commit, TEST_BACKEND_COMMIT)
+        self.assertEqual(attempts, [])
+
+    def test_set_baseline_without_build_version_uses_initial_config(self):
+        """set-baseline without build/commit reads runtime bootstrap baseline."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "state.sqlite3"
+            config_file = root / "windows_pipeline.local.json"
+            config_file.write_text(
+                json.dumps(
+                    {
+                        "initial_schema_baselines": {
+                            "prod": {
+                                "build_version": "bootstrap-prod",
+                                "backend_commit": TEST_BACKEND_COMMIT,
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = Namespace(
+                env_file=DEFAULT_ENV_FILE,
+                secrets_file=DEFAULT_SECRETS_FILE,
+                config_file=config_file,
+                contour="prod",
+                build_version="",
+                backend_commit="",
+            )
+
+            with patch.dict(os.environ, {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}, clear=True):
+                with patch("simple_deploy.processes.mark.load_env", return_value={}):
+                    self.assertEqual(set_baseline(args), 0)
+
+                with closing(connect_state_db(db_path)) as connection:
+                    state = get_contour_state(connection, "prod")
+                    attempts = list_deployment_attempts(connection, contour="prod")
+
+        self.assertEqual(state.last_success_release, "bootstrap-prod")
+        self.assertEqual(state.last_success_backend_commit, TEST_BACKEND_COMMIT)
+        self.assertEqual(attempts, [])
+
     def test_mark_applied_moves_baseline_and_records_success_attempt(self):
         """mark-applied читает manifest, двигает baseline и пишет success attempt."""
         args = Namespace(

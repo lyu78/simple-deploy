@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from simple_deploy.dto.state import (
+    BuildOptionDto,
     dto_dump,
     ExternalRequestDto,
     JobDto,
@@ -27,6 +28,7 @@ from simple_deploy.dto.state import (
     StateSnapshotDto,
     WorkerHealthDto,
 )
+from simple_deploy.application.release_catalog import list_build_options
 from simple_deploy.jobs.runner import REQUEST_MODELS, create_job_for_request
 from simple_deploy.models.state import StateSnapshotReadModel
 from simple_deploy.registry.commands import (
@@ -122,6 +124,15 @@ def api_releases(limit: int = 50) -> list[ReleaseDto]:
     return [
         ReleaseDto.model_validate(release)
         for release in _release_read_models_from_state(limit=limit)
+    ]
+
+
+@app.get("/api/build-options", response_model=list[BuildOptionDto])
+def api_build_options(limit: int = 100) -> list[BuildOptionDto]:
+    """Returns successful release builds for operator dropdowns."""
+    return [
+        BuildOptionDto.model_validate(option)
+        for option in list_build_options(limit=limit)
     ]
 
 

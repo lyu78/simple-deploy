@@ -38,10 +38,29 @@ attempts и deploy attempts: успешные build попадают в `release
 
 Первичная инициализация baseline:
 
+```json
+{
+  "initial_schema_baselines": {
+    "dev": {
+      "build_version": "bootstrap-dev",
+      "backend_commit": "<dev_backend_commit>"
+    },
+    "test": {
+      "build_version": "bootstrap-test",
+      "backend_commit": "<test_backend_commit>"
+    },
+    "prod": {
+      "build_version": "bootstrap-prod",
+      "backend_commit": "<prod_backend_commit>"
+    }
+  }
+}
+```
+
 ```bash
-.venv/Scripts/simple-deploy.exe set-baseline --contour dev --backend-commit <dev_backend_commit>
-.venv/Scripts/simple-deploy.exe set-baseline --contour test --backend-commit <test_backend_commit>
-.venv/Scripts/simple-deploy.exe set-baseline --contour prod --backend-commit <prod_backend_commit>
+.venv/Scripts/simple-deploy.exe set-baseline --contour dev
+.venv/Scripts/simple-deploy.exe set-baseline --contour test
+.venv/Scripts/simple-deploy.exe set-baseline --contour prod
 ```
 
 Если есть локальный manifest уже примененного релиза:
@@ -49,6 +68,9 @@ attempts и deploy attempts: успешные build попадают в `release
 ```bash
 .venv/Scripts/simple-deploy.exe set-baseline --contour test --build-version <previous_successful_release_version>
 ```
+
+`--backend-commit` остается legacy/recovery override для случаев, когда нет
+registry release row, release manifest или настроенного bootstrap baseline.
 
 Обычная проверка и сборка:
 

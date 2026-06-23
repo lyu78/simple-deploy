@@ -28,6 +28,7 @@
       "phase": "after_migrate"
     }
   ],
+  "initial_schema_baselines": {},
   "management_commands": [],
   "service_permission_checks_enabled": true,
   "service_steps": [

@@ -19,6 +19,7 @@ from simple_deploy.config.runtime import runtime_config_model  # noqa: E402
 from simple_deploy.config.runtime_loader import (  # noqa: E402
     load_runtime_config_model,
 )
+from simple_deploy.types import ContourCodeEnum  # noqa: E402
 
 
 class RuntimeConfigModelTests(unittest.TestCase):
@@ -31,8 +32,28 @@ class RuntimeConfigModelTests(unittest.TestCase):
         model = runtime_config_model(runtime)
 
         self.assertTrue(model.maintenance_stub_enabled)
+        self.assertEqual(model.initial_schema_baselines, {})
         self.assertEqual(model.sql_scripts[0].phase, "after_migrate")
         self.assertEqual(model.service_steps[-1].phase, "after_frontend_unpack")
+
+    def test_runtime_config_model_accepts_initial_schema_baselines(self):
+        """Bootstrap baselines are typed by contour and commit/build formats."""
+        runtime = json.loads(RUNTIME_EXAMPLE_PATH.read_text(encoding="utf-8"))
+        runtime["initial_schema_baselines"] = {
+            "test": {
+                "build_version": "bootstrap-test",
+                "backend_commit": "abc123",
+            }
+        }
+
+        model = runtime_config_model(runtime)
+
+        self.assertEqual(
+            model.initial_schema_baselines[
+                ContourCodeEnum.TEST
+            ].backend_commit,
+            "abc123",
+        )
 
     def test_load_runtime_config_model_keeps_defaulted_keys_contract(self):
         """Typed loader сохраняет старый defaulted_keys contract."""

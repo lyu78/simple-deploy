@@ -58,6 +58,22 @@ checks и не менять `ContourState`, `ReleasePlacement` или baseline. 
 - проверка не выполняет deploy side effects;
 - ошибки bundle-а диагностируются до попытки применения.
 
+### Schema artifact baseline guard
+
+Цель: не дать применить или вручную отметить SQL artifact, если его исходный
+baseline не совпадает с текущим baseline контура.
+
+Минимальная приемка:
+
+- metadata release/schema artifact хранит source backend commit и target
+  backend commit по контуру;
+- deploy и `mark-applied` сравнивают source commit artifact-а с текущим
+  baseline контура до сдвига состояния;
+- mismatch падает с понятной оператору подсказкой: пересобрать release от
+  текущего baseline или выбрать совместимую сборку;
+- существующий bootstrap/recovery flow `set-baseline` остается явным и
+  аудитируемым через registry state.
+
 ### Operator UX
 
 Дополнительные улучшения UI стоит вести как отдельные маленькие срезы:

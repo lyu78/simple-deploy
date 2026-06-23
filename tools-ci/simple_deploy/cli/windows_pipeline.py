@@ -212,7 +212,14 @@ def parse_args() -> argparse.Namespace:
     baseline_parser = subparsers.add_parser("set-baseline")
     baseline_parser.add_argument("--contour", choices=CONTOURS, required=True)
     baseline_parser.add_argument("--build-version", default="")
-    baseline_parser.add_argument("--backend-commit", default="")
+    baseline_parser.add_argument(
+        "--backend-commit",
+        default="",
+        help=(
+            "Legacy/recovery override. Prefer --build-version or "
+            "initial_schema_baselines in runtime config."
+        ),
+    )
 
     mark_applied_parser = subparsers.add_parser("mark-applied")
     mark_applied_parser.add_argument(

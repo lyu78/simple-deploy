@@ -128,6 +128,7 @@ from simple_deploy.release.state import (  # noqa: E402
     connect_state_db,
     get_contour_state,
     list_deployment_attempts,
+    record_release,
     upsert_contour_state,
 )
 from simple_deploy.types import ContourCodeEnum  # noqa: E402
