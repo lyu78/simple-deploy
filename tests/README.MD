@@ -8,6 +8,7 @@
 - `application/` - application services и local job worker.
 - `builder/` - сборка release artifacts и backend/data SQL artifacts.
 - `config/` - runtime/topology config models.
+- `core/` - command/env/path/SSH primitives shared by process layer.
 - `domain/` - доменные entities, value objects и vocabulary types.
 - `processes/` - process layer, Windows pipeline, deploy/dry-run behavior.
 - `registry/` - SQLite registry, commands, queries, read models и state
