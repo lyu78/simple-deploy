@@ -13,13 +13,51 @@ from simple_deploy.core.commands import CommandResult  # noqa: E402
 from simple_deploy.processes.healthcheck import (  # noqa: E402
     check_portal_release_version,
     healthcheck,
+    read_http_text,
     script_urls_from_html,
     verify_maintenance_stub_http,
     version_found_in_text,
 )
 
 
+class FakeHeaders:
+    def __init__(self, charset):
+        self.charset = charset
+
+    def get_content_charset(self):
+        return self.charset
+
+
+class FakeResponse:
+    def __init__(self, body: bytes, status: int = 200, charset=None):
+        self.body = body
+        self.status = status
+        self.headers = FakeHeaders(charset)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self.body
+
+
 class HealthcheckTests(unittest.TestCase):
+    def test_read_http_text_uses_declared_charset_or_decode_fallback(self):
+        with patch(
+            "simple_deploy.processes.healthcheck.request.urlopen",
+            return_value=FakeResponse("привет".encode("cp1251"), charset="cp1251"),
+        ):
+            self.assertEqual(read_http_text("https://example.local", None), "привет")
+
+        with patch(
+            "simple_deploy.processes.healthcheck.request.urlopen",
+            return_value=FakeResponse("привет".encode("cp1251"), charset="bad-charset"),
+        ):
+            self.assertEqual(read_http_text("https://example.local", None), "привет")
+
     def test_script_urls_from_html_keeps_only_same_origin_scripts(self):
         urls = script_urls_from_html(
             "https://dev.example.local/app/",
@@ -42,6 +80,23 @@ class HealthcheckTests(unittest.TestCase):
 
     def test_version_found_in_text_allows_spaced_separators(self):
         self.assertTrue(version_found_in_text("release 1 . 2 - 3", "1.2-3"))
+
+    def test_portal_version_check_skips_when_disabled_or_version_unknown(self):
+        with patch(
+            "simple_deploy.processes.healthcheck.read_http_text"
+        ) as read_mock:
+            check_portal_release_version(
+                {"DEV_DOMAIN": "dev.example.local"},
+                {"portal_version_check_enabled": False},
+                "1.2.3",
+            )
+            check_portal_release_version(
+                {"DEV_DOMAIN": "dev.example.local"},
+                {"portal_version_check_enabled": True},
+                "",
+            )
+
+        read_mock.assert_not_called()
 
     def test_portal_version_check_scans_assets_after_html_miss(self):
         env = {"DEV_DOMAIN": "dev.example.local"}
@@ -80,8 +135,27 @@ class HealthcheckTests(unittest.TestCase):
                         "portal_version_asset_limit": 1,
                         "healthcheck_validate_certs": False,
                     },
-                    "1.2.3",
+                        "1.2.3",
                 )
+
+    def test_maintenance_stub_http_skips_disabled_and_rejects_empty_marker(self):
+        with patch(
+            "simple_deploy.processes.healthcheck.read_http_text"
+        ) as read_mock:
+            verify_maintenance_stub_http(
+                {"DEV_DOMAIN": "dev.example.local"},
+                {"maintenance_stub_verify_enabled": False},
+            )
+        read_mock.assert_not_called()
+
+        with self.assertRaisesRegex(RuntimeError, "marker is empty"):
+            verify_maintenance_stub_http(
+                {"DEV_DOMAIN": "dev.example.local"},
+                {
+                    "maintenance_stub_verify_enabled": True,
+                    "maintenance_stub_verify_marker": " ",
+                },
+            )
 
     def test_maintenance_stub_retries_http_errors_without_sleep_after_last(self):
         http_error = error.HTTPError(
@@ -109,6 +183,26 @@ class HealthcheckTests(unittest.TestCase):
                 )
 
         sleep_mock.assert_called_once_with(5)
+
+    def test_maintenance_stub_http_reports_last_failure(self):
+        with patch(
+            "simple_deploy.processes.healthcheck.read_http_text",
+            return_value="<html>not ready</html>",
+        ):
+            with patch("simple_deploy.processes.healthcheck.time.sleep") as sleep_mock:
+                with self.assertRaisesRegex(RuntimeError, "marker not found"):
+                    verify_maintenance_stub_http(
+                        {"DEV_DOMAIN": "dev.example.local"},
+                        {
+                            "maintenance_stub_verify_enabled": True,
+                            "maintenance_stub_verify_marker": "stub-marker",
+                            "maintenance_stub_verify_retries": 1,
+                            "maintenance_stub_verify_delay": 5,
+                            "healthcheck_validate_certs": False,
+                        },
+                    )
+
+        sleep_mock.assert_not_called()
 
     def test_healthcheck_accepts_http_error_403_and_runs_remote_commands(self):
         http_error = error.HTTPError(
@@ -151,3 +245,22 @@ class HealthcheckTests(unittest.TestCase):
         version_mock.assert_called_once()
         ssh_mock.assert_called_once()
         raise_mock.assert_called_once()
+
+    def test_healthcheck_retries_and_raises_after_bad_statuses(self):
+        with patch(
+            "simple_deploy.processes.healthcheck.request.urlopen",
+            return_value=FakeResponse(b"error", status=500),
+        ):
+            with patch("simple_deploy.processes.healthcheck.time.sleep") as sleep_mock:
+                with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
+                    healthcheck(
+                        {"DEV_DOMAIN": "dev.example.local"},
+                        {
+                            "healthcheck_retries": 2,
+                            "healthcheck_delay": 3,
+                            "healthcheck_validate_certs": False,
+                            "healthcheck_commands": [],
+                        },
+                    )
+
+        self.assertEqual(sleep_mock.call_count, 2)
