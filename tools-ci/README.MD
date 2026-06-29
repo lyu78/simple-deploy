@@ -31,10 +31,31 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install --disable-pip-version-check --trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host pypi.python.org -r tools-ci/requirements.dev.txt
 .venv/Scripts/python.exe -m pip install --disable-pip-version-check -e . --no-deps
 
+cd tools-ci/web-ui
+npm install
+npm run build
+cd ../..
+
 cp tools-ci/.env.example tools-ci/.env
 cp tools-ci/local.secrets.env.example tools-ci/local.secrets.env
 cp tools-ci/windows_pipeline.example.json tools-ci/windows_pipeline.local.json
 ```
+
+Вторая команда `pip install -e . --no-deps` - это editable install проекта.
+Она читает packaging metadata из корневого `pyproject.toml` и создает
+`.venv/Scripts/simple-deploy.exe`. Флаг `-e .` означает, что пакет не
+копируется внутрь `.venv`: Python использует код прямо из текущей рабочей копии
+репозитория, поэтому после изменения исходников не нужно переустанавливать
+пакет. `--no-deps` оставлен намеренно, потому что зависимости ставятся
+предыдущей командой из `tools-ci/requirements.dev.txt`.
+
+Блок `cd tools-ci/web-ui && npm install && npm run build` собирает React UI в
+`tools-ci/web-ui/dist`. `start-simple-deploy.bat` также проверяет эту директорию
+и автоматически запускает `npm install` при отсутствии `node_modules`, затем
+`npm run build`, если `dist/index.html` отсутствует или старее исходников. Без
+этой сборки FastAPI все равно может отдать legacy HTML fallback без формы
+`Create local job`, поэтому на странице будет видно состояние, но не будет
+кнопки постановки новой job в очередь.
 
 Web/API v1 запускается поверх той же SQLite-базы. CLI остается основным и
 аварийным путем, а React UI дает операторскую панель для просмотра состояния и
@@ -140,8 +161,9 @@ Recovery:
 - CLI команды `dry-run`, `build`, `deploy`, `pipeline`, `set-baseline`,
   `mark-applied` и `mark-failed` остаются прямым fallback без web/worker.
 
-Исходники UI лежат в `tools-ci/web-ui`. После изменения фронтенда соберите
-статические assets:
+Исходники UI лежат в `tools-ci/web-ui`. `start-simple-deploy.bat` собирает
+статические assets автоматически при отсутствии или устаревании build-а. Для
+ручной пересборки:
 
 ```bash
 cd tools-ci/web-ui

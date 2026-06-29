@@ -27,7 +27,15 @@
 ```
 
 Команда `simple-deploy.exe` создается при первичной настройке из
-`tools-ci/README.MD` через editable install проекта.
+`tools-ci/README.MD` командой:
+
+```bash
+.venv/Scripts/python.exe -m pip install --disable-pip-version-check -e . --no-deps
+```
+
+`-e .` означает editable install: Python ставит проект из текущей директории и
+создает console script `.venv/Scripts/simple-deploy.exe`, но код продолжает
+браться прямо из рабочей копии репозитория.
 
 Web/API v1 запускается отдельно и не заменяет CLI. CLI остается основным и
 аварийным путем, а web-панель дает операторский интерфейс поверх того же
@@ -58,6 +66,8 @@ TEST/PROD, а также создает локальные jobs через API. 
 отдельный `simple-deploy worker`, а не HTTP request. Исходники UI лежат в
 `tools-ci/web-ui`; после изменений фронтенда выполните `npm install && npm run
 build` из этого каталога, чтобы FastAPI начал отдавать свежую сборку.
+`start-simple-deploy.bat` также сам соберет React UI, если
+`tools-ci/web-ui/dist/index.html` отсутствует или устарел.
 
 Практическая настройка рабочей машины, `tools-ci/.env`,
 `tools-ci/local.secrets.env`, `tools-ci/windows_pipeline.local.json`,
