@@ -556,6 +556,13 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - helper-ы app deploy, HTTP healthcheck и Outlook-уведомлений живут в
   `processes.app_deploy`, `processes.healthcheck` и `processes.notifications`;
 - web/API v1 и local worker на Windows запускаются через идемпотентный `start-simple-deploy.bat`, который открывает два терминала: `python -m uvicorn simple_deploy.web.app:app --app-dir tools-ci --host 127.0.0.1 --port 8000` и `simple-deploy worker --poll-interval 2`. Повторный запуск пропускает уже работающие web/worker процессы и стартует только отсутствующий. `POST /api/jobs` создает queued job, `GET /api/jobs/{id}` читает одну job, `PATCH /api/jobs/{id}` меняет lifecycle status (`cancelled` для отмены queued job, `queued` для повторной постановки failed/cancelled job в очередь с тем же `id`), а `/ws/jobs/{id}` стримит job log file;
+- React operator UI обслуживается только из версионированного bundle-а
+  `tools-ci/web-ui/dist`. `dist` хранится в Git вместе с исходниками UI, чтобы
+  рабочая машина не собирала frontend при обычном запуске. После изменения
+  `tools-ci/web-ui/src` нужно выполнить `npm run build` в `tools-ci/web-ui` и
+  закоммитить обновленный `tools-ci/web-ui/dist`. Legacy HTML fallback для `/`
+  и `/jobs/{id}` больше не используется: если `dist/index.html` отсутствует,
+  web/API возвращает явную `503` ошибку настройки web assets;
 - dashboard jobs table показывает `Log`, `Cancel` и `Requeue` actions поверх
   REST `PATCH /api/jobs/{id}`; `GET /jobs/{id}` открывает HTML live log page,
   которая подключается к `/ws/jobs/{id}`;
@@ -573,6 +580,13 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 - React UI читает `/api/state`, создает local jobs через `POST /api/jobs`,
   управляет lifecycle через `PATCH /api/jobs/{id}` и открывает React job detail
   с live log stream;
+- API-ответы `/api/*` отдаются с `Cache-Control: no-store`, а React API client
+  делает fetch с `cache: "no-store"`. Dashboard дополнительно перечитывает
+  state/worker/build-options при возврате фокуса или видимости вкладки. Страница
+  job detail имеет явный `Refresh job`: он перечитывает `/api/jobs/{id}`,
+  сбрасывает локальный log buffer и переподключает `/ws/jobs/{id}`; после
+  terminal-сообщения `done` WebSocket страница повторно читает job resource,
+  чтобы без F5 подтянуть `error`, `finished_at`, `log_path` и финальный статус;
 - worker heartbeat хранится в SQLite, `GET /api/worker` показывает
   `offline`/`stale`/`idle`/`running`/`error`, а UI обновляет state/worker status
   без ручной перезагрузки;
@@ -592,16 +606,18 @@ Refactoring track старой release/deploy функциональности �
 Scheduler runbook для запуска `pipeline` удален из поддерживаемого пути, а
 будущие scheduled jobs ведутся в `PRODUCT_BACKLOG.MD`.
 
-Последняя проверка закрытия: `git diff --check`, React `npm run build`, полный
-`pytest` (`183 passed`) и локальный operator smoke на изолированной SQLite-базе
-для web/API, worker heartbeat, создания job и live log. Реальный DEV
-`dry-run`/`deploy` остается операторской runtime-проверкой, потому что требует
-окруженческих доступов к VM/DB.
+Последняя проверка текущего UI/web состояния: `git diff --check`, React
+`npm run build`, полный `pytest` (`322 passed`), focused
+`tests/web/test_web_app.py` и локальный UI smoke через изолированный
+Playwright/Chromium на временной SQLite-базе для React dashboard, React job
+detail и `Refresh job` без F5. Реальный DEV `dry-run`/`deploy` остается
+операторской runtime-проверкой, потому что требует окруженческих доступов к
+VM/DB.
 
 Последняя зафиксированная точка ветки `refactor/create-deploy-toolkit`:
 
-- `eb6df57 Add React web UI`.
+- `d7ea191 Refresh job views without browser reload`.
 
-Проверенный baseline после последних срезов: полный `pytest` - `183 passed`;
-React `npm run build` зеленый; `git diff --check` - без whitespace errors,
-только стандартные CRLF warnings.
+Проверенный baseline после последних срезов: полный `pytest` - `322 passed`;
+React `npm run build` зеленый; web/API focused tests - `5 passed`;
+`git diff --check` - без whitespace errors, только стандартные CRLF warnings.
