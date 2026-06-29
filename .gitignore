@@ -431,6 +431,8 @@ local_state/
 # Node frontend dependencies
 node_modules/
 tools-ci/web-ui/node_modules/
+!tools-ci/web-ui/dist/
+!tools-ci/web-ui/dist/**
 tools-ci/web-ui/*.tsbuildinfo
 tools-ci/web-ui/vite.config.d.ts
 tools-ci/web-ui/vite.config.js

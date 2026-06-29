@@ -3,16 +3,6 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 $SimpleDeploy = Join-Path $Root ".venv\Scripts\simple-deploy.exe"
-$WebUiRoot = Join-Path $Root "tools-ci\web-ui"
-$WebUiIndex = Join-Path $WebUiRoot "dist\index.html"
-$WebUiSourcePaths = @(
-    (Join-Path $WebUiRoot "src"),
-    (Join-Path $WebUiRoot "package.json"),
-    (Join-Path $WebUiRoot "package-lock.json"),
-    (Join-Path $WebUiRoot "vite.config.ts"),
-    (Join-Path $WebUiRoot "tsconfig.json"),
-    (Join-Path $WebUiRoot "tsconfig.app.json")
-)
 
 $WebHostName = if ([string]::IsNullOrWhiteSpace($env:SIMPLE_DEPLOY_WEB_HOST)) {
     "127.0.0.1"
@@ -52,112 +42,6 @@ if (-not (Test-Path -LiteralPath $SimpleDeploy -PathType Leaf)) {
     Write-Host "[ERROR] simple-deploy CLI not found: `"$SimpleDeploy`""
     Write-Host "Run: `"$Python`" -m pip install --disable-pip-version-check -e . --no-deps"
     exit 1
-}
-
-function Get-NewestFileTime {
-    param([string[]] $Paths)
-
-    $newest = $null
-    foreach ($path in $Paths) {
-        if (-not (Test-Path -LiteralPath $path)) {
-            continue
-        }
-
-        $items = @()
-        if (Test-Path -LiteralPath $path -PathType Container) {
-            $items = Get-ChildItem -LiteralPath $path -Recurse -File -ErrorAction SilentlyContinue
-        } else {
-            $items = @(Get-Item -LiteralPath $path)
-        }
-
-        foreach ($item in $items) {
-            if ($null -eq $newest -or $item.LastWriteTime -gt $newest) {
-                $newest = $item.LastWriteTime
-            }
-        }
-    }
-
-    return $newest
-}
-
-function Invoke-CheckedCommand {
-    param(
-        [string] $Executable,
-        [string[]] $Arguments,
-        [string] $WorkingDirectory,
-        [string] $Description
-    )
-
-    Write-Host "[RUN] $Description"
-    Push-Location -LiteralPath $WorkingDirectory
-    try {
-        & $Executable @Arguments
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[ERROR] Command failed with exit code $($LASTEXITCODE): $Description"
-            exit $LASTEXITCODE
-        }
-    } finally {
-        Pop-Location
-    }
-}
-
-function Resolve-NpmCommand {
-    $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-    if ($null -ne $npm) {
-        return $npm.Source
-    }
-
-    $npm = Get-Command npm -ErrorAction SilentlyContinue
-    if ($null -ne $npm) {
-        return $npm.Source
-    }
-
-    return ""
-}
-
-function Ensure-WebUiBuild {
-    $reason = ""
-    if (-not (Test-Path -LiteralPath $WebUiIndex -PathType Leaf)) {
-        $reason = "React UI build not found: `"$WebUiIndex`""
-    } else {
-        $sourceNewest = Get-NewestFileTime -Paths $WebUiSourcePaths
-        $distTime = (Get-Item -LiteralPath $WebUiIndex).LastWriteTime
-        if ($null -ne $sourceNewest -and $sourceNewest -gt $distTime) {
-            $reason = "React UI build is stale: source files are newer than web-ui\dist\index.html"
-        }
-    }
-
-    if ([string]::IsNullOrWhiteSpace($reason)) {
-        return
-    }
-
-    Write-Host "[INFO] $reason"
-    if ($env:SIMPLE_DEPLOY_SKIP_WEB_UI_BUILD -eq "1") {
-        Write-Host "[WARN] SIMPLE_DEPLOY_SKIP_WEB_UI_BUILD=1, web will use legacy fallback if dist is missing."
-        Write-Host ""
-        return
-    }
-
-    $npm = Resolve-NpmCommand
-    if ([string]::IsNullOrWhiteSpace($npm)) {
-        Write-Host "[ERROR] npm not found. Install Node.js/npm or run with SIMPLE_DEPLOY_SKIP_WEB_UI_BUILD=1."
-        exit 1
-    }
-
-    $nodeModules = Join-Path $WebUiRoot "node_modules"
-    if (-not (Test-Path -LiteralPath $nodeModules -PathType Container)) {
-        Invoke-CheckedCommand `
-            -Executable $npm `
-            -Arguments @("install") `
-            -WorkingDirectory $WebUiRoot `
-            -Description "npm install in tools-ci\web-ui"
-    }
-
-    Invoke-CheckedCommand `
-        -Executable $npm `
-        -Arguments @("run", "build") `
-        -WorkingDirectory $WebUiRoot `
-        -Description "npm run build in tools-ci\web-ui"
 }
 
 function Test-Contains {
@@ -224,7 +108,6 @@ Write-Host "Starting simple-deploy operator processes..."
 Write-Host "Web/API: http://$($WebHostName):$($WebPort)/"
 Write-Host "Worker poll interval: $($WorkerPollInterval)s"
 Write-Host ""
-Ensure-WebUiBuild
 
 function Start-OperatorWindow {
     param(

@@ -367,75 +367,16 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(missing_get_response.status_code, 404)
         self.assertEqual(missing_patch_response.status_code, 404)
 
-    def test_dashboard_falls_back_to_legacy_html_when_react_index_missing(self):
-        """Fallback dashboard остается рабочим, если React dist еще не собран."""
-        snapshot = {
-            "contours": {
-                "dev": {
-                    "last_success_release": "1.2.3",
-                    "last_success_release_ref": {
-                        "build_version": "1.2.3",
-                        "build_status": "success",
-                        "backend_commit": "abc123",
-                    },
-                    "last_success_backend_commit": "abc123",
-                    "updated_at": "2026-01-01T00:00:00Z",
-                },
-                "test": None,
-            },
-            "releases": [
-                {
-                    "build_version": "<1.2.3>",
-                    "build_status": "success",
-                    "backend_commit": "abc123",
-                    "frontend_commit": "def456",
-                }
-            ],
-            "build_attempts": [],
-            "deployment_attempts": [],
-            "jobs": [
-                {
-                    "id": 7,
-                    "kind": "build",
-                    "contour": "",
-                    "build_version": "1.2.3",
-                    "status": "queued",
-                    "created_at": "now",
-                    "started_at": "",
-                    "finished_at": "",
-                    "error": "<script>alert(1)</script>",
-                }
-            ],
-            "external_requests": [],
-        }
+    def test_dashboard_requires_react_bundle_when_index_missing(self):
+        """Web UI не подменяется legacy HTML, если React bundle отсутствует."""
         with tempfile.TemporaryDirectory() as tmp:
             missing_index = Path(tmp) / "dist" / "index.html"
             with patch.object(web_app, "WEB_UI_INDEX", missing_index):
-                with patch.object(web_app, "state_snapshot", return_value=snapshot):
-                    client = TestClient(app)
-                    response = client.get("/")
+                client = TestClient(app)
+                response = client.get("/")
 
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("<h2>Contours</h2>", response.text)
-        self.assertIn("&lt;1.2.3&gt;", response.text)
-        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", response.text)
-        self.assertIn('data-job-id="7"', response.text)
-        self.assertIn('data-job-status="cancelled"', response.text)
-
-    def test_job_log_fallback_page_escapes_job_fields(self):
-        """Legacy job log page экранирует поля job в HTML."""
-        html = web_app.render_job_log_page(
-            {
-                "id": 9,
-                "status": "<running>",
-                "kind": "<build>",
-            }
-        )
-
-        self.assertIn("Job 9", html)
-        self.assertIn("&lt;running&gt;", html)
-        self.assertIn("&lt;build&gt;", html)
-        self.assertIn("/ws/jobs/9", html)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("React UI bundle is missing", response.text)
 
     def test_tail_text_file_reads_deltas_and_handles_missing_files(self):
         """Log tail helper читает дельту от byte offset и мягко пропускает miss."""

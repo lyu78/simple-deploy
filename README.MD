@@ -64,10 +64,9 @@ Web/API v1 запускается отдельно и не заменяет CLI.
 build/deploy attempts, локальные jobs, состояние worker-а и внешние заявки
 TEST/PROD, а также создает локальные jobs через API. Долгие операции выполняет
 отдельный `simple-deploy worker`, а не HTTP request. Исходники UI лежат в
-`tools-ci/web-ui`; после изменений фронтенда выполните `npm install && npm run
-build` из этого каталога, чтобы FastAPI начал отдавать свежую сборку.
-`start-simple-deploy.bat` также сам соберет React UI, если
-`tools-ci/web-ui/dist/index.html` отсутствует или устарел.
+`tools-ci/web-ui`, а собранный UI хранится в `tools-ci/web-ui/dist` в Git. После
+изменений фронтенда выполните `npm install && npm run build` из
+`tools-ci/web-ui` и закоммитьте обновленный `dist`.
 
 Практическая настройка рабочей машины, `tools-ci/.env`,
 `tools-ci/local.secrets.env`, `tools-ci/windows_pipeline.local.json`,

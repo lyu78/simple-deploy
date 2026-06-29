@@ -265,9 +265,7 @@ def api_requests(limit: int = 50) -> list[ExternalRequestDto]:
 @app.get("/", response_class=HTMLResponse, response_model=None)
 def dashboard() -> Response:
     """Возвращает React-панель для локального оператора."""
-    if WEB_UI_INDEX.is_file():
-        return FileResponse(WEB_UI_INDEX)
-    return HTMLResponse(render_dashboard(state_snapshot(limit=20)))
+    return react_index_response()
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse, response_model=None)
@@ -278,10 +276,18 @@ def job_log_page(job_id: int) -> Response:
         raise HTTPException(
             status_code=404, detail=f"Local job not found: id={job_id}"
         )
+    return react_index_response()
+
+
+def react_index_response() -> Response:
+    """Возвращает React bundle или явную ошибку настройки web assets."""
     if WEB_UI_INDEX.is_file():
         return FileResponse(WEB_UI_INDEX)
-    return HTMLResponse(
-        render_job_log_page(dto_dump(JobDto.model_validate(job)))
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "React UI bundle is missing: tools-ci/web-ui/dist/index.html"
+        ),
     )
 
 
