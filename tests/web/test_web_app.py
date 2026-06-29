@@ -175,6 +175,8 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(created_deploy_job_response.status_code, 201)
         self.assertEqual(requests_response.status_code, 200)
         self.assertEqual(dashboard_response.status_code, 200)
+        self.assertEqual(state_response.headers["cache-control"], "no-store")
+        self.assertEqual(jobs_response.headers["cache-control"], "no-store")
         self.assertEqual(health_response.json(), {"status": "ok"})
         worker_json = worker_response.json()
         self.assertEqual(worker_json["status"], "idle")

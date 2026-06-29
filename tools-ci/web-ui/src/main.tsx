@@ -171,6 +171,7 @@ const DASHBOARD_REFRESH_INTERVAL_MS = 3000;
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
+    cache: "no-store",
     ...init,
     headers: {
       "content-type": "application/json",
@@ -296,6 +297,21 @@ function useDashboardData() {
       void load({ silent: true });
     }, DASHBOARD_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timerId);
+  }, [load]);
+
+  React.useEffect(() => {
+    function reloadWhenVisible() {
+      if (document.visibilityState === "visible") {
+        void load({ silent: true });
+      }
+    }
+
+    document.addEventListener("visibilitychange", reloadWhenVisible);
+    window.addEventListener("focus", reloadWhenVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", reloadWhenVisible);
+      window.removeEventListener("focus", reloadWhenVisible);
+    };
   }, [load]);
 
   return { snapshot, worker, buildOptions, error, loading, pollState, load };
@@ -821,12 +837,27 @@ function JobLogPage({ jobId }: { jobId: number }) {
   const [log, setLog] = React.useState("");
   const [error, setError] = React.useState("");
   const [streamStatus, setStreamStatus] = React.useState<StreamStatus>("connecting");
+  const [streamRevision, setStreamRevision] = React.useState(0);
   const logRef = React.useRef<HTMLPreElement | null>(null);
+
+  const restartStream = React.useCallback(() => {
+    setError("");
+    setLog("");
+    setStreamRevision((current) => current + 1);
+  }, []);
 
   React.useEffect(() => {
     let closed = false;
+    setError("");
+    setLog("");
     setStreamStatus("connecting");
-    apiJson<Job>(`/api/jobs/${jobId}`).then(setJob).catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
+    apiJson<Job>(`/api/jobs/${jobId}`)
+      .then((nextJob) => {
+        if (!closed) setJob(nextJob);
+      })
+      .catch((exc) => {
+        if (!closed) setError(exc instanceof Error ? exc.message : String(exc));
+      });
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws/jobs/${jobId}`);
     socket.addEventListener("open", () => {
@@ -836,7 +867,18 @@ function JobLogPage({ jobId }: { jobId: number }) {
       if (closed) return;
       const message = JSON.parse(event.data) as { type: string; text?: string; status?: JobStatus; job?: Job; message?: string };
       if (message.type === "snapshot" && message.job) setJob(message.job);
-      if ((message.type === "status" || message.type === "done") && message.status) setJob((current) => current ? { ...current, status: message.status as JobStatus } : current);
+      if ((message.type === "status" || message.type === "done") && message.status) {
+        setJob((current) => current ? { ...current, status: message.status as JobStatus } : current);
+      }
+      if (message.type === "done") {
+        void apiJson<Job>(`/api/jobs/${jobId}`)
+          .then((nextJob) => {
+            if (!closed) setJob(nextJob);
+          })
+          .catch((exc) => {
+            if (!closed) setError(exc instanceof Error ? exc.message : String(exc));
+          });
+      }
       if (message.type === "log" && message.text) setLog((current) => current + message.text);
       if (message.type === "error" && message.message) setError(message.message);
     });
@@ -851,7 +893,7 @@ function JobLogPage({ jobId }: { jobId: number }) {
       closed = true;
       socket.close();
     };
-  }, [jobId]);
+  }, [jobId, streamRevision]);
 
   React.useEffect(() => {
     if (logRef.current) {
@@ -867,6 +909,7 @@ function JobLogPage({ jobId }: { jobId: number }) {
         body: JSON.stringify({ status })
       });
       setJob(updated);
+      restartStream();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     }
@@ -879,9 +922,14 @@ function JobLogPage({ jobId }: { jobId: number }) {
           <h1>Job {jobId}</h1>
           <p>{job ? `${jobKindLabels[job.kind]} / ${job.status}` : "Loading job log"}</p>
         </div>
-        <a className="icon-link" href="/" title="Dashboard">
-          <ArrowLeft size={18} />
-        </a>
+        <div className="topbar-actions">
+          <button className="icon-button" type="button" onClick={restartStream} title="Refresh job">
+            <RefreshCw size={18} />
+          </button>
+          <a className="icon-link" href="/" title="Dashboard">
+            <ArrowLeft size={18} />
+          </a>
+        </div>
       </header>
       {error ? <div className="alert">{error}</div> : null}
       <main className="workspace">

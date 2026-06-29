@@ -14,7 +14,7 @@ import asyncio
 from html import escape
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -62,6 +62,15 @@ app.mount(
     StaticFiles(directory=WEB_UI_DIST / "assets", check_dir=False),
     name="web-ui-assets",
 )
+
+
+@app.middleware("http")
+async def add_api_cache_headers(request: Request, call_next):
+    """Запрещает кеширование API-ответов операторской панели."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 class JobCreateRequest(BaseModel):
