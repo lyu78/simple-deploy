@@ -70,6 +70,7 @@ def _pipeline_deploy_request(request: PipelineRequest) -> DeployRequest:
         latest=True,
         contour=request.contour,
         include_set_default_sql=request.include_set_default_sql,
+        include_data_migration_sql=request.include_data_migration_sql,
         app_only=request.app_only,
     )
 

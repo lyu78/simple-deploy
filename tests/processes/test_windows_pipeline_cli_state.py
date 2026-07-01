@@ -28,21 +28,38 @@ class WindowsPipelineCliStateTests(WindowsPipelineTestCase):
                 },
             ),
             (
-                ["deploy", "--latest", "--contour", "test", "--include-set-default-sql", "--app-only"],
+                [
+                    "deploy",
+                    "--latest",
+                    "--contour",
+                    "test",
+                    "--include-data-migration-sql",
+                    "--include-set-default-sql",
+                    "--app-only",
+                ],
                 {
                     "command": "deploy",
                     "latest": True,
                     "build_version": "",
                     "contour": "test",
+                    "include_data_migration_sql": True,
                     "include_set_default_sql": True,
                     "app_only": True,
                 },
             ),
             (
-                ["pipeline", "--contour", "prod", "--include-set-default-sql", "--skip-data-sql-artifacts"],
+                [
+                    "pipeline",
+                    "--contour",
+                    "prod",
+                    "--include-data-migration-sql",
+                    "--include-set-default-sql",
+                    "--skip-data-sql-artifacts",
+                ],
                 {
                     "command": "pipeline",
                     "contour": "prod",
+                    "include_data_migration_sql": True,
                     "include_set_default_sql": True,
                     "skip_data_sql_artifacts": True,
                     "app_only": False,
@@ -185,6 +202,7 @@ class WindowsPipelineCliStateTests(WindowsPipelineTestCase):
         self.assertTrue(deploy_args.app_only)
         self.assertTrue(deploy_args.latest)
         self.assertEqual(deploy_args.build_version, "")
+        self.assertFalse(deploy_args.include_data_migration_sql)
 
     def test_pipeline_uses_data_sql_artifacts_by_default_without_runtime_mutation(self):
         """Проверяет, что pipeline сохраняет data SQL defaults в DTO."""

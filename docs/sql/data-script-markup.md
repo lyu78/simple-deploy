@@ -89,7 +89,8 @@ DB-сессия/одно ядро и update нужно выполнить стр
 `kind=set_default` генерируется в отдельные
 `run_all_set_default_sequential_<commit>.sql` и
 `run_all_set_default_parallel_<commit>.sh`; штатный deploy запускает этот
-отдельный step только при явном флаге `--include-set-default-sql`.
+отдельный step только при явных флагах
+`--include-data-migration-sql --include-set-default-sql`.
 Runner выполняет `order` как барьерные wave:
 следующая wave стартует только после завершения предыдущей. `parallel=true`
 запускается в background с лимитом `SIMPLE_DEPLOY_UPDATE_MAX_WORKERS` (default

@@ -47,6 +47,7 @@ class ApplicationServiceTests(unittest.TestCase):
             build_version="1.2.3",
             contour=ContourCodeEnum.TEST,
             include_set_default_sql=True,
+            include_data_migration_sql=True,
             app_only=True,
         )
         with patch(
@@ -60,6 +61,7 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertEqual(process_args.build_version, "1.2.3")
         self.assertEqual(process_args.contour, ContourCodeEnum.TEST)
         self.assertTrue(process_args.include_set_default_sql)
+        self.assertTrue(process_args.include_data_migration_sql)
         self.assertTrue(process_args.app_only)
 
     def test_mark_services_pass_requests_to_processes(self):
@@ -120,6 +122,7 @@ class ApplicationServiceTests(unittest.TestCase):
             timeout=77,
             contour=ContourCodeEnum.TEST,
             include_set_default_sql=True,
+            include_data_migration_sql=True,
             skip_data_sql_artifacts=True,
             app_only=True,
         )
@@ -150,6 +153,7 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertEqual(deploy_args.build_version, "")
         self.assertEqual(deploy_args.contour, ContourCodeEnum.TEST)
         self.assertTrue(deploy_args.include_set_default_sql)
+        self.assertTrue(deploy_args.include_data_migration_sql)
         self.assertTrue(deploy_args.app_only)
 
 

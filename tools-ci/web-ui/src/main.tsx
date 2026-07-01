@@ -122,6 +122,7 @@ type JobFormState = {
   error: string;
   timeout: string;
   latest: boolean;
+  includeDataMigrationSql: boolean;
   includeSetDefaultSql: boolean;
   skipDataSqlArtifacts: boolean;
   appOnly: boolean;
@@ -162,6 +163,7 @@ const defaultForm: JobFormState = {
   error: "",
   timeout: "3600",
   latest: true,
+  includeDataMigrationSql: false,
   includeSetDefaultSql: false,
   skipDataSqlArtifacts: false,
   appOnly: false
@@ -204,7 +206,8 @@ function jobPayload(form: JobFormState): Record<string, unknown> {
       contour: form.contour,
       build_version: form.latest ? "" : form.buildVersion.trim(),
       latest: form.latest,
-      include_set_default_sql: form.includeSetDefaultSql,
+      include_data_migration_sql: form.includeDataMigrationSql,
+      include_set_default_sql: form.includeDataMigrationSql && form.includeSetDefaultSql,
       app_only: form.appOnly
     };
   }
@@ -212,7 +215,8 @@ function jobPayload(form: JobFormState): Record<string, unknown> {
     return {
       timeout,
       contour: form.contour,
-      include_set_default_sql: form.includeSetDefaultSql,
+      include_data_migration_sql: form.includeDataMigrationSql,
+      include_set_default_sql: form.includeDataMigrationSql && form.includeSetDefaultSql,
       skip_data_sql_artifacts: form.skipDataSqlArtifacts,
       app_only: form.appOnly
     };
@@ -546,7 +550,26 @@ function JobCreateForm({
       <div className="check-group">
         {["deploy", "pipeline"].includes(form.kind) ? (
           <label className="check-row">
-            <input type="checkbox" checked={form.includeSetDefaultSql} onChange={(event) => setForm((current) => ({ ...current, includeSetDefaultSql: event.target.checked }))} />
+            <input
+              type="checkbox"
+              checked={form.includeDataMigrationSql}
+              onChange={(event) => setForm((current) => ({
+                ...current,
+                includeDataMigrationSql: event.target.checked,
+                includeSetDefaultSql: event.target.checked ? current.includeSetDefaultSql : false
+              }))}
+            />
+            Include data migration SQL
+          </label>
+        ) : null}
+        {["deploy", "pipeline"].includes(form.kind) ? (
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={form.includeDataMigrationSql && form.includeSetDefaultSql}
+              disabled={!form.includeDataMigrationSql}
+              onChange={(event) => setForm((current) => ({ ...current, includeSetDefaultSql: event.target.checked }))}
+            />
             Include set_default SQL
           </label>
         ) : null}

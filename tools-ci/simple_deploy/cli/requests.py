@@ -71,6 +71,9 @@ def deploy_request_from_args(args: argparse.Namespace) -> DeployRequest:
         include_set_default_sql=getattr(
             args, "include_set_default_sql", False
         ),
+        include_data_migration_sql=getattr(
+            args, "include_data_migration_sql", False
+        ),
         app_only=getattr(args, "app_only", False),
     )
 
@@ -89,6 +92,9 @@ def pipeline_request_from_args(args: argparse.Namespace) -> PipelineRequest:
         contour=getattr(args, "contour", "dev"),
         include_set_default_sql=getattr(
             args, "include_set_default_sql", False
+        ),
+        include_data_migration_sql=getattr(
+            args, "include_data_migration_sql", False
         ),
         skip_data_sql_artifacts=getattr(
             args, "skip_data_sql_artifacts", False

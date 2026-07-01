@@ -160,6 +160,7 @@ class WindowsPipelineTestCase(unittest.TestCase):
             latest=False,
             contour="dev",
             include_set_default_sql=False,
+            include_data_migration_sql=False,
             app_only=app_only,
         )
 

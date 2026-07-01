@@ -205,7 +205,8 @@ DB_LOGIN_PASSWORD=<password>
   что после распаковки действительно отдается maintenance-заглушка;
 - `data_sql_enabled`, `db_data_sql_timeout_seconds`,
   `db_update_parallel_max_workers` и
-  `db_update_parallel_status_interval_seconds` - запуск data SQL в full deploy;
+  `db_update_parallel_status_interval_seconds` - runtime guard и параметры
+  запуска data SQL в full deploy;
 - `healthcheck_commands` - дополнительные проверки;
 - `outlook_email_*` - уведомление через desktop Outlook;
 - `backup_enabled` и связанные настройки backup.
@@ -407,12 +408,20 @@ backend/frontend, Django management, healthcheck и фиксацию baseline.
 .venv/Scripts/simple-deploy.exe pipeline --contour dev
 ```
 
-По умолчанию full deploy применяет data insert и update, но пропускает
-`kind=set_default`. Запуск `set_default` требует явного флага:
+По умолчанию full deploy применяет schema SQL и app-часть, но пропускает data
+migration SQL. Запуск `insert` и `update_parallel` требует явного флага:
 
 ```bash
-.venv/Scripts/simple-deploy.exe deploy --contour dev --latest --include-set-default-sql
-.venv/Scripts/simple-deploy.exe pipeline --contour dev --include-set-default-sql
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest --include-data-migration-sql
+.venv/Scripts/simple-deploy.exe pipeline --contour dev --include-data-migration-sql
+```
+
+`kind=set_default` остается отдельным шагом и запускается только вместе с data
+migration SQL:
+
+```bash
+.venv/Scripts/simple-deploy.exe deploy --contour dev --latest --include-data-migration-sql --include-set-default-sql
+.venv/Scripts/simple-deploy.exe pipeline --contour dev --include-data-migration-sql --include-set-default-sql
 ```
 
 `dry-run` проверяет data SQL по умолчанию, а `build` и `pipeline` генерируют
@@ -424,8 +433,11 @@ data SQL-артефакты по умолчанию. Явный schema-only ре
 ```
 
 Старый `--include-data-sql` оставлен только для совместимости и больше ничего
-не включает. Runtime config `data_sql_enabled` управляет только применением
-готовых data SQL-архивов на deploy.
+не включает. `--skip-data-sql-artifacts` управляет проверкой/генерацией
+data SQL-артефактов, а `--include-data-migration-sql` - применением готовых
+`insert`/`update_parallel` архивов на deploy. Runtime config
+`data_sql_enabled=false` запрещает применение data SQL даже при явном
+include-флаге.
 
 Фиксация внешнего TEST/PROD результата:
 
@@ -493,10 +505,12 @@ Schema SQL генерируется offline через Django schema editor в �
 - `db_set_default_sequential_r_<release>-c_<commit>.tar.gz` с `run_all_set_default_sequential_<commit>.sql`;
 - `db_set_default_parallel_r_<release>-c_<commit>.tar.gz` с `run_all_set_default_parallel_<commit>.sh`.
 
-В штатном full deploy Windows runner применяет `db_insert` и
-`db_update_parallel` после schema SQL. `db_update_parallel` содержит только
+В штатном full deploy Windows runner применяет только schema SQL. `db_insert`
+и `db_update_parallel` запускаются после schema SQL при
+`--include-data-migration-sql`. `db_update_parallel` содержит только
 `kind=update`; чтобы отдельно применить `kind=set_default`, запускайте `deploy`
-или `pipeline` с `--include-set-default-sql`. `db_update_sequential` и
+или `pipeline` с `--include-data-migration-sql --include-set-default-sql`.
+`db_update_sequential` и
 `db_set_default_sequential` остаются аварийными ручными вариантами для
 последовательного запуска на одной DB-сессии.
 
@@ -519,9 +533,11 @@ Full deploy сначала выполняет DB data update preflight cleanup, 
 Затем runner загружает app-артефакты, останавливает сервисы, распаковывает
 `tools-ci/maintenance_stub/maintenance_stub.tar.gz` в `FRONTEND_RELEASE_PATH`,
 проверяет по HTTP, что `https://DEV_DOMAIN/` отдает именно заглушку, а не
-основной frontend, и при остановленном backend выполняет schema SQL, `run_all_insert_*.sql`,
-`run_all_update_parallel_*.sh`, опционально `run_all_set_default_parallel_*.sh`
-при `--include-set-default-sql`, и DB maintenance. Insert выполняется тихо:
+основной frontend, и при остановленном backend выполняет schema SQL. При
+`--include-data-migration-sql` дополнительно выполняются `run_all_insert_*.sql`
+и `run_all_update_parallel_*.sh`; `run_all_set_default_parallel_*.sh`
+выполняется только при `--include-data-migration-sql --include-set-default-sql`.
+Затем выполняется DB maintenance. Insert выполняется тихо:
 полный `psql` output пишется на DB VM в `logs/insert/`, а в терминал выводится
 только итоговая длительность. После DB-части runner
 распаковывает backend, выполняет `after_unpack`, Django management-команды и

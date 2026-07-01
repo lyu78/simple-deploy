@@ -157,6 +157,7 @@ class WebAppTests(unittest.TestCase):
                                     "contour": "dev",
                                     "build_version": "",
                                     "latest": True,
+                                    "include_data_migration_sql": True,
                                     "include_set_default_sql": False,
                                     "app_only": False,
                                 },
@@ -248,6 +249,7 @@ class WebAppTests(unittest.TestCase):
         created_deploy_job = created_deploy_job_response.json()
         self.assertEqual(created_deploy_job["kind"], "deploy")
         self.assertEqual(created_deploy_job["contour"], "dev")
+        self.assertIn("include_data_migration_sql", created_deploy_job["payload_json"])
         self.assertIn("include_set_default_sql", created_deploy_job["payload_json"])
         self.assertEqual(requests_response.json(), state_json["external_requests"])
         self.assertIn("simple-deploy", dashboard_response.text)

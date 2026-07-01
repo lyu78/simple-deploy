@@ -99,6 +99,7 @@ class WindowsPipelineDeployFlowTests(WindowsPipelineTestCase):
     def test_deploy_full_skips_data_sql_when_runtime_disabled(self):
         """При data_sql_enabled=false full deploy выполняет schema SQL и пропускает data SQL."""
         args = self._deploy_args()
+        args.include_data_migration_sql = True
         env = self._deploy_env()
         runtime = {
             "service_steps": [],
@@ -145,9 +146,56 @@ class WindowsPipelineDeployFlowTests(WindowsPipelineTestCase):
         upload_mock.assert_called_once_with(env, [backend, frontend], REMOTE_RELEASE_ROOT)
         mark_mock.assert_called_once_with("dev", TEST_BUILD_VERSION, release_dir)
 
+    def test_deploy_full_skips_data_sql_by_default(self):
+        """Full deploy без --include-data-migration-sql выполняет schema SQL и пропускает data SQL."""
+        args = self._deploy_args()
+        env = self._deploy_env()
+        runtime = {
+            "service_steps": [],
+            "healthcheck_enabled": False,
+            "maintenance_stub_enabled": False,
+            "data_sql_enabled": True,
+        }
+        release_dir = Path("releases") / TEST_BUILD_VERSION
+        backend, frontend = self._app_artifacts()
+        db_schema = DbSqlArtifact("db_schema_dev", Path("schema.tar.gz"), "", "", ".", "summary_sql_dev_*.sql")
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_env", return_value=env))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.cleanup_db_data_update_leftovers"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_schema_artifact", return_value=db_schema))
+            resolve_data_mock = stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_data_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_maintenance_stub_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.upload_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.backup_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_service_steps"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.unpack_app_artifact"))
+            db_schema_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_schema_summary"))
+            db_insert_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_insert"))
+            db_update_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_update_parallel"))
+            db_set_default_mock = stack.enter_context(
+                patch("simple_deploy.processes.deploy.run_db_data_set_default_parallel")
+            )
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.management_commands", return_value=[]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.mark_contour_applied"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.send_outlook_success_email"))
+
+            self.assertEqual(deploy(args), 0)
+
+        resolve_data_mock.assert_not_called()
+        db_schema_mock.assert_called_once_with(env, runtime, db_schema)
+        db_insert_mock.assert_not_called()
+        db_update_mock.assert_not_called()
+        db_set_default_mock.assert_not_called()
+
     def test_deploy_full_skips_maintenance_stub_when_runtime_disabled(self):
         """При maintenance_stub_enabled=false deploy не resolve/unpack/verify stub."""
         args = self._deploy_args()
+        args.include_data_migration_sql = True
         env = self._deploy_env()
         runtime = {
             "service_steps": [],
@@ -202,6 +250,7 @@ class WindowsPipelineDeployFlowTests(WindowsPipelineTestCase):
     def test_deploy_full_runs_set_default_as_separate_step_when_requested(self):
         """--include-set-default-sql добавляет отдельный set_default step после update."""
         args = self._deploy_args()
+        args.include_data_migration_sql = True
         args.include_set_default_sql = True
         env = self._deploy_env()
         runtime = {
@@ -275,6 +324,52 @@ class WindowsPipelineDeployFlowTests(WindowsPipelineTestCase):
         self.assertEqual(events, ["update", "set_default"])
         set_default_mock.assert_called_once_with(env, runtime, db_set_default)
 
+    def test_deploy_set_default_requires_data_migration_sql(self):
+        """--include-set-default-sql без --include-data-migration-sql не запускает data SQL."""
+        args = self._deploy_args()
+        args.include_set_default_sql = True
+        env = self._deploy_env()
+        runtime = {
+            "service_steps": [],
+            "healthcheck_enabled": False,
+            "maintenance_stub_enabled": False,
+            "data_sql_enabled": True,
+        }
+        release_dir = Path("releases") / TEST_BUILD_VERSION
+        backend, frontend = self._app_artifacts()
+        db_schema = DbSqlArtifact("db_schema_dev", Path("schema.tar.gz"), "", "", ".", "summary_sql_dev_*.sql")
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_env", return_value=env))
+            stack.enter_context(patch("simple_deploy.processes.deploy.load_runtime_config", return_value=(runtime, [])))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_release_dir", return_value=(TEST_BUILD_VERSION, release_dir)))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_artifacts", return_value=[backend, frontend]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.cleanup_db_data_update_leftovers"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_schema_artifact", return_value=db_schema))
+            resolve_data_mock = stack.enter_context(patch("simple_deploy.processes.deploy.resolve_db_data_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.resolve_maintenance_stub_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.upload_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.backup_app_artifacts"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_service_steps"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.unpack_app_artifact"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_schema_summary"))
+            db_insert_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_insert"))
+            db_update_mock = stack.enter_context(patch("simple_deploy.processes.deploy.run_db_data_update_parallel"))
+            db_set_default_mock = stack.enter_context(
+                patch("simple_deploy.processes.deploy.run_db_data_set_default_parallel")
+            )
+            stack.enter_context(patch("simple_deploy.processes.deploy.run_db_maintenance"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.management_commands", return_value=[]))
+            stack.enter_context(patch("simple_deploy.processes.deploy.mark_contour_applied"))
+            stack.enter_context(patch("simple_deploy.processes.deploy.send_outlook_success_email"))
+
+            self.assertEqual(deploy(args), 0)
+
+        resolve_data_mock.assert_not_called()
+        db_insert_mock.assert_not_called()
+        db_update_mock.assert_not_called()
+        db_set_default_mock.assert_not_called()
+
     def test_successful_deploy_marks_state_after_healthcheck_before_email(self):
         """Фиксирует текущий порядок success side effects: healthcheck, mark, email."""
         args = self._deploy_args()
@@ -325,6 +420,8 @@ class WindowsPipelineDeployFlowTests(WindowsPipelineTestCase):
             build_version=TEST_BUILD_VERSION,
             latest=False,
             contour="dev",
+            include_data_migration_sql=True,
+            include_set_default_sql=False,
             app_only=False,
         )
         env = {

@@ -188,9 +188,10 @@ SQL-архив по `--contour` и выполняет порядок:
 8. Загрузка и применение `summary_sql_<contour>_*.sql` на DB VM через `psql`
     с `ON_ERROR_STOP` и одной транзакцией.
 9. Применение `run_all_insert_*.sql` и `run_all_update_parallel_*.sh`, если
-   `data_sql_enabled=true`. `kind=set_default` выполняется отдельным
-   `run_all_set_default_parallel_*.sh` только при флаге
-   `--include-set-default-sql`.
+   `data_sql_enabled=true` и передан `--include-data-migration-sql`.
+   `kind=set_default` выполняется отдельным `run_all_set_default_parallel_*.sh`
+   только при флагах
+   `--include-data-migration-sql --include-set-default-sql`.
 10. DB maintenance SQL/scripts фаз `before_unpack`, `before_migrate` и
    `after_migrate`, включая информационные SQL-отчеты в порядке `sql_scripts`.
 11. Распаковка backend с `--strip-components=1`.

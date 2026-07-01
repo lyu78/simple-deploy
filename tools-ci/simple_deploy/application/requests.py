@@ -135,6 +135,12 @@ class DeployRequest(_EnvFilesRequestBase):
             "Включает SQL artifacts вида set_default в deploy chain."
         ),
     )
+    include_data_migration_sql: StrictBool = Field(
+        default=False,
+        description=(
+            "Включает data SQL migration artifacts insert/update в deploy chain."
+        ),
+    )
     app_only: StrictBool = Field(
         default=False,
         description=(
@@ -163,6 +169,12 @@ class PipelineRequest(_TimedEnvFilesRequestBase):
         default=False,
         description=(
             "Включает SQL artifacts вида set_default в deploy фазе pipeline."
+        ),
+    )
+    include_data_migration_sql: StrictBool = Field(
+        default=False,
+        description=(
+            "Включает data SQL migration artifacts insert/update в deploy фазе pipeline."
         ),
     )
     skip_data_sql_artifacts: StrictBool = Field(

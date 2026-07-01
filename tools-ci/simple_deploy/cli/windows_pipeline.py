@@ -170,11 +170,19 @@ def parse_args() -> argparse.Namespace:
     deploy_parser.add_argument("--latest", action="store_true")
     deploy_parser.add_argument("--contour", choices=CONTOURS, default="dev")
     deploy_parser.add_argument(
+        "--include-data-migration-sql",
+        action="store_true",
+        help=(
+            "Run insert/update data SQL migration steps. "
+            "Disabled by default."
+        ),
+    )
+    deploy_parser.add_argument(
         "--include-set-default-sql",
         action="store_true",
         help=(
             "Run the separate kind=set_default data SQL step. "
-            "Disabled by default."
+            "Requires --include-data-migration-sql. Disabled by default."
         ),
     )
     deploy_parser.add_argument("--app-only", action="store_true")
@@ -184,11 +192,19 @@ def parse_args() -> argparse.Namespace:
     pipeline_parser.add_argument("--latest", action="store_true")
     pipeline_parser.add_argument("--contour", choices=CONTOURS, default="dev")
     pipeline_parser.add_argument(
+        "--include-data-migration-sql",
+        action="store_true",
+        help=(
+            "Run insert/update data SQL migration steps in deploy phase. "
+            "Disabled by default."
+        ),
+    )
+    pipeline_parser.add_argument(
         "--include-set-default-sql",
         action="store_true",
         help=(
             "Run the separate kind=set_default data SQL step. "
-            "Disabled by default."
+            "Requires --include-data-migration-sql. Disabled by default."
         ),
     )
     pipeline_parser.add_argument(

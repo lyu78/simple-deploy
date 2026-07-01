@@ -106,7 +106,10 @@ def deploy(request: DeployRequest) -> ProcessResult:
             db_schema_artifact = resolve_db_schema_artifact(
                 env, build_version, release_dir, contour
             )
-            if runtime.get("data_sql_enabled", True):
+            if (
+                runtime.get("data_sql_enabled", True)
+                and request.include_data_migration_sql
+            ):
                 db_insert_artifact = resolve_db_data_artifact(
                     env, build_version, release_dir, "insert"
                 )
@@ -131,7 +134,13 @@ def deploy(request: DeployRequest) -> ProcessResult:
                 db_insert_artifact = None
                 db_update_parallel_artifact = None
                 db_set_default_parallel_artifact = None
-                job_log("SKIP DB data SQL artifacts: disabled")
+                if runtime.get("data_sql_enabled", True):
+                    job_log(
+                        "SKIP DB data SQL artifacts: "
+                        "include_data_migration_sql disabled"
+                    )
+                else:
+                    job_log("SKIP DB data SQL artifacts: disabled")
             if runtime.get("maintenance_stub_enabled", True):
                 maintenance_stub_artifact = resolve_maintenance_stub_artifact(
                     env, runtime, build_version
