@@ -306,13 +306,17 @@ def check_runtime_config(
                 if replacement is not None:
                     reporter.fail(
                         label,
-                        f"legacy SQL report path {path_key}; use {replacement}",
+                        "invalid runtime config: legacy SQL report path "
+                        f"{path_key}; update sql_scripts path to {replacement}",
                     )
                     ok = False
                 elif (path := root / path_value).is_file():
                     reporter.pass_(f"{label} path", str(path))
                 else:
-                    reporter.fail(label, f"path not found: {path}")
+                    reporter.fail(
+                        label,
+                        f"invalid runtime config: sql_scripts path not found: {path}",
+                    )
                     ok = False
             script_phase = script.get("phase")
             if script_phase not in DB_MAINTENANCE_PHASES:

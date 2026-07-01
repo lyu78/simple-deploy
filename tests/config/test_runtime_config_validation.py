@@ -137,7 +137,11 @@ class RuntimeConfigValidationTests(unittest.TestCase):
         passed = "\n".join(reporter.passed)
         issues = "\n".join(reporter.issues)
         self.assertIn("runtime sql_scripts #1 path", passed)
-        self.assertIn("runtime sql_scripts #2: path not found", issues)
+        self.assertIn(
+            "runtime sql_scripts #2: invalid runtime config: "
+            "sql_scripts path not found",
+            issues,
+        )
         self.assertIn("runtime sql_scripts #3: path must be", issues)
         self.assertIn("runtime sql_scripts #4: expected object", issues)
         self.assertIn("name must be a string when set", issues)
@@ -191,14 +195,16 @@ class RuntimeConfigValidationTests(unittest.TestCase):
 
         issues = "\n".join(reporter.issues)
         self.assertIn(
-            "legacy SQL report path sql/public_table_size_report.sql; "
-            "use tools-ci/sql/reports/public_table_size_report.sql",
+            "invalid runtime config: legacy SQL report path "
+            "sql/public_table_size_report.sql; update sql_scripts path to "
+            "tools-ci/sql/reports/public_table_size_report.sql",
             issues,
         )
         self.assertIn(
-            "legacy SQL report path "
+            "invalid runtime config: legacy SQL report path "
             "sql/public_table_maintenance_diagnostics.sql; "
-            "use tools-ci/sql/reports/public_table_maintenance_diagnostics.sql",
+            "update sql_scripts path to "
+            "tools-ci/sql/reports/public_table_maintenance_diagnostics.sql",
             issues,
         )
 
