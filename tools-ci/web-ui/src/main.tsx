@@ -916,7 +916,7 @@ function JobLogPage({ jobId }: { jobId: number }) {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell job-log-shell">
       <header className="topbar">
         <div>
           <h1>Job {jobId}</h1>
@@ -932,12 +932,12 @@ function JobLogPage({ jobId }: { jobId: number }) {
         </div>
       </header>
       {error ? <div className="alert">{error}</div> : null}
-      <main className="workspace">
-        <section className="band">
+      <main className="workspace job-log-workspace">
+        <section className="band job-detail-section">
           <SectionHeader title="Job detail" icon={<Activity size={18} />} />
           <JobDetail job={job} onUpdate={updateJob} />
         </section>
-        <section className="band">
+        <section className="band live-log-section">
           <SectionHeader
             title="Live log"
             icon={<FileText size={18} />}
