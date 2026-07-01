@@ -15,6 +15,7 @@ from simple_deploy.config.validation import (  # noqa: E402
     is_bare_systemctl_status_command,
     is_disallowed_bare_systemctl_command,
     nginx_systemctl_action,
+    PACKAGED_SQL_REPORT_PATHS,
     systemctl_action,
 )
 
@@ -143,6 +144,63 @@ class RuntimeConfigValidationTests(unittest.TestCase):
         self.assertIn("permission_check_command must not use nginx restart/reload", issues)
         self.assertIn("phase must be one of", issues)
         self.assertIn("command must be a non-empty string", issues)
+
+    def test_check_runtime_config_accepts_packaged_sql_report_paths(self):
+        runtime = default_runtime()
+        runtime["sql_scripts"] = [
+            {"path": path, "phase": "after_migrate"}
+            for path in PACKAGED_SQL_REPORT_PATHS
+        ]
+        reporter = Reporter()
+
+        self.assertTrue(
+            check_runtime_config(
+                reporter,
+                runtime,
+                root=ROOT,
+                default_runtime_config=DEFAULT_RUNTIME_CONFIG,
+            )
+        )
+
+        passed = "\n".join(reporter.passed)
+        self.assertIn("public_table_size_report.sql", passed)
+        self.assertIn("public_table_maintenance_diagnostics.sql", passed)
+
+    def test_check_runtime_config_rejects_legacy_report_sql_paths(self):
+        runtime = default_runtime()
+        runtime["sql_scripts"] = [
+            {
+                "path": "sql/public_table_size_report.sql",
+                "phase": "after_migrate",
+            },
+            {
+                "path": r"sql\public_table_maintenance_diagnostics.sql",
+                "phase": "after_migrate",
+            },
+        ]
+        reporter = Reporter()
+
+        self.assertFalse(
+            check_runtime_config(
+                reporter,
+                runtime,
+                root=ROOT,
+                default_runtime_config=DEFAULT_RUNTIME_CONFIG,
+            )
+        )
+
+        issues = "\n".join(reporter.issues)
+        self.assertIn(
+            "legacy SQL report path sql/public_table_size_report.sql; "
+            "use tools-ci/sql/reports/public_table_size_report.sql",
+            issues,
+        )
+        self.assertIn(
+            "legacy SQL report path "
+            "sql/public_table_maintenance_diagnostics.sql; "
+            "use tools-ci/sql/reports/public_table_maintenance_diagnostics.sql",
+            issues,
+        )
 
     def test_check_runtime_config_validates_initial_schema_baselines(self):
         runtime = default_runtime()

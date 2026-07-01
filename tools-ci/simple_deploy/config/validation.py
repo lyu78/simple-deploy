@@ -45,6 +45,18 @@ RUNTIME_POSITIVE_INT_FIELDS = (
     "healthcheck_delay",
     "portal_version_asset_limit",
 )
+PACKAGED_SQL_REPORT_PATHS = (
+    "tools-ci/sql/reports/public_table_size_report.sql",
+    "tools-ci/sql/reports/public_table_maintenance_diagnostics.sql",
+)
+LEGACY_SQL_REPORT_PATHS = {
+    "sql/public_table_size_report.sql": (
+        "tools-ci/sql/reports/public_table_size_report.sql"
+    ),
+    "sql/public_table_maintenance_diagnostics.sql": (
+        "tools-ci/sql/reports/public_table_maintenance_diagnostics.sql"
+    ),
+}
 
 
 class RuntimeConfigReporter(Protocol):
@@ -289,8 +301,15 @@ def check_runtime_config(
                 reporter.fail(label, "path must be a non-empty string")
                 ok = False
             else:
-                path = root / path_value
-                if path.is_file():
+                path_key = path_value.strip().replace("\\", "/")
+                replacement = LEGACY_SQL_REPORT_PATHS.get(path_key)
+                if replacement is not None:
+                    reporter.fail(
+                        label,
+                        f"legacy SQL report path {path_key}; use {replacement}",
+                    )
+                    ok = False
+                elif (path := root / path_value).is_file():
                     reporter.pass_(f"{label} path", str(path))
                 else:
                     reporter.fail(label, f"path not found: {path}")
@@ -425,6 +444,8 @@ __all__ = [
     "NGINX_SERVICE_TARGETS",
     "NGINX_STOP_START_ACTIONS",
     "NGINX_UNSUPPORTED_ACTIONS",
+    "LEGACY_SQL_REPORT_PATHS",
+    "PACKAGED_SQL_REPORT_PATHS",
     "RUNTIME_BOOL_FIELDS",
     "RUNTIME_POSITIVE_INT_FIELDS",
     "RuntimeConfigReporter",
