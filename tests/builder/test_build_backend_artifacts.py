@@ -67,8 +67,10 @@ from src.build_backend import (  # noqa: E402
     _run_logged_command,
     _run_additional_artifact_generators,
     _run_all_include_paths,
+    _run_all_include_paths_ordered,
     _schema_baselines_json,
     _shell_runner_include_paths,
+    _shell_runner_include_paths_ordered,
     _validate_db_script_include_path,
     build_backend,
 )
@@ -131,6 +133,43 @@ class BuildBackendArtifactTests(unittest.TestCase):
             [
                 first.relative_to(self.repo),
                 second.relative_to(self.repo),
+            ],
+        )
+
+    def test_ordered_include_paths_preserve_entrypoint_order_and_deduplicate(self):
+        """Manifest list сохраняет порядок entrypoint/runner, а не tar sorting."""
+        first = self._write(APP_INSERT_SQL)
+        second = self._write(APP_SECOND_INSERT_SQL)
+        run_all = self._write(
+            f"run_all_insert_{TEST_COMMIT}.sql",
+            f"\\i '{APP_SECOND_INSERT_SQL}'\n"
+            f"\\i '{APP_INSERT_SQL}'\n"
+            f"\\i '{APP_SECOND_INSERT_SQL}'\n",
+        )
+
+        self.assertEqual(
+            _run_all_include_paths_ordered(self.repo, run_all),
+            [
+                second.relative_to(self.repo),
+                first.relative_to(self.repo),
+            ],
+        )
+
+        update_first = self._write(DOMAIN_A_UPDATE_SQL)
+        update_second = self._write(DOMAIN_B_UPDATE_SQL)
+        runner = self._write(
+            f"run_all_update_parallel_{TEST_COMMIT}.sh",
+            "#!/usr/bin/env bash\n"
+            f"# simple-deploy-include: {DOMAIN_B_UPDATE_SQL}\n"
+            f"# simple-deploy-include: {DOMAIN_A_UPDATE_SQL}\n"
+            f"# simple-deploy-include: {DOMAIN_B_UPDATE_SQL}\n",
+        )
+
+        self.assertEqual(
+            _shell_runner_include_paths_ordered(self.repo, runner),
+            [
+                update_second.relative_to(self.repo),
+                update_first.relative_to(self.repo),
             ],
         )
 
@@ -804,6 +843,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertNotIn("db_update_parallel_archive", manifest)
         self.assertNotIn("db_set_default_sequential_archive", manifest)
         self.assertNotIn("db_set_default_parallel_archive", manifest)
+        self.assertNotIn("db_data_sql_artifacts", manifest)
         self.assertEqual(set(manifest["db_schema_archives"]), {"dev", "test", "prod"})
 
     def test_db_migrations_archives_reports_missing_schema_sql_and_restores_baseline_env(self):
@@ -884,25 +924,56 @@ class BuildBackendArtifactTests(unittest.TestCase):
                     )
             elif script_name == "create_run_all_sql.py":
                 (build_scripts_dir / f"run_all_insert_{TEST_COMMIT}.sql").write_text(
-                    "\\set ON_ERROR_STOP 1\n",
+                    "\\set ON_ERROR_STOP 1\n"
+                    f"\\i '{APP_SECOND_INSERT_SQL}'\n"
+                    f"\\i '{APP_INSERT_SQL}'\n",
                     encoding="utf-8",
                 )
                 (build_scripts_dir / f"run_all_update_sequential_{TEST_COMMIT}.sql").write_text(
-                    "\\set ON_ERROR_STOP 1\n",
+                    "\\set ON_ERROR_STOP 1\n"
+                    f"\\i '{APP_UPDATE_SQL}'\n"
+                    f"\\i '{DOMAIN_A_UPDATE_SQL}'\n",
                     encoding="utf-8",
                 )
                 (build_scripts_dir / f"run_all_set_default_sequential_{TEST_COMMIT}.sql").write_text(
-                    "\\set ON_ERROR_STOP 1\n",
+                    "\\set ON_ERROR_STOP 1\n"
+                    f"\\i '{DOMAIN_A_DEFAULT_SQL}'\n",
+                    encoding="utf-8",
+                )
+                insert_sql = source_repo / APP_INSERT_SQL
+                insert_sql.parent.mkdir(parents=True, exist_ok=True)
+                insert_sql.write_text(
+                    "-- simple-deploy: estimated_seconds=1.25\n"
+                    "select 1;\n",
+                    encoding="utf-8",
+                )
+                second_insert_sql = source_repo / APP_SECOND_INSERT_SQL
+                second_insert_sql.parent.mkdir(parents=True, exist_ok=True)
+                second_insert_sql.write_text(
+                    "-- Query returned successfully in 2 sec 500 msec.\n"
+                    "select 1;\n",
                     encoding="utf-8",
                 )
                 update_sql = source_repo / APP_UPDATE_SQL
                 update_sql.parent.mkdir(parents=True, exist_ok=True)
-                update_sql.write_text("select 1;\n", encoding="utf-8")
+                update_sql.write_text(
+                    "-- simple-deploy: estimated_seconds=3\n"
+                    "select 1;\n",
+                    encoding="utf-8",
+                )
+                missing_time_update_sql = source_repo / DOMAIN_A_UPDATE_SQL
+                missing_time_update_sql.parent.mkdir(parents=True, exist_ok=True)
+                missing_time_update_sql.write_text("select 1;\n", encoding="utf-8")
                 set_default_sql = source_repo / DOMAIN_A_DEFAULT_SQL
                 set_default_sql.parent.mkdir(parents=True, exist_ok=True)
-                set_default_sql.write_text("select 1;\n", encoding="utf-8")
+                set_default_sql.write_text(
+                    "-- Query returned successfully in 1 мин 12 сек.\n"
+                    "select 1;\n",
+                    encoding="utf-8",
+                )
                 (build_scripts_dir / f"run_all_update_parallel_{TEST_COMMIT}.sh").write_text(
                     "#!/usr/bin/env bash\n"
+                    f"# simple-deploy-include: {DOMAIN_A_UPDATE_SQL}\n"
                     f"# simple-deploy-include: {APP_UPDATE_SQL}\n",
                     encoding="utf-8",
                 )
@@ -934,6 +1005,62 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertIn("db_update_parallel_archive", manifest)
         self.assertIn("db_set_default_sequential_archive", manifest)
         self.assertIn("db_set_default_parallel_archive", manifest)
+        self.assertIn("db_data_sql_artifacts", manifest)
+
+        artifacts = manifest["db_data_sql_artifacts"]
+        insert_artifact = artifacts["insert"]
+        self.assertEqual(insert_artifact["archive"], manifest["db_insert_archive"])
+        self.assertEqual(insert_artifact["entrypoint"], f"run_all_insert_{TEST_COMMIT}.sql")
+        self.assertEqual(insert_artifact["script_count"], 2)
+        self.assertEqual(insert_artifact["estimated_total_seconds"], 3.75)
+        self.assertEqual(insert_artifact["estimated_missing_count"], 0)
+        self.assertEqual(
+            insert_artifact["scripts"],
+            [
+                {
+                    "path": APP_SECOND_INSERT_SQL,
+                    "estimated_seconds": 2.5,
+                    "estimated_source": "query_success_comment",
+                },
+                {
+                    "path": APP_INSERT_SQL,
+                    "estimated_seconds": 1.25,
+                    "estimated_source": "simple_deploy_metadata",
+                },
+            ],
+        )
+
+        update_parallel_artifact = artifacts["update_parallel"]
+        self.assertEqual(update_parallel_artifact["archive"], manifest["db_update_parallel_archive"])
+        self.assertEqual(update_parallel_artifact["script_count"], 2)
+        self.assertEqual(update_parallel_artifact["estimated_total_seconds"], 3)
+        self.assertEqual(update_parallel_artifact["estimated_missing_count"], 1)
+        self.assertEqual(
+            update_parallel_artifact["scripts"],
+            [
+                {
+                    "path": DOMAIN_A_UPDATE_SQL,
+                    "estimated_seconds": None,
+                    "estimated_source": None,
+                },
+                {
+                    "path": APP_UPDATE_SQL,
+                    "estimated_seconds": 3.0,
+                    "estimated_source": "simple_deploy_metadata",
+                },
+            ],
+        )
+
+        self.assertEqual(
+            artifacts["set_default_parallel"]["scripts"],
+            [
+                {
+                    "path": DOMAIN_A_DEFAULT_SQL,
+                    "estimated_seconds": 72.0,
+                    "estimated_source": "query_success_comment",
+                }
+            ],
+        )
 
     def test_backend_build_requirements_path_can_be_configured(self):
         """Учитывает BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH при pip install."""

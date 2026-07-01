@@ -26,6 +26,7 @@ SQL-семантика и read-only preflight-правила описаны от
 -- simple-deploy: group=reference
 -- simple-deploy: parallel=false
 -- simple-deploy: critical=true
+-- simple-deploy: estimated_seconds=12.345
 ```
 
 Поддерживаемые поля:
@@ -37,6 +38,9 @@ SQL-семантика и read-only preflight-правила описаны от
   волны.
 - `critical`: должен ли весь batch считаться неуспешным при ошибке этого
   скрипта.
+- `estimated_seconds`: опциональная ориентировочная длительность в секундах.
+  Builder использует ее только для `release_manifest.json`; отсутствие поля не
+  влияет на генерацию `run_all` и не блокирует сборку.
 
 ## Типы kind
 

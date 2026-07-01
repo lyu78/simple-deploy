@@ -20,6 +20,14 @@ VM и не двигает baseline контуров.
 - `release_manifest.json` с версией релиза, commit SHA исходных репозиториев и
   описанием артефактов.
 
+Для data SQL builder дополнительно пишет в `release_manifest.json` блок
+`artifacts.backend_db.db_data_sql_artifacts`: для каждого data artifact там
+указаны archive, entrypoint, количество SQL-файлов, список SQL-файлов в порядке
+entrypoint/runner и best-effort оценка времени выполнения. Оценка времени
+берется из `-- simple-deploy: estimated_seconds=...`, а при отсутствии поля -
+из комментариев вида `Query returned successfully in ...`; отсутствие оценки не
+считается ошибкой сборки.
+
 Такой пакет переносим как набор файлов релиза: его можно передать в runner,
 использовать для ручного SQL-продвижения TEST/PROD или хранить как описание
 конкретной сборки.

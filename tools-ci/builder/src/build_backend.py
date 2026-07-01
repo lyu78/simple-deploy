@@ -43,6 +43,18 @@ logging.basicConfig(level=logging.INFO)
 
 INCLUDE_RE = re.compile(r"^\s*\\i\s+['\"]?([^'\"\s]+)['\"]?")
 SHELL_INCLUDE_RE = re.compile(r"^\s*#\s*simple-deploy-include:\s*([^\s]+)\s*$")
+SQL_METADATA_RE = re.compile(r"^\s*--\s*simple-deploy:\s*([^=]+?)\s*=\s*(.*?)\s*$")
+QUERY_SUCCESS_DURATION_RE = re.compile(
+    r"Query returned successfully in\s+(?P<duration>.+)$",
+    re.IGNORECASE,
+)
+DURATION_PART_RE = re.compile(
+    r"(?P<value>\d+(?:[.,]\d+)?)\s*"
+    r"(?P<unit>milliseconds?|msecs?|msec|ms|hours?|hrs?|hr|h|"
+    r"час(?:ов|а)?|ч|minutes?|mins?|min|мин(?:ут(?:а|ы)?)?|минут|"
+    r"seconds?|secs?|sec|s|сек(?:унд(?:а|ы)?)?|секунд)\b",
+    re.IGNORECASE,
+)
 DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
 DEFAULT_BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH = "requirements.txt"
@@ -319,6 +331,29 @@ def _run_all_include_paths(repo: Path, run_all_sql: Path) -> list[Path]:
     return sorted(set(include_paths))
 
 
+def _ordered_unique_paths(paths: list[Path]) -> list[Path]:
+    """Сохраняет первый occurrence каждого пути для manifest execution plan."""
+    seen: set[Path] = set()
+    ordered_paths: list[Path] = []
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        ordered_paths.append(path)
+    return ordered_paths
+
+
+def _run_all_include_paths_ordered(repo: Path, run_all_sql: Path) -> list[Path]:
+    """Возвращает run_all includes в порядке, в котором entrypoint их выполняет."""
+    include_paths: list[Path] = []
+    for line in run_all_sql.read_text(encoding="utf-8").splitlines():
+        match = INCLUDE_RE.match(line)
+        if not match:
+            continue
+        include_paths.append(_validate_db_script_include_path(repo, run_all_sql, match.group(1)))
+    return _ordered_unique_paths(include_paths)
+
+
 def _add_run_all_includes_to_tar(archive: tarfile.TarFile, repo: Path, run_all_sql: Path) -> None:
     for include_path in _run_all_include_paths(repo, run_all_sql):
         add_file_to_tar(archive, repo / include_path, include_path.as_posix())
@@ -335,9 +370,113 @@ def _shell_runner_include_paths(repo: Path, runner: Path) -> list[Path]:
     return sorted(set(include_paths))
 
 
+def _shell_runner_include_paths_ordered(repo: Path, runner: Path) -> list[Path]:
+    """Возвращает shell runner includes в порядке запуска TASK_PATHS."""
+    include_paths: list[Path] = []
+    for line in runner.read_text(encoding="utf-8").splitlines():
+        match = SHELL_INCLUDE_RE.match(line)
+        if not match:
+            continue
+        include_paths.append(_validate_db_script_include_path(repo, runner, match.group(1)))
+    return _ordered_unique_paths(include_paths)
+
+
 def _add_shell_runner_includes_to_tar(archive: tarfile.TarFile, repo: Path, runner: Path) -> None:
     for include_path in _shell_runner_include_paths(repo, runner):
         add_file_to_tar(archive, repo / include_path, include_path.as_posix())
+
+
+def _parse_duration_seconds(text: str) -> float | None:
+    """Best-effort парсер человекочитаемой длительности в секунды."""
+    total = 0.0
+    matched = False
+    for match in DURATION_PART_RE.finditer(text.strip().rstrip(".;")):
+        matched = True
+        value = float(match.group("value").replace(",", "."))
+        unit = match.group("unit").lower()
+        if unit in {"ms", "msec", "msecs", "millisecond", "milliseconds"}:
+            total += value / 1000
+        elif unit in {"h", "hr", "hrs", "hour", "hours", "ч", "час", "часа", "часов"}:
+            total += value * 3600
+        elif unit.startswith("min") or unit.startswith("мин"):
+            total += value * 60
+        else:
+            total += value
+    if not matched:
+        return None
+    return round(total, 3)
+
+
+def _parse_estimated_seconds_metadata(script_path: Path, value: str) -> float:
+    try:
+        seconds = float(value.replace(",", "."))
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Invalid simple-deploy estimated_seconds in {script_path}: {value}"
+        ) from exc
+    if seconds < 0:
+        raise RuntimeError(
+            f"Invalid simple-deploy estimated_seconds in {script_path}: {value}"
+        )
+    return seconds
+
+
+def _script_estimated_seconds(script_path: Path) -> tuple[float | None, str | None]:
+    """Читает ориентировочную длительность SQL только для manifest metadata."""
+    metadata: dict[str, str] = {}
+    lines = script_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    for line in lines:
+        match = SQL_METADATA_RE.match(line)
+        if match:
+            metadata[match.group(1).strip().lower()] = match.group(2).strip()
+
+    estimated_seconds = metadata.get("estimated_seconds")
+    if estimated_seconds is not None:
+        return (
+            _parse_estimated_seconds_metadata(script_path, estimated_seconds),
+            "simple_deploy_metadata",
+        )
+
+    for line in lines:
+        match = QUERY_SUCCESS_DURATION_RE.search(line)
+        if not match:
+            continue
+        seconds = _parse_duration_seconds(match.group("duration"))
+        if seconds is not None:
+            return seconds, "query_success_comment"
+    return None, None
+
+
+def _data_sql_artifact_manifest(
+    repo: Path,
+    archive_name: str,
+    entrypoint: Path,
+    include_paths: list[Path],
+) -> dict[str, object]:
+    """Собирает человекочитаемый состав data SQL artifact для release manifest."""
+    scripts: list[dict[str, object]] = []
+    for include_path in include_paths:
+        estimated_seconds, estimated_source = _script_estimated_seconds(repo / include_path)
+        scripts.append(
+            {
+                "path": include_path.as_posix(),
+                "estimated_seconds": estimated_seconds,
+                "estimated_source": estimated_source,
+            }
+        )
+    known_estimates = [
+        script["estimated_seconds"]
+        for script in scripts
+        if script["estimated_seconds"] is not None
+    ]
+    return {
+        "archive": archive_name,
+        "entrypoint": entrypoint.name,
+        "script_count": len(scripts),
+        "estimated_total_seconds": round(sum(known_estimates), 3),
+        "estimated_missing_count": len(scripts) - len(known_estimates),
+        "scripts": scripts,
+    }
 
 
 def _create_db_sql_artifact(
@@ -403,6 +542,7 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                 ),
             )
         data_archives: dict[str, str] = {}
+        data_sql_artifacts: dict[str, dict[str, object]] = {}
         if include_data_sql:
             _log_matching_files(
                 build_scripts_dir,
@@ -446,7 +586,7 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                 build_scripts_dir,
                 f"run_all_set_default_parallel_{commit_hash}.sh",
             )
-            data_archives["db_insert_archive"] = _create_db_sql_artifact(
+            insert_archive = _create_db_sql_artifact(
                 release_dir,
                 "insert",
                 build_version,
@@ -456,7 +596,15 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                     _add_run_all_includes_to_tar(archive, source_repo, run_all_insert),
                 ),
             )
-            data_archives["db_update_sequential_archive"] = _create_db_sql_artifact(
+            data_archives["db_insert_archive"] = insert_archive
+            data_sql_artifacts["insert"] = _data_sql_artifact_manifest(
+                source_repo,
+                insert_archive,
+                run_all_insert,
+                _run_all_include_paths_ordered(source_repo, run_all_insert),
+            )
+
+            update_sequential_archive = _create_db_sql_artifact(
                 release_dir,
                 "update_sequential",
                 build_version,
@@ -466,7 +614,15 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                     _add_run_all_includes_to_tar(archive, source_repo, run_all_update_sequential),
                 ),
             )
-            data_archives["db_update_parallel_archive"] = _create_db_sql_artifact(
+            data_archives["db_update_sequential_archive"] = update_sequential_archive
+            data_sql_artifacts["update_sequential"] = _data_sql_artifact_manifest(
+                source_repo,
+                update_sequential_archive,
+                run_all_update_sequential,
+                _run_all_include_paths_ordered(source_repo, run_all_update_sequential),
+            )
+
+            update_parallel_archive = _create_db_sql_artifact(
                 release_dir,
                 "update_parallel",
                 build_version,
@@ -476,7 +632,15 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                     _add_shell_runner_includes_to_tar(archive, source_repo, run_all_update_parallel),
                 ),
             )
-            data_archives["db_set_default_sequential_archive"] = _create_db_sql_artifact(
+            data_archives["db_update_parallel_archive"] = update_parallel_archive
+            data_sql_artifacts["update_parallel"] = _data_sql_artifact_manifest(
+                source_repo,
+                update_parallel_archive,
+                run_all_update_parallel,
+                _shell_runner_include_paths_ordered(source_repo, run_all_update_parallel),
+            )
+
+            set_default_sequential_archive = _create_db_sql_artifact(
                 release_dir,
                 "set_default_sequential",
                 build_version,
@@ -490,7 +654,15 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                     _add_run_all_includes_to_tar(archive, source_repo, run_all_set_default_sequential),
                 ),
             )
-            data_archives["db_set_default_parallel_archive"] = _create_db_sql_artifact(
+            data_archives["db_set_default_sequential_archive"] = set_default_sequential_archive
+            data_sql_artifacts["set_default_sequential"] = _data_sql_artifact_manifest(
+                source_repo,
+                set_default_sequential_archive,
+                run_all_set_default_sequential,
+                _run_all_include_paths_ordered(source_repo, run_all_set_default_sequential),
+            )
+
+            set_default_parallel_archive = _create_db_sql_artifact(
                 release_dir,
                 "set_default_parallel",
                 build_version,
@@ -503,6 +675,13 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                     ),
                     _add_shell_runner_includes_to_tar(archive, source_repo, run_all_set_default_parallel),
                 ),
+            )
+            data_archives["db_set_default_parallel_archive"] = set_default_parallel_archive
+            data_sql_artifacts["set_default_parallel"] = _data_sql_artifact_manifest(
+                source_repo,
+                set_default_parallel_archive,
+                run_all_set_default_parallel,
+                _shell_runner_include_paths_ordered(source_repo, run_all_set_default_parallel),
             )
     finally:
         if previous_baselines is None:
@@ -518,6 +697,8 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
         "db_data_sql_enabled": include_data_sql,
         **data_archives,
     }
+    if data_sql_artifacts:
+        manifest["db_data_sql_artifacts"] = data_sql_artifacts
     return manifest
 
 
