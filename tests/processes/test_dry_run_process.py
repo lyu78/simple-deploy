@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -28,11 +29,56 @@ class DryRunProcessTests(unittest.TestCase):
         self.assertIn("APP_VM_HOST", keys)
 
     def test_dry_run_returns_config_failure_when_env_loading_fails(self):
-        with patch(
-            "simple_deploy.processes.dry_run.load_env",
-            side_effect=RuntimeError("bad env"),
-        ):
-            result = dry_run(DryRunRequest())
+        with patch("simple_deploy.processes.dry_run.require_dry_run_local_files"):
+            with patch(
+                "simple_deploy.processes.dry_run.load_env",
+                side_effect=RuntimeError("bad env"),
+            ):
+                result = dry_run(DryRunRequest())
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.details["stage"], "config")
+
+    def test_dry_run_fails_when_local_secrets_file_is_missing_even_app_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_file = root / ".env"
+            config_file = root / "windows_pipeline.local.json"
+            secrets_file = root / "local.secrets.env"
+            env_file.write_text("DEV_DOMAIN=dev.example.local\n", encoding="utf-8")
+            config_file.write_text("{}", encoding="utf-8")
+
+            result = dry_run(
+                DryRunRequest(
+                    env_file=env_file,
+                    secrets_file=secrets_file,
+                    config_file=config_file,
+                    app_only=True,
+                )
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.details["stage"], "config")
+
+    def test_dry_run_fails_when_runtime_config_file_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_file = root / ".env"
+            config_file = root / "windows_pipeline.local.json"
+            secrets_file = root / "local.secrets.env"
+            env_file.write_text("DEV_DOMAIN=dev.example.local\n", encoding="utf-8")
+            secrets_file.write_text(
+                "DB_LOGIN_USER=postgres\nDB_LOGIN_PASSWORD=secret\n",
+                encoding="utf-8",
+            )
+
+            result = dry_run(
+                DryRunRequest(
+                    env_file=env_file,
+                    secrets_file=secrets_file,
+                    config_file=config_file,
+                )
+            )
 
         self.assertFalse(result.ok)
         self.assertEqual(result.details["stage"], "config")
@@ -45,21 +91,26 @@ class DryRunProcessTests(unittest.TestCase):
             "outlook_email_enabled": False,
         }
 
-        with patch("simple_deploy.processes.dry_run.load_env", return_value=env) as load_env_mock:
-            with patch(
-                "simple_deploy.processes.dry_run.load_runtime_config",
-                return_value=(runtime, []),
-            ):
+        with patch("simple_deploy.processes.dry_run.require_dry_run_local_files"):
+            load_env_patch = patch(
+                "simple_deploy.processes.dry_run.load_env",
+                return_value=env,
+            )
+            with load_env_patch as load_env_mock:
                 with patch(
-                    "simple_deploy.processes.dry_run.check_runtime_config",
-                    return_value=True,
+                    "simple_deploy.processes.dry_run.load_runtime_config",
+                    return_value=(runtime, []),
                 ):
                     with patch(
-                        "simple_deploy.processes.dry_run.check_ssh_runtime",
-                        return_value={"app": False, "db": False},
+                        "simple_deploy.processes.dry_run.check_runtime_config",
+                        return_value=True,
                     ):
-                        with self._patched_read_only_checks() as calls:
-                            result = dry_run(DryRunRequest(app_only=True))
+                        with patch(
+                            "simple_deploy.processes.dry_run.check_ssh_runtime",
+                            return_value={"app": False, "db": False},
+                        ):
+                            with self._patched_read_only_checks() as calls:
+                                result = dry_run(DryRunRequest(app_only=True))
 
         self.assertTrue(result.ok)
         load_env_mock.assert_called_once()
@@ -75,23 +126,27 @@ class DryRunProcessTests(unittest.TestCase):
             "outlook_email_enabled": False,
         }
 
-        with patch("simple_deploy.processes.dry_run.load_env", return_value=env):
+        with patch("simple_deploy.processes.dry_run.require_dry_run_local_files"):
             with patch(
-                "simple_deploy.processes.dry_run.load_runtime_config",
-                return_value=(runtime, []),
+                "simple_deploy.processes.dry_run.load_env",
+                return_value=env,
             ):
                 with patch(
-                    "simple_deploy.processes.dry_run.check_runtime_config",
-                    return_value=True,
+                    "simple_deploy.processes.dry_run.load_runtime_config",
+                    return_value=(runtime, []),
                 ):
                     with patch(
-                        "simple_deploy.processes.dry_run.check_ssh_runtime",
-                        return_value={"app": False, "db": False},
+                        "simple_deploy.processes.dry_run.check_runtime_config",
+                        return_value=True,
                     ):
-                        with self._patched_read_only_checks() as calls:
-                            result = dry_run(
-                                DryRunRequest(skip_data_sql_artifacts=True)
-                            )
+                        with patch(
+                            "simple_deploy.processes.dry_run.check_ssh_runtime",
+                            return_value={"app": False, "db": False},
+                        ):
+                            with self._patched_read_only_checks() as calls:
+                                result = dry_run(
+                                    DryRunRequest(skip_data_sql_artifacts=True)
+                                )
 
         self.assertTrue(result.ok)
         calls["check_backend_data_insert_idempotency"].assert_not_called()
@@ -104,21 +159,26 @@ class DryRunProcessTests(unittest.TestCase):
             "outlook_email_enabled": False,
         }
 
-        with patch("simple_deploy.processes.dry_run.load_env", return_value=env):
-            with patch(
-                "simple_deploy.processes.dry_run.load_runtime_config",
-                return_value=(runtime, []),
-            ):
+        with patch("simple_deploy.processes.dry_run.require_dry_run_local_files"):
+            load_env_patch = patch(
+                "simple_deploy.processes.dry_run.load_env",
+                return_value=env,
+            )
+            with load_env_patch:
                 with patch(
-                    "simple_deploy.processes.dry_run.check_runtime_config",
-                    return_value=True,
+                    "simple_deploy.processes.dry_run.load_runtime_config",
+                    return_value=(runtime, []),
                 ):
                     with patch(
-                        "simple_deploy.processes.dry_run.check_ssh_runtime",
-                        side_effect=RuntimeError("ssh unavailable"),
+                        "simple_deploy.processes.dry_run.check_runtime_config",
+                        return_value=True,
                     ):
-                        with self._patched_read_only_checks():
-                            result = dry_run(DryRunRequest())
+                        with patch(
+                            "simple_deploy.processes.dry_run.check_ssh_runtime",
+                            side_effect=RuntimeError("ssh unavailable"),
+                        ):
+                            with self._patched_read_only_checks():
+                                result = dry_run(DryRunRequest())
 
         self.assertFalse(result.ok)
         self.assertEqual(result.message, "dry-run checks failed")

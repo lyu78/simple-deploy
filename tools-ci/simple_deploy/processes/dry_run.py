@@ -53,6 +53,7 @@ def dry_run(request: DryRunRequest) -> ProcessResult:
     reporter = Reporter()
     app_only = request.app_only
     try:
+        require_dry_run_local_files(request)
         env = load_env(
             request.env_file,
             request.secrets_file,
@@ -230,4 +231,21 @@ def required_env_keys(app_only: bool = False) -> list[str]:
     return keys
 
 
-__all__ = ["dry_run", "required_env_keys"]
+def require_dry_run_local_files(request: DryRunRequest) -> None:
+    """Проверяет наличие локальных файлов, без которых dry-run неинформативен.
+
+    ``--app-only`` ослабляет проверку DB credentials внутри secrets-файла, но
+    сам локальный secrets-файл и runtime JSON должны существовать, иначе
+    preflight не подтверждает готовность рабочей машины к реальному запуску.
+    """
+    for label, path in (
+        ("local secrets env", request.secrets_file),
+        ("runtime config", request.config_file),
+    ):
+        if not path.exists():
+            raise RuntimeError(f"Файл {label} не найден: {path}")
+        if not path.is_file():
+            raise RuntimeError(f"Путь {label} не является файлом: {path}")
+
+
+__all__ = ["dry_run", "required_env_keys", "require_dry_run_local_files"]
