@@ -194,6 +194,8 @@ class _PatchedDryRunChecks:
             "check_windows_command",
             "check_ssh_key_files",
             "check_repo",
+            "check_repository_pairs",
+            "check_schema_baselines",
             "check_origin_network",
             "check_backend_build_inputs",
             "check_backend_data_insert_idempotency",

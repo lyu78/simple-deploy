@@ -136,16 +136,15 @@ def parse_args() -> argparse.Namespace:
         "--include-data-sql",
         action="store_true",
         help=(
-            "Deprecated no-op: data SQL artifacts are checked and built "
-            "by default."
+            "Устаревший no-op: SQL из docs исключены из сборки."
         ),
     )
     dry_run_parser.add_argument(
         "--skip-data-sql-artifacts",
         action="store_true",
         help=(
-            "Skip data SQL artifact validation for an explicit "
-            "schema-only run."
+            "Устаревший no-op: сборка содержит только "
+            "schema SQL из Django-миграций."
         ),
     )
     dry_run_parser.add_argument("--app-only", action="store_true")
@@ -154,14 +153,14 @@ def parse_args() -> argparse.Namespace:
     build_parser.add_argument(
         "--include-data-sql",
         action="store_true",
-        help="Deprecated no-op: data SQL artifacts are built by default.",
+        help="Устаревший no-op: SQL из docs исключены из сборки.",
     )
     build_parser.add_argument(
         "--skip-data-sql-artifacts",
         action="store_true",
         help=(
-            "Skip data SQL artifact generation for an explicit "
-            "schema-only build."
+            "Устаревший no-op: сборка содержит только "
+            "schema SQL из Django-миграций."
         ),
     )
 
@@ -195,32 +194,31 @@ def parse_args() -> argparse.Namespace:
         "--include-data-migration-sql",
         action="store_true",
         help=(
-            "Run insert/update data SQL migration steps in deploy phase. "
-            "Disabled by default."
+            "Не поддерживается в новом pipeline и завершится ошибкой. "
+            "Для старого data SQL-пакета используйте deploy."
         ),
     )
     pipeline_parser.add_argument(
         "--include-set-default-sql",
         action="store_true",
         help=(
-            "Run the separate kind=set_default data SQL step. "
-            "Requires --include-data-migration-sql. Disabled by default."
+            "Не поддерживается в новом pipeline и завершится ошибкой. "
+            "Для старого data SQL-пакета используйте deploy."
         ),
     )
     pipeline_parser.add_argument(
         "--include-data-sql",
         action="store_true",
         help=(
-            "Deprecated no-op: data SQL artifacts are checked and built "
-            "by default."
+            "Устаревший no-op: SQL из docs исключены из сборки."
         ),
     )
     pipeline_parser.add_argument(
         "--skip-data-sql-artifacts",
         action="store_true",
         help=(
-            "Skip data SQL artifact validation/generation for an "
-            "explicit schema-only run."
+            "Устаревший no-op: сборка содержит только "
+            "schema SQL из Django-миграций."
         ),
     )
     pipeline_parser.add_argument("--app-only", action="store_true")

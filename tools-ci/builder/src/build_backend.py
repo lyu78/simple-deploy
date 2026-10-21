@@ -31,11 +31,11 @@ from src.infra import (
     git_pull,
 )
 from simple_deploy.registry.state import CONTOURS, connect_state_db, get_contour_state
+from simple_deploy.core.repositories import require_distinct_repositories
 from src.utils import (
     add_file_to_tar,
     get_required_env,
     git_output,
-    one_match,
     to_git_bash_path,
 )
 
@@ -59,7 +59,6 @@ DATABASE_SCRIPTS_PREFIX = Path("docs/database/scripts")
 BUILD_SCRIPTS_DIR_NAME = "build_scripts"
 DEFAULT_BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH = "requirements.txt"
 DEFAULT_BACKEND_APP_ROOT_DIR = "example_backend_app"
-INCLUDE_DATA_SQL_ENV = "SIMPLE_DEPLOY_INCLUDE_DATA_SQL"
 PIP_TRUSTED_HOSTS = (
     "pypi.org",
     "files.pythonhosted.org",
@@ -156,7 +155,7 @@ def _prepare_build_scripts(repo_path: Path) -> Path:
     target_dir.mkdir(parents=True)
 
     try:
-        for script_path in source_dir.glob("*.py"):
+        for script_path in [source_dir / "create_sql_migrations.py"]:
             _log_build_step(f"copy generator: {script_path.name} -> {target_dir / script_path.name}")
             shutil.copy2(script_path, target_dir / script_path.name)
     except Exception:
@@ -227,8 +226,8 @@ def _backend_app_root_dir() -> str:
 
 
 def _include_data_sql_artifacts() -> bool:
-    value = os.environ.get(INCLUDE_DATA_SQL_ENV, "").strip().lower()
-    return value not in {"0", "false", "no", "off"}
+    """Сборка data SQL отложена; переменная старого runner-а её не включает."""
+    return False
 
 
 def _pip_trusted_host_args() -> list[str]:
@@ -280,13 +279,10 @@ def _run_artifact_generator(source_repo_path: Path, python_path: Path, script_na
 
 
 def _run_additional_artifact_generators(source_repo_path: Path, build_scripts_dir: Path) -> None:
-    """Запускает SQL artifact generators через backend source virtualenv."""
+    """Запускает только schema SQL generator через backend source virtualenv."""
     python_path = _prepare_backend_build_python(source_repo_path)
     _run_artifact_generator(source_repo_path, python_path, "create_sql_migrations.py")
-    if _include_data_sql_artifacts():
-        _run_artifact_generator(source_repo_path, python_path, "create_run_all_sql.py")
-    else:
-        _log_build_step("skip data SQL artifacts: disabled by --skip-data-sql-artifacts")
+    _log_build_step("SQL из docs исключены из сборки")
 
 
 def _require_schema_metadata_after_generator(build_scripts_dir: Path) -> Path:
@@ -497,37 +493,31 @@ def _create_db_sql_artifact(
 
 
 def _create_db_migrations_archives(source_repo_path: str, build_version: str) -> dict[str, object]:
-    """Создает отдельные schema/insert/update DB archives для текущего backend commit."""
+    """Собирает только schema SQL из Django-миграций для всех контуров.
+
+    Data SQL из docs больше не являются частью release build. Источники
+    schema — backend source и сохранённые baseline; реальная БД не опрашивается.
+    """
     source_repo = Path(source_repo_path)
     release_dir = Path(get_required_env("RELEASE_ROOT_WINDOWS")) / build_version
     release_dir.mkdir(parents=True, exist_ok=True)
-
     commit_hash = git_output(source_repo_path, "rev-parse", "--short", "HEAD")
     build_scripts_dir = _prepare_build_scripts(source_repo)
     previous_baselines = os.environ.get("SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON")
-    include_data_sql = _include_data_sql_artifacts()
-
     try:
         os.environ["SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"] = _schema_baselines_json()
         python_path = _prepare_backend_build_python(source_repo)
         _run_artifact_generator(source_repo, python_path, "create_sql_migrations.py")
-        schema_metadata_path = _require_schema_metadata_after_generator(build_scripts_dir)
-        if include_data_sql:
-            _run_artifact_generator(source_repo, python_path, "create_run_all_sql.py")
-        else:
-            _log_build_step("skip data SQL artifacts: disabled by --skip-data-sql-artifacts")
-
+        metadata_path = _require_schema_metadata_after_generator(build_scripts_dir)
         _log_matching_files(
             build_scripts_dir,
             "summary_sql_*_*.sql",
             "schema summary SQL",
         )
-
-        schema_metadata = json.loads(schema_metadata_path.read_text(encoding="utf-8"))
+        schema_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         schema_archives: dict[str, str] = {}
         for contour in CONTOURS:
-            contour_metadata = schema_metadata["contours"][contour]
-            schema_sql = build_scripts_dir / contour_metadata["entrypoint"]
+            schema_sql = build_scripts_dir / schema_metadata["contours"][contour]["entrypoint"]
             if not schema_sql.is_file():
                 raise RuntimeError(f"Schema SQL was not generated for {contour}: {schema_sql}")
             schema_archives[contour] = _create_db_sql_artifact(
@@ -535,153 +525,7 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
                 f"schema_{contour}",
                 build_version,
                 commit_hash,
-                lambda archive: add_file_to_tar(
-                    archive,
-                    schema_sql,
-                    schema_sql.name,
-                ),
-            )
-        data_archives: dict[str, str] = {}
-        data_sql_artifacts: dict[str, dict[str, object]] = {}
-        if include_data_sql:
-            _log_matching_files(
-                build_scripts_dir,
-                f"run_all_insert_{commit_hash}.sql",
-                "run_all insert SQL",
-            )
-            _log_matching_files(
-                build_scripts_dir,
-                f"run_all_update_sequential_{commit_hash}.sql",
-                "run_all update sequential SQL",
-            )
-            _log_matching_files(
-                build_scripts_dir,
-                f"run_all_update_parallel_{commit_hash}.sh",
-                "run_all update parallel runner",
-            )
-            _log_matching_files(
-                build_scripts_dir,
-                f"run_all_set_default_sequential_{commit_hash}.sql",
-                "run_all set_default sequential SQL",
-            )
-            _log_matching_files(
-                build_scripts_dir,
-                f"run_all_set_default_parallel_{commit_hash}.sh",
-                "run_all set_default parallel runner",
-            )
-            run_all_insert = one_match(build_scripts_dir, f"run_all_insert_{commit_hash}.sql")
-            run_all_update_sequential = one_match(
-                build_scripts_dir,
-                f"run_all_update_sequential_{commit_hash}.sql",
-            )
-            run_all_update_parallel = one_match(
-                build_scripts_dir,
-                f"run_all_update_parallel_{commit_hash}.sh",
-            )
-            run_all_set_default_sequential = one_match(
-                build_scripts_dir,
-                f"run_all_set_default_sequential_{commit_hash}.sql",
-            )
-            run_all_set_default_parallel = one_match(
-                build_scripts_dir,
-                f"run_all_set_default_parallel_{commit_hash}.sh",
-            )
-            insert_archive = _create_db_sql_artifact(
-                release_dir,
-                "insert",
-                build_version,
-                commit_hash,
-                lambda archive: (
-                    add_file_to_tar(archive, run_all_insert, run_all_insert.name),
-                    _add_run_all_includes_to_tar(archive, source_repo, run_all_insert),
-                ),
-            )
-            data_archives["db_insert_archive"] = insert_archive
-            data_sql_artifacts["insert"] = _data_sql_artifact_manifest(
-                source_repo,
-                insert_archive,
-                run_all_insert,
-                _run_all_include_paths_ordered(source_repo, run_all_insert),
-            )
-
-            update_sequential_archive = _create_db_sql_artifact(
-                release_dir,
-                "update_sequential",
-                build_version,
-                commit_hash,
-                lambda archive: (
-                    add_file_to_tar(archive, run_all_update_sequential, run_all_update_sequential.name),
-                    _add_run_all_includes_to_tar(archive, source_repo, run_all_update_sequential),
-                ),
-            )
-            data_archives["db_update_sequential_archive"] = update_sequential_archive
-            data_sql_artifacts["update_sequential"] = _data_sql_artifact_manifest(
-                source_repo,
-                update_sequential_archive,
-                run_all_update_sequential,
-                _run_all_include_paths_ordered(source_repo, run_all_update_sequential),
-            )
-
-            update_parallel_archive = _create_db_sql_artifact(
-                release_dir,
-                "update_parallel",
-                build_version,
-                commit_hash,
-                lambda archive: (
-                    add_file_to_tar(archive, run_all_update_parallel, run_all_update_parallel.name),
-                    _add_shell_runner_includes_to_tar(archive, source_repo, run_all_update_parallel),
-                ),
-            )
-            data_archives["db_update_parallel_archive"] = update_parallel_archive
-            data_sql_artifacts["update_parallel"] = _data_sql_artifact_manifest(
-                source_repo,
-                update_parallel_archive,
-                run_all_update_parallel,
-                _shell_runner_include_paths_ordered(source_repo, run_all_update_parallel),
-            )
-
-            set_default_sequential_archive = _create_db_sql_artifact(
-                release_dir,
-                "set_default_sequential",
-                build_version,
-                commit_hash,
-                lambda archive: (
-                    add_file_to_tar(
-                        archive,
-                        run_all_set_default_sequential,
-                        run_all_set_default_sequential.name,
-                    ),
-                    _add_run_all_includes_to_tar(archive, source_repo, run_all_set_default_sequential),
-                ),
-            )
-            data_archives["db_set_default_sequential_archive"] = set_default_sequential_archive
-            data_sql_artifacts["set_default_sequential"] = _data_sql_artifact_manifest(
-                source_repo,
-                set_default_sequential_archive,
-                run_all_set_default_sequential,
-                _run_all_include_paths_ordered(source_repo, run_all_set_default_sequential),
-            )
-
-            set_default_parallel_archive = _create_db_sql_artifact(
-                release_dir,
-                "set_default_parallel",
-                build_version,
-                commit_hash,
-                lambda archive: (
-                    add_file_to_tar(
-                        archive,
-                        run_all_set_default_parallel,
-                        run_all_set_default_parallel.name,
-                    ),
-                    _add_shell_runner_includes_to_tar(archive, source_repo, run_all_set_default_parallel),
-                ),
-            )
-            data_archives["db_set_default_parallel_archive"] = set_default_parallel_archive
-            data_sql_artifacts["set_default_parallel"] = _data_sql_artifact_manifest(
-                source_repo,
-                set_default_parallel_archive,
-                run_all_set_default_parallel,
-                _shell_runner_include_paths_ordered(source_repo, run_all_set_default_parallel),
+                lambda archive: add_file_to_tar(archive, schema_sql, schema_sql.name),
             )
     finally:
         if previous_baselines is None:
@@ -689,17 +533,12 @@ def _create_db_migrations_archives(source_repo_path: str, build_version: str) ->
         else:
             os.environ["SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"] = previous_baselines
         _cleanup_build_scripts(build_scripts_dir)
-
-    manifest = {
+    return {
         "backend_commit_short_hash": commit_hash,
         "db_schema_archives": schema_archives,
         "db_schema_metadata": schema_metadata,
-        "db_data_sql_enabled": include_data_sql,
-        **data_archives,
+        "db_data_sql_enabled": False,
     }
-    if data_sql_artifacts:
-        manifest["db_data_sql_artifacts"] = data_sql_artifacts
-    return manifest
 
 
 def build_backend(
@@ -711,6 +550,8 @@ def build_backend(
 
     repo1_path = get_required_env("BACKEND_SOURCE_REPO_PATH")
     repo2_path = get_required_env("BACKEND_TARGET_REPO_PATH")
+
+    require_distinct_repositories(repo1_path, repo2_path, "backend source/target")
 
     if not check_repo(repo1_path):
         sys.exit(1)

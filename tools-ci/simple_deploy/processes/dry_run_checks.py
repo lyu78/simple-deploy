@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import closing
 from pathlib import Path
 import re
+import sqlite3
 import shlex
 import ssl
 from typing import Iterable
@@ -24,6 +26,8 @@ from simple_deploy.core.email import (
 from simple_deploy.core.env import require_value
 from simple_deploy.core.job_logging import job_log
 from simple_deploy.core.paths import DEFAULT_TIMEOUT, ROOT
+from simple_deploy.core.repositories import validate_build_repository_pairs
+from simple_deploy.registry.state import CONTOURS, default_state_db_path
 from simple_deploy.core.ssh import resolve_ssh_key_path, sh_quote, ssh_command
 from simple_deploy.release.artifacts import DEFAULT_MAINTENANCE_STUB_ARCHIVE
 from simple_deploy.types.fields import (
@@ -201,6 +205,69 @@ def check_repo(reporter: Reporter, name: str, path_value: str) -> str:
     return origin_url
 
 
+def check_repository_pairs(reporter: Reporter, env: dict[str, str]) -> None:
+    """Проверяет запрет source=target без Git и файловых изменений."""
+    try:
+        validate_build_repository_pairs(env)
+    except (RuntimeError, OSError) as exc:
+        reporter.fail("source/target repositories", str(exc))
+    else:
+        reporter.pass_("source/target repositories", "рабочие копии различаются")
+
+
+def check_schema_baselines(reporter: Reporter, env: dict[str, str]) -> None:
+    """Проверяет SQL baseline в существующей SQLite и source Git history.
+
+    Не создаёт базу и не меняет baseline. Источник истины — сохранённые SHA;
+    реальная БД приложения не опрашивается. Ветка dev соответствует builder-у.
+    """
+    db_path = Path(env.get("SIMPLE_DEPLOY_STATE_DB") or default_state_db_path()).resolve()
+    if not db_path.is_file():
+        reporter.fail("schema baselines", f"база runner-а не найдена: {db_path}")
+        return
+    try:
+        with closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)) as connection:
+            states = dict(connection.execute(
+                "SELECT contour, last_success_backend_commit FROM contour_state"
+            ))
+    except sqlite3.Error as exc:
+        reporter.fail("schema baselines", str(exc))
+        return
+    if not env.get("BACKEND_SOURCE_REPO_PATH", "").strip():
+        reporter.fail("schema baselines", "BACKEND_SOURCE_REPO_PATH не задан")
+        return
+    repo = Path(env["BACKEND_SOURCE_REPO_PATH"])
+    branch = run_command(
+        ["git", "--no-replace-objects", "rev-parse", "--verify", "dev^{commit}"],
+        cwd=repo,
+    )
+    if branch.rc:
+        reporter.fail("schema baselines", "source-ветка dev недоступна; проверьте рабочую копию")
+        return
+    target = branch.stdout.strip()
+    for contour in CONTOURS:
+        name = f"schema baseline {contour}"
+        commit = states.get(contour, "")
+        if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit):
+            reporter.fail(name, "baseline не задан или SHA некорректен")
+            continue
+        exists = run_command(
+            ["git", "--no-replace-objects", "rev-parse", "--verify", f"{commit}^{{commit}}"],
+            cwd=repo,
+        )
+        if exists.rc:
+            reporter.fail(name, "SHA отсутствует в backend source; после переписывания истории используйте remap_commits")
+            continue
+        ancestor = run_command(
+            ["git", "--no-replace-objects", "merge-base", "--is-ancestor", exists.stdout.strip(), target],
+            cwd=repo,
+        )
+        if ancestor.rc:
+            reporter.fail(name, "SHA не принадлежит истории source dev; проверьте baseline и commit-map")
+        else:
+            reporter.pass_(name, commit)
+
+
 def check_backend_build_inputs(
     reporter: Reporter, env: dict[str, str]
 ) -> None:
@@ -246,6 +313,12 @@ def check_backend_build_inputs(
             "BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH="
             f"{requirements_relative_path!r} не найден: {requirements_path}",
         )
+
+    manage_path = app_root_path / "manage.py"
+    if manage_path.is_file():
+        reporter.pass_("backend manage.py", str(manage_path))
+    else:
+        reporter.fail("backend manage.py", f"не найден: {manage_path}")
 
     venv_activate_path = source_repo / Path(venv_relative_path)
     python_path = venv_activate_path.parent / "python.exe"

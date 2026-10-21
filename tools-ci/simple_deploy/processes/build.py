@@ -21,18 +21,21 @@ from simple_deploy.core.commands import stream_command
 from simple_deploy.core.env import load_env
 from simple_deploy.core.job_logging import job_log
 from simple_deploy.core.paths import BUILDER_ROOT, INCLUDE_DATA_SQL_ENV
+from simple_deploy.core.repositories import validate_build_repository_pairs
 
 
 def build(request: BuildRequest) -> ProcessResult:
     """Запускает builder/create_release.py с подготовленным окружением.
 
     Команда не пишет baseline и не фиксирует deploy state. Она только запускает
-    процесс сборки, передавая builder-у флаг ``SIMPLE_DEPLOY_INCLUDE_DATA_SQL``
-    согласно типизированному request текущего runner-а.
+    процесс сборки после проверки source/target. Старый флаг
+    ``SIMPLE_DEPLOY_INCLUDE_DATA_SQL`` всегда передаётся со значением ``0``:
+    data SQL из docs исключены из новых сборок.
     """
     env = load_env(
         request.env_file, request.secrets_file, require_secrets=False
     )
+    validate_build_repository_pairs(env)
     job_log("BUILD prepare frontend env files")
     prepare_frontend_env_files(env)
     build_env = prepare_build_env(env)

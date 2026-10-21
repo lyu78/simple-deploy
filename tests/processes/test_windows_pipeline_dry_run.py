@@ -46,6 +46,7 @@ class WindowsPipelineDryRunTests(WindowsPipelineTestCase):
             app_root = source_repo / BACKEND_APP_ROOT
             venv_scripts = source_repo / ".venv" / "Scripts"
             app_root.mkdir(parents=True)
+            (app_root / "manage.py").write_text("", encoding="utf-8")
             venv_scripts.mkdir(parents=True)
             (source_repo / "requirements.txt").write_text("Django==4.2\n", encoding="utf-8")
             python_path = venv_scripts / "python.exe"

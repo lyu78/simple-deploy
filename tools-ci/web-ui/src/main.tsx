@@ -124,7 +124,6 @@ type JobFormState = {
   latest: boolean;
   includeDataMigrationSql: boolean;
   includeSetDefaultSql: boolean;
-  skipDataSqlArtifacts: boolean;
   appOnly: boolean;
 };
 
@@ -165,7 +164,6 @@ const defaultForm: JobFormState = {
   latest: true,
   includeDataMigrationSql: false,
   includeSetDefaultSql: false,
-  skipDataSqlArtifacts: false,
   appOnly: false
 };
 
@@ -191,14 +189,14 @@ function jobPayload(form: JobFormState): Record<string, unknown> {
   const timeout = Number.parseInt(form.timeout, 10) || 3600;
   if (form.kind === "dry_run") {
     return {
-      skip_data_sql_artifacts: form.skipDataSqlArtifacts,
+      skip_data_sql_artifacts: true,
       app_only: form.appOnly
     };
   }
   if (form.kind === "build") {
     return {
       timeout,
-      skip_data_sql_artifacts: form.skipDataSqlArtifacts
+      skip_data_sql_artifacts: true
     };
   }
   if (form.kind === "deploy") {
@@ -215,9 +213,9 @@ function jobPayload(form: JobFormState): Record<string, unknown> {
     return {
       timeout,
       contour: form.contour,
-      include_data_migration_sql: form.includeDataMigrationSql,
-      include_set_default_sql: form.includeDataMigrationSql && form.includeSetDefaultSql,
-      skip_data_sql_artifacts: form.skipDataSqlArtifacts,
+      include_data_migration_sql: false,
+      include_set_default_sql: false,
+      skip_data_sql_artifacts: true,
       app_only: form.appOnly
     };
   }
@@ -548,7 +546,7 @@ function JobCreateForm({
         </label>
       ) : null}
       <div className="check-group">
-        {["deploy", "pipeline"].includes(form.kind) ? (
+        {form.kind === "deploy" ? (
           <label className="check-row">
             <input
               type="checkbox"
@@ -559,10 +557,10 @@ function JobCreateForm({
                 includeSetDefaultSql: event.target.checked ? current.includeSetDefaultSql : false
               }))}
             />
-            Include data migration SQL
+            Data SQL из старого релиза
           </label>
         ) : null}
-        {["deploy", "pipeline"].includes(form.kind) ? (
+        {form.kind === "deploy" ? (
           <label className="check-row">
             <input
               type="checkbox"
@@ -570,14 +568,11 @@ function JobCreateForm({
               disabled={!form.includeDataMigrationSql}
               onChange={(event) => setForm((current) => ({ ...current, includeSetDefaultSql: event.target.checked }))}
             />
-            Include set_default SQL
+            set_default SQL из старого релиза
           </label>
         ) : null}
         {["dry_run", "build", "pipeline"].includes(form.kind) ? (
-          <label className="check-row">
-            <input type="checkbox" checked={form.skipDataSqlArtifacts} onChange={(event) => setForm((current) => ({ ...current, skipDataSqlArtifacts: event.target.checked }))} />
-            Skip data SQL artifacts
-          </label>
+          <p>В сборку входит SQL схемы из Django-миграций. Скрипты данных из docs не включаются.</p>
         ) : null}
         {["dry_run", "deploy", "pipeline"].includes(form.kind) ? (
           <label className="check-row">

@@ -1,6 +1,7 @@
 import os
 import shutil
 import logging
+from simple_deploy.core.repositories import require_distinct_repositories
 
 INCLUDE_ITEM = [".git", ".venv"]
 EXCLUDE_ITEM = [".git", ".venv", "archives", "build", "build_scripts", "node_modules"]
@@ -42,6 +43,7 @@ def clear_directory_contents(directory_path):
 
 def copy_directory_contents(src_path, dst_path):
     """Копирует содержимое из src_path в dst_path, исключая .git"""
+    require_distinct_repositories(src_path, dst_path, "Копирование source/target")
     logging.info(f"\n--- Копирую содержимое из {src_path} в {dst_path} ---")
 
     if not os.path.exists(src_path):
@@ -90,6 +92,7 @@ def _remove_path(path):
 
 def sync_source_top_level_items(src_path, dst_path):
     """Синхронизирует target только по top-level элементам, которые есть в source."""
+    require_distinct_repositories(src_path, dst_path, "Синхронизация source/target")
     logging.info(f"\n--- Синхронизирую top-level элементы из {src_path} в {dst_path} ---")
 
     if not os.path.exists(src_path):

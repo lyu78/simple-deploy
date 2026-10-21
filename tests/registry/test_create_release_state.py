@@ -39,7 +39,11 @@ class CreateReleaseStateTests(unittest.TestCase):
         """RuntimeError во время build_backend записывает failed build attempt."""
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / STATE_DB_NAME
-            env = {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}
+            env = {
+                "SIMPLE_DEPLOY_STATE_DB": str(db_path),
+                **{f"{component}_{role}_REPO_PATH": str(Path(tmp) / f"{component}-{role}")
+                   for component in ("BACKEND", "FRONTEND") for role in ("SOURCE", "TARGET")},
+            }
 
             with patch.dict(os.environ, env, clear=True):
                 with patch("create_release.get_new_build_version", return_value=TEST_BUILD_VERSION):
@@ -59,7 +63,11 @@ class CreateReleaseStateTests(unittest.TestCase):
         """SystemExit во время build_backend тоже фиксируется как failed attempt."""
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / STATE_DB_NAME
-            env = {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}
+            env = {
+                "SIMPLE_DEPLOY_STATE_DB": str(db_path),
+                **{f"{component}_{role}_REPO_PATH": str(Path(tmp) / f"{component}-{role}")
+                   for component in ("BACKEND", "FRONTEND") for role in ("SOURCE", "TARGET")},
+            }
 
             with patch.dict(os.environ, env, clear=True):
                 with patch("create_release.get_new_build_version", return_value=TEST_BUILD_VERSION):
@@ -87,7 +95,11 @@ class CreateReleaseStateTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / STATE_DB_NAME
-            env = {"SIMPLE_DEPLOY_STATE_DB": str(db_path)}
+            env = {
+                "SIMPLE_DEPLOY_STATE_DB": str(db_path),
+                **{f"{component}_{role}_REPO_PATH": str(Path(tmp) / f"{component}-{role}")
+                   for component in ("BACKEND", "FRONTEND") for role in ("SOURCE", "TARGET")},
+            }
 
             with patch.dict(os.environ, env, clear=True):
                 with patch("create_release.get_new_build_version", return_value=TEST_BUILD_VERSION):

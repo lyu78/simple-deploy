@@ -117,12 +117,27 @@ class ApplicationServiceTests(unittest.TestCase):
                     getattr(request, expected_attr),
                 )
 
+    def test_pipeline_rejects_data_flags_before_any_phase(self):
+        """Новый pipeline не начинает работу с запросом data SQL из docs."""
+        for flag in ("include_data_migration_sql", "include_set_default_sql"):
+            with self.subTest(flag=flag):
+                with (
+                    patch("simple_deploy.application.services._dry_run_process") as preflight,
+                    patch("simple_deploy.application.services._build_process") as build,
+                    patch("simple_deploy.application.services._deploy_process") as deploy,
+                ):
+                    with self.assertRaisesRegex(ValueError, "только schema SQL"):
+                        services.pipeline(PipelineRequest(**{flag: True}))
+                preflight.assert_not_called()
+                build.assert_not_called()
+                deploy.assert_not_called()
+
     def test_pipeline_builds_phase_requests_without_mutating_source(self):
         request = PipelineRequest(
             timeout=77,
             contour=ContourCodeEnum.TEST,
-            include_set_default_sql=True,
-            include_data_migration_sql=True,
+            include_set_default_sql=False,
+            include_data_migration_sql=False,
             skip_data_sql_artifacts=True,
             app_only=True,
         )
@@ -152,8 +167,8 @@ class ApplicationServiceTests(unittest.TestCase):
         self.assertTrue(deploy_args.latest)
         self.assertEqual(deploy_args.build_version, "")
         self.assertEqual(deploy_args.contour, ContourCodeEnum.TEST)
-        self.assertTrue(deploy_args.include_set_default_sql)
-        self.assertTrue(deploy_args.include_data_migration_sql)
+        self.assertFalse(deploy_args.include_set_default_sql)
+        self.assertFalse(deploy_args.include_data_migration_sql)
         self.assertTrue(deploy_args.app_only)
 
 

@@ -107,6 +107,11 @@ def deploy(request: DeployRequest) -> int:
 
 def pipeline_result(request: PipelineRequest) -> ProcessResult:
     """Выполняет dry-run, build и deploy latest как один use case."""
+    if request.include_data_migration_sql or request.include_set_default_sql:
+        raise ValueError(
+            "Pipeline собирает только schema SQL из Django-миграций. "
+            "Data SQL из docs отложены; старые пакеты доступны через deploy."
+        )
     dry_run_check = dry_run_result(_pipeline_dry_run_request(request))
     if not dry_run_check.ok:
         return dry_run_check

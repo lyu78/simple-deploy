@@ -319,7 +319,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         custom_requirements.write_text("Django==4.2\n", encoding="utf-8")
 
         with patch.dict("os.environ", {}, clear=True):
-            self.assertTrue(_include_data_sql_artifacts())
+            self.assertFalse(_include_data_sql_artifacts())
             self.assertEqual(_backend_app_root_dir(), "example_backend_app")
             self.assertEqual(
                 _backend_build_requirements_path(source_repo),
@@ -400,7 +400,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertTrue(build_scripts_dir.is_dir())
         self.assertFalse(stale_file.exists())
         self.assertTrue((build_scripts_dir / "create_sql_migrations.py").is_file())
-        self.assertTrue((build_scripts_dir / "create_run_all_sql.py").is_file())
+        self.assertFalse((build_scripts_dir / "create_run_all_sql.py").exists())
 
         _cleanup_build_scripts(build_scripts_dir)
 
@@ -699,7 +699,7 @@ class BuildBackendArtifactTests(unittest.TestCase):
                     _ensure_backend_build_venv(source_repo)
 
     def test_artifact_generators_run_through_source_venv_python(self):
-        """Запускает pip/schema/run_all generators через python из source repo venv."""
+        """Запускает pip/schema generators через python из source repo venv."""
         source_repo = self.root / "source"
         source_repo.mkdir()
         activate_path = source_repo / ".venv/Scripts/activate.bat"
@@ -720,10 +720,9 @@ class BuildBackendArtifactTests(unittest.TestCase):
             with patch("src.build_backend._run_logged_command") as run_mock:
                 _run_additional_artifact_generators(source_repo, build_scripts_dir)
 
-        self.assertEqual(run_mock.call_count, 3)
+        self.assertEqual(run_mock.call_count, 2)
         pip_install_args, pip_install_kwargs = run_mock.call_args_list[0]
         schema_args, schema_kwargs = run_mock.call_args_list[1]
-        run_all_args, run_all_kwargs = run_mock.call_args_list[2]
         self.assertEqual(pip_install_args[0][0], str(python_path))
         self.assertEqual(pip_install_args[0][1:4], ["-m", "pip", "install"])
         self.assertIn("--disable-pip-version-check", pip_install_args[0])
@@ -735,12 +734,8 @@ class BuildBackendArtifactTests(unittest.TestCase):
         self.assertEqual(schema_args[0][0], str(python_path))
         self.assertIn("-Xutf8", schema_args[0])
         self.assertIn(str(build_scripts_dir / "create_sql_migrations.py"), schema_args[0])
-        self.assertEqual(run_all_args[0][0], str(python_path))
-        self.assertIn("-Xutf8", run_all_args[0])
-        self.assertIn(str(build_scripts_dir / "create_run_all_sql.py"), run_all_args[0])
         self.assertEqual(pip_install_kwargs["cwd"], source_repo)
         self.assertEqual(schema_kwargs["cwd"], source_repo)
-        self.assertEqual(run_all_kwargs["cwd"], source_repo)
 
     def test_artifact_generators_skip_data_sql_when_explicitly_disabled(self):
         """При SIMPLE_DEPLOY_INCLUDE_DATA_SQL=0 пропускает run_all data SQL generator."""
@@ -793,58 +788,68 @@ class BuildBackendArtifactTests(unittest.TestCase):
         run_mock.assert_called_once()
         self.assertEqual(run_mock.call_args.args[2], "create_sql_migrations.py")
 
-    def test_db_migrations_archives_skip_data_sql_when_explicitly_disabled(self):
-        """Schema archives остаются, а data SQL archives не пишутся при явном skip."""
-        source_repo = self.root / "source"
-        source_repo.mkdir()
-        build_scripts_dir = source_repo / "build_scripts"
-        build_scripts_dir.mkdir()
-        python_path = source_repo / ".venv/Scripts/python.exe"
+    def test_db_migrations_archives_always_exclude_data_sql(self):
+        """Без docs собирает три schema archive при любом значении legacy-флага."""
+        for flag in ("", "0", "1"):
+            with self.subTest(flag=flag):
+                source_repo = self.root / ("source-" + flag)
+                source_repo.mkdir()
+                build_scripts_dir = source_repo / "build_scripts"
+                build_scripts_dir.mkdir()
+                python_path = source_repo / ".venv/Scripts/python.exe"
 
-        def fake_run_artifact_generator(*args):
-            script_name = args[2]
-            self.assertEqual(script_name, "create_sql_migrations.py")
-            metadata = {
-                "contours": {
-                    "dev": {"entrypoint": "summary_sql_dev_abc.sql"},
-                    "test": {"entrypoint": "summary_sql_test_abc.sql"},
-                    "prod": {"entrypoint": "summary_sql_prod_abc.sql"},
+                def fake_run_artifact_generator(*args):
+                    script_name = args[2]
+                    self.assertEqual(script_name, "create_sql_migrations.py")
+                    metadata = {
+                        "contours": {
+                            "dev": {"entrypoint": "summary_sql_dev_abc.sql"},
+                            "test": {"entrypoint": "summary_sql_test_abc.sql"},
+                            "prod": {"entrypoint": "summary_sql_prod_abc.sql"},
+                        }
+                    }
+                    (build_scripts_dir / "schema_migrations_metadata.json").write_text(
+                        json.dumps(metadata),
+                        encoding="utf-8",
+                    )
+                    for contour in ("dev", "test", "prod"):
+                        (build_scripts_dir / f"summary_sql_{contour}_abc.sql").write_text(
+                            "select 1;\n",
+                            encoding="utf-8",
+                        )
+
+                env = {
+                    "RELEASE_ROOT_WINDOWS": str(self.release_dir),
+                    **({"SIMPLE_DEPLOY_INCLUDE_DATA_SQL": flag} if flag else {}),
                 }
-            }
-            (build_scripts_dir / "schema_migrations_metadata.json").write_text(
-                json.dumps(metadata),
-                encoding="utf-8",
-            )
-            for contour in ("dev", "test", "prod"):
-                (build_scripts_dir / f"summary_sql_{contour}_abc.sql").write_text(
-                    "select 1;\n",
-                    encoding="utf-8",
-                )
+                with patch.dict("os.environ", env, clear=True):
+                    with patch("src.build_backend.git_output", return_value=TEST_COMMIT):
+                        with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
+                            with patch("src.build_backend._schema_baselines_json", return_value="{}"):
+                                with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
+                                    with patch(
+                                        "src.build_backend._run_artifact_generator",
+                                        side_effect=fake_run_artifact_generator,
+                                    ) as run_mock:
+                                        manifest = _create_db_migrations_archives(str(source_repo), TEST_BUILD_VERSION)
 
-        env = {
-            "RELEASE_ROOT_WINDOWS": str(self.release_dir),
-            "SIMPLE_DEPLOY_INCLUDE_DATA_SQL": "0",
-        }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("src.build_backend.git_output", return_value=TEST_COMMIT):
-                with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
-                    with patch("src.build_backend._schema_baselines_json", return_value="{}"):
-                        with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
-                            with patch(
-                                "src.build_backend._run_artifact_generator",
-                                side_effect=fake_run_artifact_generator,
-                            ) as run_mock:
-                                manifest = _create_db_migrations_archives(str(source_repo), TEST_BUILD_VERSION)
+                run_mock.assert_called_once()
+                self.assertFalse(manifest["db_data_sql_enabled"])
+                self.assertNotIn("db_insert_archive", manifest)
+                self.assertNotIn("db_update_sequential_archive", manifest)
+                self.assertNotIn("db_update_parallel_archive", manifest)
+                self.assertNotIn("db_set_default_sequential_archive", manifest)
+                self.assertNotIn("db_set_default_parallel_archive", manifest)
+                self.assertNotIn("db_data_sql_artifacts", manifest)
+                self.assertEqual(set(manifest["db_schema_archives"]), {"dev", "test", "prod"})
 
-        run_mock.assert_called_once()
-        self.assertFalse(manifest["db_data_sql_enabled"])
-        self.assertNotIn("db_insert_archive", manifest)
-        self.assertNotIn("db_update_sequential_archive", manifest)
-        self.assertNotIn("db_update_parallel_archive", manifest)
-        self.assertNotIn("db_set_default_sequential_archive", manifest)
-        self.assertNotIn("db_set_default_parallel_archive", manifest)
-        self.assertNotIn("db_data_sql_artifacts", manifest)
-        self.assertEqual(set(manifest["db_schema_archives"]), {"dev", "test", "prod"})
+                self.assertFalse(build_scripts_dir.exists())
+                release_dir = self.release_dir / TEST_BUILD_VERSION
+                self.assertEqual(len(list(release_dir.glob("*.tar.gz"))), 3)
+                for contour, archive_name in manifest["db_schema_archives"].items():
+                    with tarfile.open(release_dir / archive_name) as archive:
+                        self.assertEqual(archive.getnames(), [f"summary_sql_{contour}_abc.sql"])
+                        self.assertEqual(archive.extractfile(archive.getnames()[0]).read().splitlines(), [b"select 1;"])
 
     def test_db_migrations_archives_reports_missing_schema_sql_and_restores_baseline_env(self):
         """Missing schema entrypoint падает и возвращает прежний baseline env."""
@@ -894,173 +899,6 @@ class BuildBackendArtifactTests(unittest.TestCase):
                 os.environ["SIMPLE_DEPLOY_SCHEMA_BASELINES_JSON"],
                 '{"old": "baseline"}',
             )
-
-    def test_db_migrations_archives_include_data_sql_by_default(self):
-        """По умолчанию builder добавляет schema, insert/update/set_default data SQL archives."""
-        source_repo = self.root / "source"
-        source_repo.mkdir()
-        build_scripts_dir = source_repo / "build_scripts"
-        build_scripts_dir.mkdir()
-        python_path = source_repo / ".venv/Scripts/python.exe"
-
-        def fake_run_artifact_generator(*args):
-            script_name = args[2]
-            if script_name == "create_sql_migrations.py":
-                metadata = {
-                    "contours": {
-                        "dev": {"entrypoint": "summary_sql_dev_abc.sql"},
-                        "test": {"entrypoint": "summary_sql_test_abc.sql"},
-                        "prod": {"entrypoint": "summary_sql_prod_abc.sql"},
-                    }
-                }
-                (build_scripts_dir / "schema_migrations_metadata.json").write_text(
-                    json.dumps(metadata),
-                    encoding="utf-8",
-                )
-                for contour in ("dev", "test", "prod"):
-                    (build_scripts_dir / f"summary_sql_{contour}_abc.sql").write_text(
-                        "select 1;\n",
-                        encoding="utf-8",
-                    )
-            elif script_name == "create_run_all_sql.py":
-                (build_scripts_dir / f"run_all_insert_{TEST_COMMIT}.sql").write_text(
-                    "\\set ON_ERROR_STOP 1\n"
-                    f"\\i '{APP_SECOND_INSERT_SQL}'\n"
-                    f"\\i '{APP_INSERT_SQL}'\n",
-                    encoding="utf-8",
-                )
-                (build_scripts_dir / f"run_all_update_sequential_{TEST_COMMIT}.sql").write_text(
-                    "\\set ON_ERROR_STOP 1\n"
-                    f"\\i '{APP_UPDATE_SQL}'\n"
-                    f"\\i '{DOMAIN_A_UPDATE_SQL}'\n",
-                    encoding="utf-8",
-                )
-                (build_scripts_dir / f"run_all_set_default_sequential_{TEST_COMMIT}.sql").write_text(
-                    "\\set ON_ERROR_STOP 1\n"
-                    f"\\i '{DOMAIN_A_DEFAULT_SQL}'\n",
-                    encoding="utf-8",
-                )
-                insert_sql = source_repo / APP_INSERT_SQL
-                insert_sql.parent.mkdir(parents=True, exist_ok=True)
-                insert_sql.write_text(
-                    "-- simple-deploy: estimated_seconds=1.25\n"
-                    "select 1;\n",
-                    encoding="utf-8",
-                )
-                second_insert_sql = source_repo / APP_SECOND_INSERT_SQL
-                second_insert_sql.parent.mkdir(parents=True, exist_ok=True)
-                second_insert_sql.write_text(
-                    "-- Query returned successfully in 2 sec 500 msec.\n"
-                    "select 1;\n",
-                    encoding="utf-8",
-                )
-                update_sql = source_repo / APP_UPDATE_SQL
-                update_sql.parent.mkdir(parents=True, exist_ok=True)
-                update_sql.write_text(
-                    "-- simple-deploy: estimated_seconds=3\n"
-                    "select 1;\n",
-                    encoding="utf-8",
-                )
-                missing_time_update_sql = source_repo / DOMAIN_A_UPDATE_SQL
-                missing_time_update_sql.parent.mkdir(parents=True, exist_ok=True)
-                missing_time_update_sql.write_text("select 1;\n", encoding="utf-8")
-                set_default_sql = source_repo / DOMAIN_A_DEFAULT_SQL
-                set_default_sql.parent.mkdir(parents=True, exist_ok=True)
-                set_default_sql.write_text(
-                    "-- Query returned successfully in 1 мин 12 сек.\n"
-                    "select 1;\n",
-                    encoding="utf-8",
-                )
-                (build_scripts_dir / f"run_all_update_parallel_{TEST_COMMIT}.sh").write_text(
-                    "#!/usr/bin/env bash\n"
-                    f"# simple-deploy-include: {DOMAIN_A_UPDATE_SQL}\n"
-                    f"# simple-deploy-include: {APP_UPDATE_SQL}\n",
-                    encoding="utf-8",
-                )
-                (build_scripts_dir / f"run_all_set_default_parallel_{TEST_COMMIT}.sh").write_text(
-                    "#!/usr/bin/env bash\n"
-                    f"# simple-deploy-include: {DOMAIN_A_DEFAULT_SQL}\n",
-                    encoding="utf-8",
-                )
-
-        with patch.dict("os.environ", {"RELEASE_ROOT_WINDOWS": str(self.release_dir)}, clear=True):
-            with patch("src.build_backend.git_output", return_value=TEST_COMMIT):
-                with patch("src.build_backend._prepare_build_scripts", return_value=build_scripts_dir):
-                    with patch("src.build_backend._schema_baselines_json", return_value="{}"):
-                        with patch("src.build_backend._prepare_backend_build_python", return_value=python_path):
-                            with patch(
-                                "src.build_backend._run_artifact_generator",
-                                side_effect=fake_run_artifact_generator,
-                            ) as run_mock:
-                                manifest = _create_db_migrations_archives(str(source_repo), TEST_BUILD_VERSION)
-
-        self.assertEqual(
-            [call.args[2] for call in run_mock.call_args_list],
-            ["create_sql_migrations.py", "create_run_all_sql.py"],
-        )
-        self.assertTrue(manifest["db_data_sql_enabled"])
-        self.assertIn("db_insert_archive", manifest)
-        self.assertNotIn("db_update_archive", manifest)
-        self.assertIn("db_update_sequential_archive", manifest)
-        self.assertIn("db_update_parallel_archive", manifest)
-        self.assertIn("db_set_default_sequential_archive", manifest)
-        self.assertIn("db_set_default_parallel_archive", manifest)
-        self.assertIn("db_data_sql_artifacts", manifest)
-
-        artifacts = manifest["db_data_sql_artifacts"]
-        insert_artifact = artifacts["insert"]
-        self.assertEqual(insert_artifact["archive"], manifest["db_insert_archive"])
-        self.assertEqual(insert_artifact["entrypoint"], f"run_all_insert_{TEST_COMMIT}.sql")
-        self.assertEqual(insert_artifact["script_count"], 2)
-        self.assertEqual(insert_artifact["estimated_total_seconds"], 3.75)
-        self.assertEqual(insert_artifact["estimated_missing_count"], 0)
-        self.assertEqual(
-            insert_artifact["scripts"],
-            [
-                {
-                    "path": APP_SECOND_INSERT_SQL,
-                    "estimated_seconds": 2.5,
-                    "estimated_source": "query_success_comment",
-                },
-                {
-                    "path": APP_INSERT_SQL,
-                    "estimated_seconds": 1.25,
-                    "estimated_source": "simple_deploy_metadata",
-                },
-            ],
-        )
-
-        update_parallel_artifact = artifacts["update_parallel"]
-        self.assertEqual(update_parallel_artifact["archive"], manifest["db_update_parallel_archive"])
-        self.assertEqual(update_parallel_artifact["script_count"], 2)
-        self.assertEqual(update_parallel_artifact["estimated_total_seconds"], 3)
-        self.assertEqual(update_parallel_artifact["estimated_missing_count"], 1)
-        self.assertEqual(
-            update_parallel_artifact["scripts"],
-            [
-                {
-                    "path": DOMAIN_A_UPDATE_SQL,
-                    "estimated_seconds": None,
-                    "estimated_source": None,
-                },
-                {
-                    "path": APP_UPDATE_SQL,
-                    "estimated_seconds": 3.0,
-                    "estimated_source": "simple_deploy_metadata",
-                },
-            ],
-        )
-
-        self.assertEqual(
-            artifacts["set_default_parallel"]["scripts"],
-            [
-                {
-                    "path": DOMAIN_A_DEFAULT_SQL,
-                    "estimated_seconds": 72.0,
-                    "estimated_source": "query_success_comment",
-                }
-            ],
-        )
 
     def test_backend_build_requirements_path_can_be_configured(self):
         """Учитывает BACKEND_BUILD_REQUIREMENTS_RELATIVE_PATH при pip install."""

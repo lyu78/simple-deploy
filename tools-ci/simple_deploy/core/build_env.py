@@ -100,8 +100,8 @@ def prepare_frontend_env_files(
 
 
 def data_sql_artifacts_enabled(skip_data_sql_artifacts: bool) -> bool:
-    """Возвращает, нужно ли builder-у генерировать data SQL artifacts."""
-    return not skip_data_sql_artifacts
+    """Data SQL из docs исключены из сборки; старый флаг оставлен совместимым."""
+    return False
 
 
 __all__ = [

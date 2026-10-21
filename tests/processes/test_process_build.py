@@ -73,6 +73,9 @@ class ProcessBuildTests(unittest.TestCase):
             skip_data_sql_artifacts=False,
         )
         env = {
+            "BACKEND_TARGET_REPO_PATH": "backend-target",
+            "FRONTEND_SOURCE_REPO_PATH": "frontend-source",
+            "FRONTEND_TARGET_REPO_PATH": "frontend-target",
             "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
             "DEV_DOMAIN": DEV_DOMAIN,
         }
@@ -111,11 +114,11 @@ class ProcessBuildTests(unittest.TestCase):
             stream_mock.call_args.kwargs["env"][
                 "SIMPLE_DEPLOY_INCLUDE_DATA_SQL"
             ],
-            "1",
+            "0",
         )
 
-    def test_build_enables_data_sql_by_default(self):
-        """Build по умолчанию включает генерацию data SQL artifacts."""
+    def test_build_excludes_data_sql_by_default(self):
+        """Build по умолчанию исключает генерацию data SQL artifacts."""
         args = Namespace(
             env_file=DEFAULT_ENV_FILE,
             secrets_file=DEFAULT_SECRETS_FILE,
@@ -124,6 +127,9 @@ class ProcessBuildTests(unittest.TestCase):
             skip_data_sql_artifacts=False,
         )
         env = {
+            "BACKEND_TARGET_REPO_PATH": "backend-target",
+            "FRONTEND_SOURCE_REPO_PATH": "frontend-source",
+            "FRONTEND_TARGET_REPO_PATH": "frontend-target",
             "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
             "DEV_DOMAIN": DEV_DOMAIN,
         }
@@ -136,7 +142,7 @@ class ProcessBuildTests(unittest.TestCase):
                     self.assertEqual(build(args), 0)
 
         build_env = stream_mock.call_args.kwargs["env"]
-        self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "1")
+        self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "0")
 
     def test_build_skips_data_sql_with_explicit_flag(self):
         """Build выключает data SQL generation по явному CLI flag."""
@@ -148,6 +154,9 @@ class ProcessBuildTests(unittest.TestCase):
             skip_data_sql_artifacts=True,
         )
         env = {
+            "BACKEND_TARGET_REPO_PATH": "backend-target",
+            "FRONTEND_SOURCE_REPO_PATH": "frontend-source",
+            "FRONTEND_TARGET_REPO_PATH": "frontend-target",
             "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
             "DEV_DOMAIN": DEV_DOMAIN,
         }

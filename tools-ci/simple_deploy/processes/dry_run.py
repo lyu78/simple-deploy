@@ -2,7 +2,7 @@
 
 Модуль фиксирует orchestration preflight-проверок перед build/deploy: чтение
 локальных конфигов, проверку обязательных env-ключей, runtime config,
-доступности SSH/DB, репозиториев, idempotency data SQL и HTTP/Outlook
+доступности SSH/DB, репозиториев, source baseline и HTTP/Outlook
 настроек. На этом срезе helper-ы остаются в compatibility runner-е, чтобы
 перенос ``dry_run`` не смешивался с переносом config/core/SSH слоев.
 """
@@ -35,6 +35,8 @@ from simple_deploy.processes.dry_run_checks import (
     check_origin_network,
     check_outlook_email_config,
     check_repo,
+    check_repository_pairs,
+    check_schema_baselines,
     check_service_permissions,
     check_ssh_key_files,
     check_ssh_runtime,
@@ -108,6 +110,7 @@ def dry_run(request: DryRunRequest) -> ProcessResult:
 
     check_ssh_key_files(reporter, env, app_only=app_only)
 
+    check_repository_pairs(reporter, env)
     topology = runtime_topology_from_legacy_env(env)
     origins_by_id = {
         origin.origin_id: origin for origin in topology.source_origins
@@ -128,12 +131,16 @@ def dry_run(request: DryRunRequest) -> ProcessResult:
         check_origin_network(reporter, f"{name} origin network", origin_url)
 
     check_backend_build_inputs(reporter, env)
+    if not app_only:
+        check_schema_baselines(reporter, env)
+    else:
+        reporter.skip("schema baselines", "app-only: DB schema не применяется")
     if data_sql_artifacts_enabled(request.skip_data_sql_artifacts):
         check_backend_data_insert_idempotency(reporter, env)
     else:
         reporter.skip(
             "backend data INSERT idempotency",
-            "data SQL artifacts disabled by --skip-data-sql-artifacts",
+            "SQL из docs исключены из сборки; отдельный процесс отложен в backlog",
         )
     if runtime_config_ok:
         check_outlook_email_config(reporter, runtime)

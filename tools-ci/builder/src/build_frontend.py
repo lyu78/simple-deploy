@@ -3,6 +3,7 @@
 from datetime import datetime
 import logging
 import sys
+from simple_deploy.core.repositories import require_distinct_repositories
 
 from src.infra import (
     git_checkout_dev,
@@ -37,6 +38,8 @@ def build_frontend(
 
     REPO1_PATH = get_required_env("FRONTEND_SOURCE_REPO_PATH")
     REPO2_PATH = get_required_env("FRONTEND_TARGET_REPO_PATH")
+
+    require_distinct_repositories(REPO1_PATH, REPO2_PATH, "frontend source/target")
 
     if not check_repo(REPO1_PATH):
         sys.exit(1)

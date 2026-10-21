@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import subprocess
 import sys
 
@@ -25,6 +26,7 @@ from simple_deploy.release.manifest import (
 
 from src.build_backend import build_backend
 from src.build_frontend import build_frontend
+from simple_deploy.core.repositories import validate_build_repository_pairs
 
 
 def git_output(repo_path: str, *args: str) -> str:
@@ -116,6 +118,7 @@ def main() -> int:
     )
 
     try:
+        validate_build_repository_pairs(os.environ)
         backend_artifacts = build_backend(
             build_version=build_version,
             branch_name=branch_name,

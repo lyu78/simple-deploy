@@ -75,8 +75,8 @@ class DryRunRequest(_EnvFilesRequestBase):
     skip_data_sql_artifacts: StrictBool = Field(
         default=False,
         description=(
-            "Отключает проверку data SQL artifacts для явного schema-only "
-            "запуска."
+            "Устаревшее поле совместимости: data SQL из docs всегда "
+            "исключены из проверки и сборки."
         ),
     )
     app_only: StrictBool = Field(
@@ -94,8 +94,8 @@ class BuildRequest(_TimedEnvFilesRequestBase):
     skip_data_sql_artifacts: StrictBool = Field(
         default=False,
         description=(
-            "Отключает генерацию data SQL artifacts для явной schema-only "
-            "сборки."
+            "Устаревшее поле совместимости: data SQL из docs всегда "
+            "исключены из сборки."
         ),
     )
 
@@ -168,20 +168,22 @@ class PipelineRequest(_TimedEnvFilesRequestBase):
     include_set_default_sql: StrictBool = Field(
         default=False,
         description=(
-            "Включает SQL artifacts вида set_default в deploy фазе pipeline."
+            "Устаревшее поле: true отклоняется до запуска pipeline. "
+            "Для старых data SQL-пакетов используйте deploy."
         ),
     )
     include_data_migration_sql: StrictBool = Field(
         default=False,
         description=(
-            "Включает data SQL migration artifacts insert/update в deploy фазе pipeline."
+            "Устаревшее поле: true отклоняется до запуска pipeline. "
+            "Для старых data SQL-пакетов используйте deploy."
         ),
     )
     skip_data_sql_artifacts: StrictBool = Field(
         default=False,
         description=(
-            "Отключает data SQL artifact checks/generation в dry-run и build "
-            "фазах pipeline."
+            "Устаревшее поле совместимости: data SQL из docs всегда "
+            "исключены из pipeline."
         ),
     )
     app_only: StrictBool = Field(

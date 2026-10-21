@@ -119,8 +119,8 @@ class BuildEnvTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Не найден frontend template"):
                     prepare_frontend_env_files(env)
 
-    def test_data_sql_artifacts_enabled_is_inverse_of_skip_flag(self):
-        self.assertTrue(data_sql_artifacts_enabled(False))
+    def test_data_sql_artifacts_are_disabled_for_both_legacy_flag_values(self):
+        self.assertFalse(data_sql_artifacts_enabled(False))
         self.assertFalse(data_sql_artifacts_enabled(True))
 
 
