@@ -1,0 +1,2 @@
+/remap-commits.sh text eol=lf
+/tools-ci/simple_deploy/registry/commit_maps/*.map text eol=lf

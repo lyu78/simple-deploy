@@ -12,8 +12,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools-ci"))
 
+from simple_deploy.cli import remap_commits as cli  # noqa: E402
 from simple_deploy.cli.remap_commits import main  # noqa: E402
 from simple_deploy.registry import commit_remap as remap  # noqa: E402
+from simple_deploy.registry import state  # noqa: E402
 from simple_deploy.registry.state import connect_state_db  # noqa: E402
 
 
@@ -325,3 +327,122 @@ def test_cli_reports_deleted_mapping_without_writing(inputs, capsys):
     )
     assert "Перенос заблокирован" in capsys.readouterr().out
     assert snapshot(db_path) == before
+
+
+@pytest.fixture
+def configured_runner(inputs, tmp_path, monkeypatch):
+    """Настройки отдельного runner-а без доступа к рабочим путям машины."""
+    db_path, map_path, repo = inputs
+    env_file = tmp_path / "runner.env"
+    env_file.write_text(
+        f'BACKEND_SOURCE_REPO_PATH="{repo.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "DEFAULT_ENV_FILE", env_file)
+    monkeypatch.setattr(cli, "BUNDLED_COMMIT_MAP", map_path)
+    monkeypatch.setenv("SIMPLE_DEPLOY_STATE_DB", str(db_path))
+    return inputs, env_file
+
+
+def test_cli_without_paths_reads_config_applies_and_repeats(
+    configured_runner, source, capsys
+):
+    (db_path, _, _), _ = configured_runner
+    before = snapshot(db_path)
+    assert main([]) == 0
+    assert "Предварительный просмотр" in capsys.readouterr().out
+    assert snapshot(db_path) == before
+    assert not list(db_path.parent.glob("*.before-commit-remap-*.sqlite3"))
+
+    assert main(["--apply"]) == 0
+    assert "Резервная копия" in capsys.readouterr().out
+    with closing(sqlite3.connect(db_path)) as con:
+        assert con.execute(
+            "SELECT last_success_backend_commit FROM contour_state "
+            "WHERE contour='dev'"
+        ).fetchone()[0] == source[2]
+    backups = list(db_path.parent.glob("*.before-commit-remap-*.sqlite3"))
+    assert len(backups) == 1
+    assert snapshot(backups[0]) == before
+
+    after = snapshot(db_path)
+    assert main(["--apply"]) == 0
+    assert "Изменения не требуются" in capsys.readouterr().out
+    assert snapshot(db_path) == after
+    assert list(db_path.parent.glob("*.before-commit-remap-*.sqlite3")) == backups
+
+
+def test_cli_without_db_uses_registry_default_path(
+    inputs, monkeypatch, capsys
+):
+    db_path, map_path, repo = inputs
+    monkeypatch.delenv("SIMPLE_DEPLOY_STATE_DB", raising=False)
+    monkeypatch.setattr(state, "default_state_db_path", lambda: db_path)
+    before = snapshot(db_path)
+    assert main([
+        "--commit-map", str(map_path), "--source-repo", str(repo),
+    ]) == 0
+    assert str(db_path.resolve()) in capsys.readouterr().out
+    assert snapshot(db_path) == before
+
+
+@pytest.mark.parametrize("broken_input", ["map", "env", "source", "db"])
+def test_cli_auto_paths_fail_closed(
+    configured_runner, broken_input, monkeypatch, tmp_path, capsys
+):
+    (db_path, _, _), env_file = configured_runner
+    before = snapshot(db_path)
+    if broken_input == "map":
+        monkeypatch.setattr(cli, "BUNDLED_COMMIT_MAP", tmp_path / "missing.map")
+    elif broken_input == "env":
+        monkeypatch.setattr(cli, "DEFAULT_ENV_FILE", tmp_path / "missing.env")
+    elif broken_input == "source":
+        env_file.write_text("BACKEND_SOURCE_REPO_PATH=\n", encoding="utf-8")
+    else:
+        monkeypatch.setenv("SIMPLE_DEPLOY_STATE_DB", str(tmp_path / "missing.db"))
+    assert main(["--apply"]) == 1
+    assert "Ошибка переноса baseline" in capsys.readouterr().err
+    assert snapshot(db_path) == before
+    assert not list(db_path.parent.glob("*.before-commit-remap-*.sqlite3"))
+    assert not (tmp_path / "missing.db").exists()
+
+
+def test_cli_conflicting_database_setting_requires_explicit_path(
+    configured_runner, tmp_path, capsys
+):
+    (db_path, _, _), env_file = configured_runner
+    with env_file.open("a", encoding="utf-8") as stream:
+        stream.write(
+            f'SIMPLE_DEPLOY_STATE_DB="{(tmp_path / "other.db").as_posix()}"\n'
+        )
+    before = snapshot(db_path)
+    assert main(["--apply"]) == 1
+    assert "Укажите нужную рабочую базу" in capsys.readouterr().err
+    assert snapshot(db_path) == before
+    assert main(["--db", str(db_path)]) == 0
+
+
+def test_cli_explicit_paths_override_all_automatic_inputs(
+    configured_runner, tmp_path, monkeypatch, capsys
+):
+    (db_path, map_path, repo), _ = configured_runner
+    monkeypatch.setattr(cli, "BUNDLED_COMMIT_MAP", tmp_path / "missing.map")
+    monkeypatch.setattr(cli, "DEFAULT_ENV_FILE", tmp_path / "missing.env")
+    monkeypatch.setenv("SIMPLE_DEPLOY_STATE_DB", str(tmp_path / "missing.db"))
+    before = snapshot(db_path)
+    assert main([
+        "--db", str(db_path), "--commit-map", str(map_path),
+        "--source-repo", str(repo),
+    ]) == 0
+    assert "Предварительный просмотр" in capsys.readouterr().out
+    assert snapshot(db_path) == before
+
+
+def test_bundled_map_is_the_complete_pinned_rewrite():
+    """Ресурс поставки содержит исходную карту, включая удалённые commits."""
+    mapping, digest = remap.read_commit_map(cli.BUNDLED_COMMIT_MAP)
+    assert digest == (
+        "1ff2787de44097e70005f9a828c292883348e967636c0a74e65fbd8bdac68134"
+    )
+    assert len(mapping) == 4632
+    assert sum(target == "0" * 40 for target in mapping.values()) == 804

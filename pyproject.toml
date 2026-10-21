@@ -18,6 +18,9 @@ package-dir = {"" = "tools-ci"}
 where = ["tools-ci"]
 include = ["simple_deploy*"]
 
+[tool.setuptools.package-data]
+"simple_deploy.registry" = ["commit_maps/*.map"]
+
 [tool.ruff]
 line-length = 79
 
