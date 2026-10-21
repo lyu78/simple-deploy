@@ -446,3 +446,195 @@ def test_bundled_map_is_the_complete_pinned_rewrite():
     )
     assert len(mapping) == 4632
     assert sum(target == "0" * 40 for target in mapping.values()) == 804
+
+
+@pytest.fixture
+def interrupted_inputs(inputs):
+    """Прерванные записи трёх типов рядом с очередью и успешной историей."""
+    with closing(sqlite3.connect(inputs[0])) as con:
+        for table, status in (
+            ("local_jobs", "running"),
+            ("build_attempts", "started"),
+            ("deployment_attempts", "started"),
+            ("local_jobs", "queued"),
+        ):
+            columns = con.execute(f"PRAGMA table_info({table})").fetchall()
+            names = [row[1] for row in columns if row[1] != "id"]
+            values = [status if name == "status" else "example" for name in names]
+            con.execute(
+                f"INSERT INTO {table} ({','.join(names)}) "
+                f"VALUES ({','.join('?' for _ in names)})",
+                values,
+            )
+        con.commit()
+    return inputs
+
+
+def test_interrupted_preview_requires_explicit_flag_and_never_writes(
+    interrupted_inputs,
+):
+    before = snapshot(interrupted_inputs[0])
+    blocked = remap.inspect_remap(*interrupted_inputs)
+    assert not blocked.valid
+    assert len(blocked.blockers) == 3
+    assert len(blocked.incomplete_operations) == 3
+    plan = remap.inspect_remap(*interrupted_inputs, close_interrupted=True)
+    assert plan.valid
+    assert plan.incomplete_operations == blocked.incomplete_operations
+    assert snapshot(interrupted_inputs[0]) == before
+    assert not list(interrupted_inputs[0].parent.glob("*.before-commit-remap-*"))
+
+
+@pytest.mark.parametrize("wal", [False, True])
+def test_close_interrupted_backups_preserves_other_fields_and_repeats(
+    interrupted_inputs, wal
+):
+    db_path = interrupted_inputs[0]
+    with closing(sqlite3.connect(db_path)) as keeper:
+        if wal:
+            keeper.execute("PRAGMA journal_mode=WAL")
+            keeper.execute("UPDATE releases SET created_at='committed in WAL'")
+            keeper.commit()
+        before = snapshot(db_path)
+        plan = remap.inspect_remap(*interrupted_inputs, close_interrupted=True)
+        backup = remap.apply_remap(plan)
+        assert snapshot(backup) == before
+        with closing(sqlite3.connect(db_path)) as con:
+            con.row_factory = sqlite3.Row
+            with closing(sqlite3.connect(backup)) as old:
+                old.row_factory = sqlite3.Row
+                for table in (
+                    "local_jobs", "build_attempts", "deployment_attempts",
+                ):
+                    after = con.execute(
+                        f"SELECT * FROM {table} ORDER BY id"
+                    ).fetchall()
+                    original = old.execute(
+                        f"SELECT * FROM {table} ORDER BY id"
+                    ).fetchall()
+                    assert len(after) == len(original)
+                    for row, previous in zip(after, original):
+                        if previous["status"] not in {"running", "started"}:
+                            assert dict(row) == dict(previous)
+                            continue
+                        assert row["status"] == "failed"
+                        assert row["finished_at"] != previous["finished_at"]
+                        assert row["error"].startswith(previous["error"] + "\n")
+                        assert "--close-interrupted" in row["error"]
+                        for key in previous.keys():
+                            if key not in {"status", "error", "finished_at"}:
+                                assert row[key] == previous[key]
+                assert con.execute("SELECT * FROM releases").fetchall() == (
+                    old.execute("SELECT * FROM releases").fetchall()
+                )
+                assert {
+                    row[0] for row in con.execute(
+                        "SELECT last_success_backend_commit FROM contour_state"
+                    )
+                } == {row.new_commit for row in plan.baselines}
+        after = snapshot(db_path)
+        repeated = remap.inspect_remap(*interrupted_inputs, close_interrupted=True)
+        assert remap.apply_remap(repeated) is None
+        assert snapshot(db_path) == after
+        assert len(list(db_path.parent.glob("*.before-commit-remap-*"))) == 1
+
+
+@pytest.mark.parametrize("change", ["details", "replacement", "finished"])
+def test_close_interrupted_rechecks_records_not_just_counts(
+    interrupted_inputs, change
+):
+    db_path = interrupted_inputs[0]
+    plan = remap.inspect_remap(*interrupted_inputs, close_interrupted=True)
+    with closing(sqlite3.connect(db_path)) as con:
+        if change == "details":
+            con.execute("UPDATE local_jobs SET log_path='changed' WHERE status='running'")
+        elif change == "replacement":
+            con.execute("UPDATE local_jobs SET id=id+100 WHERE status='running'")
+        else:
+            con.execute("UPDATE local_jobs SET status='success' WHERE status='running'")
+        con.commit()
+    before = snapshot(db_path)
+    with pytest.raises(remap.RemapError, match="изменились после проверки"):
+        remap.apply_remap(plan)
+    assert snapshot(db_path) == before
+    assert not list(db_path.parent.glob("*.before-commit-remap-*"))
+
+
+def test_close_interrupted_rolls_back_statuses_when_baseline_write_fails(
+    interrupted_inputs,
+):
+    db_path = interrupted_inputs[0]
+    with closing(sqlite3.connect(db_path)) as con:
+        con.execute(
+            "CREATE TRIGGER reject_prod BEFORE UPDATE ON contour_state "
+            "WHEN NEW.contour = 'prod' BEGIN SELECT RAISE(ABORT, 'blocked'); END"
+        )
+        con.commit()
+    before = snapshot(db_path)
+    plan = remap.inspect_remap(*interrupted_inputs, close_interrupted=True)
+    with pytest.raises(sqlite3.IntegrityError, match="blocked"):
+        remap.apply_remap(plan)
+    assert snapshot(db_path) == before
+    (backup,) = db_path.parent.glob("*.before-commit-remap-*")
+    assert snapshot(backup) == before
+
+
+def test_close_interrupted_does_not_override_bad_sha(interrupted_inputs):
+    db_path, map_path, _ = interrupted_inputs
+    map_path.write_text(
+        f"old new\n{OLD_FIRST} {'0' * 40}\n{OLD_SECOND} {'0' * 40}\n"
+    )
+    before = snapshot(db_path)
+    plan = remap.inspect_remap(*interrupted_inputs, close_interrupted=True)
+    assert not plan.valid
+    with pytest.raises(remap.RemapError, match="План содержит ошибки"):
+        remap.apply_remap(plan)
+    assert snapshot(db_path) == before
+    assert not list(db_path.parent.glob("*.before-commit-remap-*"))
+
+
+def test_close_interrupted_backup_failure_leaves_statuses_intact(
+    interrupted_inputs, monkeypatch,
+):
+    def fail_backup(_):
+        raise OSError("backup failed")
+
+    before = snapshot(interrupted_inputs[0])
+    monkeypatch.setattr(remap, "_backup_database", fail_backup)
+    plan = remap.inspect_remap(*interrupted_inputs, close_interrupted=True)
+    with pytest.raises(OSError, match="backup failed"):
+        remap.apply_remap(plan)
+    assert snapshot(interrupted_inputs[0]) == before
+
+
+def test_close_interrupted_can_finish_after_sha_already_remapped(
+    interrupted_inputs, source,
+):
+    db_path = interrupted_inputs[0]
+    with closing(sqlite3.connect(db_path)) as con:
+        con.execute(
+            "UPDATE contour_state SET last_success_backend_commit=?",
+            (source[2],),
+        )
+        con.commit()
+    plan = remap.inspect_remap(*interrupted_inputs, close_interrupted=True)
+    assert plan.valid and not plan.changes
+    assert remap.apply_remap(plan).is_file()
+    after = remap.inspect_remap(*interrupted_inputs)
+    assert after.valid and not after.incomplete_operations
+    assert after.baselines == plan.baselines
+
+
+def test_cli_close_interrupted_preview_and_apply(
+    interrupted_inputs, configured_runner, capsys,
+):
+    before = snapshot(interrupted_inputs[0])
+    assert main([]) == 1
+    assert "--close-interrupted" in capsys.readouterr().out
+    assert main(["--close-interrupted"]) == 0
+    output = capsys.readouterr().out
+    assert "Незавершённая запись: local_jobs id=" in output
+    assert "будут закрыты как failed" in output
+    assert snapshot(interrupted_inputs[0]) == before
+    assert main(["--close-interrupted", "--apply"]) == 0
+    assert "Закрыто прерванных операций: 3" in capsys.readouterr().out

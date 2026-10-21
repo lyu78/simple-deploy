@@ -3,7 +3,9 @@
 Источник соответствий — переданный git-filter-repo commit-map. Инструмент
 не проверяет реальную БД приложения и не применяет миграции. Он переводит
 только contour_state.last_success_backend_commit, сохраняя release version,
-историю сборок/размещений и manifest. Схема runner-а не инициализируется.
+историю сборок/размещений и manifest. Явный режим close_interrupted также
+закрывает указанные в плане running/started записи как failed, без удаления.
+Схема runner-а не инициализируется.
 Применение атомарно, предваряется SQLite backup и требует остановки worker-а
 и других операций runner-а. Зависимости ограничены стандартной библиотекой.
 """
@@ -24,6 +26,11 @@ import uuid
 SHA_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 PREFIX_RE = re.compile(r"[0-9a-f]{7,64}\Z")
 CONTOURS = {"dev", "test", "prod"}
+INCOMPLETE_STATUSES = {
+    "local_jobs": "running",
+    "build_attempts": "started",
+    "deployment_attempts": "started",
+}
 
 
 class RemapError(ValueError):
@@ -47,6 +54,17 @@ class BaselineMapping:
 
 
 @dataclass(frozen=True)
+class IncompleteOperation:
+    """Запись, которую оператор считает прерванной; снимок защищает от гонок."""
+
+    table: str
+    id: int
+    status: str
+    started_at: str
+    snapshot: tuple[tuple[str, object], ...]
+
+
+@dataclass(frozen=True)
 class RemapPlan:
     """Проверенный снимок входов; повторно сверяется перед записью baseline."""
 
@@ -58,6 +76,8 @@ class RemapPlan:
     map_sha256: str
     baselines: tuple[BaselineMapping, ...]
     blockers: tuple[str, ...]
+    incomplete_operations: tuple[IncompleteOperation, ...] = ()
+    close_interrupted: bool = False
 
     @property
     def changes(self) -> tuple[BaselineMapping, ...]:
@@ -183,6 +203,7 @@ def _build_plan(
     map_path: Path,
     source_repo: Path,
     source_ref: str,
+    close_interrupted: bool = False,
 ) -> RemapPlan:
     mapping, digest = read_commit_map(map_path)
     source_commit = _source_commit(source_repo, source_ref)
@@ -211,18 +232,32 @@ def _build_plan(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )
     }
-    for table, status in (
-        ("local_jobs", "running"),
-        ("build_attempts", "started"),
-        ("deployment_attempts", "started"),
-    ):
+    incomplete_operations = []
+    for table, status in INCOMPLETE_STATUSES.items():
         if table in tables:
-            count = connection.execute(
-                f"SELECT count(*) FROM {table} WHERE status = ?", (status,)
-            ).fetchone()[0]
-            if count:
+            operations = connection.execute(
+                f"SELECT * FROM {table} WHERE status = ? ORDER BY id", (status,)
+            ).fetchall()
+            for operation in operations:
+                if not {"id", "started_at", "finished_at", "error"}.issubset(
+                    operation.keys()
+                ):
+                    raise RemapError(
+                        f"В {table} нет полей для завершения операции."
+                    )
+                incomplete_operations.append(IncompleteOperation(
+                    table=table,
+                    id=operation["id"],
+                    status=status,
+                    started_at=operation["started_at"],
+                    snapshot=tuple(
+                        (key, operation[key]) for key in operation.keys()
+                    ),
+                ))
+            if operations and not close_interrupted:
                 blockers.append(
-                    f"В {table} есть незавершённые операции ({status}: {count})."
+                    f"В {table} есть незавершённые операции "
+                    f"({status}: {len(operations)})."
                 )
     baselines = []
     for row in rows:
@@ -257,13 +292,21 @@ def _build_plan(
         digest,
         tuple(baselines),
         tuple(blockers),
+        tuple(incomplete_operations),
+        close_interrupted,
     )
 
 
 def inspect_remap(
-    db_path: Path, map_path: Path, source_repo: Path, source_ref: str = "dev"
+    db_path: Path, map_path: Path, source_repo: Path, source_ref: str = "dev",
+    *, close_interrupted: bool = False,
 ) -> RemapPlan:
-    """Строит план в read-only snapshot, baseline и файлы не изменяет."""
+    """Строит read-only план; close_interrupted означает решение оператора.
+
+    Статус SQLite не доказывает работу процесса. Явный флаг разрешает включить
+    в план завершение этих записей после остановки процессов оператором.
+    Во время просмотра ни baseline, ни статусы не меняются.
+    """
     db_path, map_path, source_repo = (
         path.expanduser().resolve()
         for path in (db_path, map_path, source_repo)
@@ -271,7 +314,8 @@ def inspect_remap(
     with closing(_connect(db_path)) as connection:
         connection.execute("BEGIN")
         return _build_plan(
-            connection, db_path, map_path, source_repo, source_ref
+            connection, db_path, map_path, source_repo, source_ref,
+            close_interrupted,
         )
 
 
@@ -298,12 +342,45 @@ def _backup_database(db_path: Path) -> Path:
     return backup
 
 
+def _close_interrupted_operations(
+    connection: sqlite3.Connection,
+    operations: tuple[IncompleteOperation, ...],
+    finished_at: str,
+) -> None:
+    """Закрывает только записи проверенного плана внутри общей транзакции.
+
+    Сохраняет ID, старые SHA, payload, логи и предыдущую ошибку. Не помечает
+    релиз применённым, не удаляет историю и не останавливает процессы.
+    """
+    for operation in operations:
+        if INCOMPLETE_STATUSES.get(operation.table) != operation.status:
+            raise RemapError("Неизвестный вид незавершённой операции.")
+        note = (
+            "Оператор подтвердил остановку процесса; операция закрыта как "
+            "прерванная через remap_commits --close-interrupted "
+            f"(прежний статус: {operation.status})."
+        )
+        previous_error = dict(operation.snapshot)["error"]
+        error = f"{previous_error}\n{note}" if previous_error else note
+        cursor = connection.execute(
+            f"UPDATE {operation.table} "
+            "SET status = 'failed', error = ?, finished_at = ? "
+            "WHERE id = ? AND status = ?",
+            (error, finished_at, operation.id, operation.status),
+        )
+        if cursor.rowcount != 1:
+            raise RemapError(
+                f"Не удалось закрыть {operation.table} id={operation.id}."
+            )
+
+
 def apply_remap(plan: RemapPlan) -> Path | None:
     """Переводит baseline одной транзакцией после повторной проверки и backup.
 
     Никаких Git fetch/checkout, SQL приложения или изменений старых релизов.
-    При ошибке изменения всех контуров откатываются. Повторный запуск уже
-    применённой карты не пишет базу и не создаёт лишнюю резервную копию.
+    Явный close_interrupted закрывает записи плана как failed в той же
+    транзакции. При ошибке и SHA, и статусы откатываются. Повторный запуск без
+    изменений не пишет базу и не создаёт лишнюю резервную копию.
     """
     if not plan.valid:
         raise RemapError("План содержит ошибки; ни один baseline не изменён.")
@@ -316,19 +393,26 @@ def apply_remap(plan: RemapPlan) -> Path | None:
                 plan.map_path,
                 plan.source_repo,
                 plan.source_ref,
+                plan.close_interrupted,
             )
             if current != plan:
                 raise RemapError(
                     "База, карта или source ref изменились после проверки. "
                     "Повторите предварительный просмотр."
                 )
-            if not current.changes:
+            if not current.changes and not (
+                current.close_interrupted and current.incomplete_operations
+            ):
                 connection.rollback()
                 return None
             backup = _backup_database(plan.db_path)
             updated_at = datetime.now(timezone.utc).isoformat(
                 timespec="seconds"
             )
+            if current.close_interrupted:
+                _close_interrupted_operations(
+                    connection, current.incomplete_operations, updated_at
+                )
             for row in current.changes:
                 cursor = connection.execute(
                     "UPDATE contour_state SET last_success_backend_commit = ?, "

@@ -95,6 +95,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--source-ref", default="dev", help="Ветка сборки; по умолчанию dev."
     )
+    parser.add_argument(
+        "--close-interrupted",
+        action="store_true",
+        help=(
+            "Подтвердить, что процессы остановлены, и включить в план "
+            "закрытие running/started как failed. Запись только с --apply."
+        ),
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--dry-run",
@@ -110,7 +118,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         db_path, source_repo = _resolve_paths(args)
         plan = inspect_remap(
-            db_path, args.commit_map, source_repo, args.source_ref
+            db_path, args.commit_map, source_repo, args.source_ref,
+            close_interrupted=args.close_interrupted,
         )
         print(f"База: {plan.db_path}")
         print(f"Карта: {plan.map_path}; SHA-256: {plan.map_sha256}")
@@ -125,6 +134,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  -> {row.new_commit}")
             else:
                 print("  Уже соответствует новой истории.")
+        for operation in plan.incomplete_operations:
+            print(
+                f"Незавершённая запись: {operation.table} id={operation.id}; "
+                f"статус={operation.status}; начато={operation.started_at}"
+            )
+        if plan.incomplete_operations:
+            if plan.close_interrupted:
+                print(
+                    "С --apply перечисленные записи будут закрыты как failed. "
+                    "Все процессы runner-а должны быть остановлены."
+                )
+            else:
+                print(
+                    "Если процессы уже остановлены, для прерванных операций "
+                    "повторите просмотр с --close-interrupted."
+                )
         for blocker in plan.blockers:
             print(f"ОШИБКА: {blocker}")
         if not plan.valid:
@@ -139,6 +164,11 @@ def main(argv: list[str] | None = None) -> int:
             print("Изменения не требуются.")
         else:
             print(f"Резервная копия: {backup}")
+            if plan.close_interrupted:
+                print(
+                    "Закрыто прерванных операций: "
+                    f"{len(plan.incomplete_operations)}."
+                )
             print("Baseline переведены. История релизов и manifest сохранены.")
         return 0
     except (
