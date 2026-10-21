@@ -111,13 +111,12 @@ Web/API и local worker на Windows:
 `.venv/Scripts/simple-deploy.exe worker --once` удобен для проверки очереди и
 возвращает отдельный idle exit code, если queued jobs нет.
 
-`dry-run` проверяет data SQL по умолчанию, а `build` и `pipeline` генерируют
-data SQL-артефакты по умолчанию. Явный schema-only режим для аварийных случаев:
-
-```bash
-.venv/Scripts/simple-deploy.exe build --skip-data-sql-artifacts
-.venv/Scripts/simple-deploy.exe pipeline --contour dev --skip-data-sql-artifacts
-```
+`build` и `pipeline` собирают только schema SQL из Django-миграций. Скрипты
+данных из docs не копируются, не проверяются обычным `dry-run` и не входят в
+новые архивы. Отдельный SQL source и разовый процесс сборки/применения отложены
+в `PRODUCT_BACKLOG.MD`. Старые `--include-data-sql`,
+`--skip-data-sql-artifacts` и `SIMPLE_DEPLOY_INCLUDE_DATA_SQL` не включают data SQL.
+`pipeline` отклоняет запрос применения data SQL до начала любых фаз.
 
 Фиксация внешнего TEST/PROD результата:
 
@@ -131,11 +130,14 @@ data SQL-артефакты по умолчанию. Явный schema-only ре
 `dry-run` не меняет VM и не запускает сборку. Он проверяет:
 
 - обязательные значения `tools-ci/.env` и наличие `tools-ci/local.secrets.env`;
-- локальные backend/frontend source и target репозитории;
-- `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
+- локальные backend/frontend source и target репозитории; совпадение source и
+  target запрещено с учётом регистра Windows и junction/symlink;
+- `BACKEND_APP_ROOT_DIR`, `manage.py`, backend requirements и импорт
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
-- идемпотентность data INSERT SQL, которые попадут в `run_all_insert`, если
-  не передан `--skip-data-sql-artifacts`;
+- baseline каждого контура из существующей SQLite: SHA должен находиться в
+  backend source и быть предком локальной ветки `dev` (кроме `--app-only`);
+  проверка не создаёт БД, не меняет baseline и не выполняет fetch; после
+  переписывания истории используется `remap_commits`;
 - наличие maintenance stub archive, если `maintenance_stub_enabled=true`;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
@@ -159,9 +161,6 @@ data SQL-артефакты по умолчанию. Явный schema-only ре
 - backend runtime archive;
 - frontend runtime archives для DEV, TEST и PROD;
 - schema SQL-архивы `db_schema_dev_*`, `db_schema_test_*`, `db_schema_prod_*`;
-- data SQL-архивы `db_insert_*`, `db_update_sequential_*`,
-  `db_update_parallel_*`, `db_set_default_sequential_*` и
-  `db_set_default_parallel_*`, если не передан `--skip-data-sql-artifacts`;
 - `release_manifest.json` с commit SHA и `db_schema_metadata`.
 
 Schema SQL генерируется offline по Git-диапазону `baseline..HEAD` backend source

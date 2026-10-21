@@ -88,12 +88,15 @@ backend commit релиза.
 - backend runtime archive;
 - frontend runtime archive;
 - `release_manifest.json` с версиями, commit SHA и SQL metadata;
-- schema SQL-архивы `db_schema_dev_*`, `db_schema_test_*`, `db_schema_prod_*`;
-- data SQL-архивы `db_insert_*`, `db_update_sequential_*`,
-  `db_update_parallel_*`, `db_set_default_sequential_*` и
-  `db_set_default_parallel_*`. Build создает их по умолчанию; schema-only режим
-  включается через `--skip-data-sql-artifacts`, а старый `--include-data-sql`
-  оставлен только для совместимости.
+- schema SQL-архивы `db_schema_dev_*`, `db_schema_test_*`, `db_schema_prod_*`.
+
+SQL-скрипты данных из docs исключены из новых сборок. Отдельный источник и
+разовый процесс их сборки/применения отложены в [backlog](PRODUCT_BACKLOG.MD).
+Старые data SQL-архивы поддерживаются явным `deploy`; флаги
+`--include-data-sql` и `--skip-data-sql-artifacts` больше не меняют состав сборки.
+
+Перед сборкой запрещается совпадение source и target для backend/frontend,
+включая разные пути к одному каталогу через junction/symlink.
 
 Schema SQL генерируется offline по Git-диапазону backend source repo. Он не
 подтверждает состояние реальной БД сам по себе: фактом применения считается

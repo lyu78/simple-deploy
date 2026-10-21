@@ -6,6 +6,8 @@
 
 - `runbooks/manual-sql-release-run.md` - ручное применение schema и data SQL
   artifacts из release bundle на DB VM.
+- `runbooks/remap-runner-commits.md` - предварительная проверка и перенос
+  baseline рабочего runner-а по commit-map после переписывания source history.
 - `runbooks/legacy-ansible-local-contour.md` - legacy обновление локального
   контура через Ansible.
 

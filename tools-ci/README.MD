@@ -409,11 +409,11 @@ backend/frontend, Django management, healthcheck и фиксацию baseline.
 ```
 
 По умолчанию full deploy применяет schema SQL и app-часть, но пропускает data
-migration SQL. Запуск `insert` и `update_parallel` требует явного флага:
+migration SQL. Для старого релиза с data SQL запуск `insert` и
+`update_parallel` требует явного флага:
 
 ```bash
 .venv/Scripts/simple-deploy.exe deploy --contour dev --latest --include-data-migration-sql
-.venv/Scripts/simple-deploy.exe pipeline --contour dev --include-data-migration-sql
 ```
 
 `kind=set_default` остается отдельным шагом и запускается только вместе с data
@@ -421,23 +421,18 @@ migration SQL:
 
 ```bash
 .venv/Scripts/simple-deploy.exe deploy --contour dev --latest --include-data-migration-sql --include-set-default-sql
-.venv/Scripts/simple-deploy.exe pipeline --contour dev --include-data-migration-sql --include-set-default-sql
 ```
 
-`dry-run` проверяет data SQL по умолчанию, а `build` и `pipeline` генерируют
-data SQL-артефакты по умолчанию. Явный schema-only режим для аварийных случаев:
+`build` и `pipeline` собирают только schema SQL из Django-миграций. Скрипты
+данных из docs не копируются, не проверяются обычным `dry-run` и не входят в
+новые архивы. Отдельный SQL source и разовый процесс сборки/применения отложены
+в `PRODUCT_BACKLOG.MD`. Старые `--include-data-sql`,
+`--skip-data-sql-artifacts` и `SIMPLE_DEPLOY_INCLUDE_DATA_SQL` не включают data SQL.
+`pipeline` отклоняет запрос применения data SQL до начала любых фаз.
 
-```bash
-.venv/Scripts/simple-deploy.exe build --skip-data-sql-artifacts
-.venv/Scripts/simple-deploy.exe pipeline --contour dev --skip-data-sql-artifacts
-```
-
-Старый `--include-data-sql` оставлен только для совместимости и больше ничего
-не включает. `--skip-data-sql-artifacts` управляет проверкой/генерацией
-data SQL-артефактов, а `--include-data-migration-sql` - применением готовых
-`insert`/`update_parallel` архивов на deploy. Runtime config
-`data_sql_enabled=false` запрещает применение data SQL даже при явном
-include-флаге.
+`--include-data-migration-sql` и `--include-set-default-sql` доступны в `deploy`
+для старых пакетов с готовыми data SQL-архивами. Runtime config
+`data_sql_enabled=false` запрещает их применение даже при явном include-флаге.
 
 Фиксация внешнего TEST/PROD результата:
 
@@ -451,11 +446,14 @@ include-флаге.
 `dry-run` ничего не собирает, не меняет VM и не двигает baseline. Он проверяет:
 
 - обязательные значения `tools-ci/.env` и наличие `tools-ci/local.secrets.env`;
-- локальные backend/frontend source и target репозитории;
-- `BACKEND_APP_ROOT_DIR`, backend requirements и импорт
+- локальные backend/frontend source и target репозитории; совпадение source и
+  target запрещено с учётом регистра Windows и junction/symlink;
+- `BACKEND_APP_ROOT_DIR`, `manage.py`, backend requirements и импорт
   `BACKEND_DJANGO_SETTINGS_MODULE`, если backend venv уже есть;
-- идемпотентность data INSERT SQL, которые попадут в `run_all_insert`, если
-  не передан `--skip-data-sql-artifacts`;
+- baseline каждого контура из существующей SQLite: SHA должен находиться в
+  backend source и быть предком локальной ветки `dev` (кроме `--app-only`);
+  проверка не создаёт БД, не меняет baseline и не выполняет fetch; после
+  переписывания истории используется `remap_commits`;
 - наличие default maintenance stub archive, если `maintenance_stub_enabled=true`;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;
@@ -472,7 +470,8 @@ include-флаге.
 
 ## Build artifacts
 
-`build` запускает `tools-ci/builder/create_release.py`, подготавливает frontend
+`build` сначала проверяет различие обеих пар source/target, затем
+запускает `tools-ci/builder/create_release.py`, подготавливает frontend
 `.env` файлы и создает директорию релиза.
 
 Каждая попытка build автоматически записывается в
@@ -480,7 +479,7 @@ include-флаге.
 или `failed`. Таблица `releases` обновляется только после успешной сборки и
 создания `release_manifest.json`.
 
-Backend DB-генераторы копируются во временную директорию
+Schema-генератор `create_sql_migrations.py` копируется во временную директорию
 `BACKEND_SOURCE_REPO_PATH/build_scripts/` из
 `tools-ci/builder/scripts/additional_artifacts/` и запускаются из корня backend
 source repo через Python backend venv. После упаковки SQL-артефактов временная директория
@@ -497,7 +496,8 @@ Schema SQL генерируется offline через Django schema editor в �
 - `db_schema_prod_r_<release>-c_<commit>.tar.gz`.
 
 Внутри schema-архива лежит единственный entrypoint
-`summary_sql_<contour>_*.sql`. Build по умолчанию создает data SQL-архивы:
+`summary_sql_<contour>_*.sql`. Новые сборки не содержат data SQL.
+В старых пакетах могут находиться следующие архивы:
 
 - `db_insert_r_<release>-c_<commit>.tar.gz` с `run_all_insert_<commit>.sql`;
 - `db_update_sequential_r_<release>-c_<commit>.tar.gz` с `run_all_update_sequential_<commit>.sql`;
@@ -509,7 +509,7 @@ Schema SQL генерируется offline через Django schema editor в �
 и `db_update_parallel` запускаются после schema SQL при
 `--include-data-migration-sql`. `db_update_parallel` содержит только
 `kind=update`; чтобы отдельно применить `kind=set_default`, запускайте `deploy`
-или `pipeline` с `--include-data-migration-sql --include-set-default-sql`.
+с `--include-data-migration-sql --include-set-default-sql`.
 `db_update_sequential` и
 `db_set_default_sequential` остаются аварийными ручными вариантами для
 последовательного запуска на одной DB-сессии.

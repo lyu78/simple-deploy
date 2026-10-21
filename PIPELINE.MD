@@ -38,16 +38,15 @@
    репозиториев во внутренние рабочие копии.
 4. Сборочный этап создает версию релиза в формате
    `<BUILD_VERSION_BASE>.<ddMMyyyy_HHmm>`, например `1.2.3.30052026_1437`.
-   В директорию релиза попадают runtime-архивы приложения, schema SQL-архивы,
-   data SQL-архивы по умолчанию и `release_manifest.json`. Schema-only режим
-   является явным исключением для аварийных запусков.
+   В директорию релиза попадают runtime-архивы приложения, schema SQL-архивы
+   и `release_manifest.json`. SQL данных из docs исключены; их отдельный
+   источник и разовый процесс сборки/применения отложены в backlog.
 5. Внутренние рабочие копии получают синхронизационные ветки; код публикуется во
    внутренний GitLab, а runtime-архивы остаются в release storage.
 6. Для full deploy DEV app-сервисы останавливаются, а в `FRONTEND_RELEASE_PATH`
    раскладывается универсальная maintenance-заглушка. Пока backend остановлен,
-   DB VM применяет schema SQL, `run_all_insert_*.sql`, parallel update runner
-   `run_all_update_parallel_*.sh`, опциональный
-   `run_all_set_default_parallel_*.sh` и DB maintenance.
+   DB VM применяет schema SQL и DB maintenance. Data SQL остаются доступны
+   только при явном применении ранее выпущенного пакета с такими архивами.
 7. После успешной DB-части App VM получает настоящий backend, выполняет
    `after_unpack`, Django `migrate --fake`, `sync_action_role` и `after_migrate`
    service steps. Настоящий frontend раскладывается последним и заменяет
@@ -66,13 +65,13 @@
 - Если app deploy или healthcheck завершается ошибкой, baseline не двигается.
 - Если deploy успешен, release storage и локальное состояние контуров становятся
   источником для следующего диапазона SQL-миграций.
-- `kind=set_default` data SQL выполняется только по явному решению оператора; по
-  умолчанию full deploy применяет schema, insert и update artifacts.
+- Data SQL старого пакета выполняются только по явному решению оператора;
+  `kind=set_default` требует отдельного включения.
 
 ## Контуры
 
 DEV обычно является автоматизируемым контуром полного цикла: build, schema SQL,
-data SQL, maintenance-заглушка, app deploy, healthcheck и фиксация успеха
+maintenance-заглушка, app deploy, healthcheck и фиксация успеха
 выполняются одним операторским процессом.
 
 TEST и PROD могут продвигаться внешним или ручным процессом. Для них критично
@@ -97,6 +96,7 @@ TEST и PROD могут продвигаться внешним или ручн�
   `db_schema_prod_r_<release>-c_<commit>.tar.gz` - schema SQL-архивы для
   контуров `dev`, `test`, `prod`; внутри лежит `summary_sql_<contour>_*.sql`
   с SQL-представлением schema migrations за диапазон `baseline..release commit`.
+- Следующие data SQL-архивы встречаются только в ранее выпущенных пакетах.
 - `db_insert_r_<release>-c_<commit>.tar.gz` - data SQL-архив insert-миграций с
   `run_all_insert_<commit>.sql` и SQL-файлами, на которые он ссылается.
 - `db_update_sequential_r_<release>-c_<commit>.tar.gz` - аварийный data SQL-архив

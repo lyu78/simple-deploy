@@ -16,17 +16,19 @@ VM и не двигает baseline контуров.
 - runtime-архив backend;
 - архивы frontend, которые собираются для поддерживаемых контуров;
 - schema SQL-архивы для `dev`, `test`, `prod`;
-- data SQL-архивы, если генерация data SQL включена;
 - `release_manifest.json` с версией релиза, commit SHA исходных репозиториев и
   описанием артефактов.
 
-Для data SQL builder дополнительно пишет в `release_manifest.json` блок
-`artifacts.backend_db.db_data_sql_artifacts`: для каждого data artifact там
-указаны archive, entrypoint, количество SQL-файлов, список SQL-файлов в порядке
-entrypoint/runner и best-effort оценка времени выполнения. Оценка времени
-берется из `-- simple-deploy: estimated_seconds=...`, а при отсутствии поля -
-из комментариев вида `Query returned successfully in ...`; отсутствие оценки не
-считается ошибкой сборки.
+Data SQL из docs не собираются. В manifest сохраняется
+`artifacts.backend_db.db_data_sql_enabled=false`, а ключи data SQL-архивов
+отсутствуют. Старые флаги и `SIMPLE_DEPLOY_INCLUDE_DATA_SQL=1` их не включают.
+Во временный `build_scripts` копируется только `create_sql_migrations.py`.
+Отдельный источник и разовый процесс data SQL отложены в
+[backlog](../../PRODUCT_BACKLOG.MD).
+
+До сборки проверяются обе пары source/target: одинаковый каталог, в том числе
+через junction/symlink, запрещён. Проверка повторяется в компонентных builder-ах
+и функциях синхронизации до операций с файлами.
 
 Такой пакет переносим как набор файлов релиза: его можно передать в runner,
 использовать для ручного SQL-продвижения TEST/PROD или хранить как описание
