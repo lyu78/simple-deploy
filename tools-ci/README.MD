@@ -453,7 +453,9 @@ migration SQL:
 - baseline каждого контура из существующей SQLite: SHA должен находиться в
   backend source и быть предком локальной ветки `dev` (кроме `--app-only`);
   проверка не создаёт БД, не меняет baseline и не выполняет fetch; после
-  переписывания истории используется `remap_commits`;
+  переписывания истории используется `./remap-commits.sh` из корня репозитория
+  в Git Bash; `--apply` переносит SHA с backup, карта уже включена в пакет
+  ([инструкция](../docs/runbooks/remap-runner-commits.md));
 - наличие default maintenance stub archive, если `maintenance_stub_enabled=true`;
 - доступность origin URL без интерактивного `git ls-remote`;
 - Windows-команды `git`, `node`, `npm`, `ssh`, `scp` и путь к Git Bash;

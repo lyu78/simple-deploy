@@ -1,10 +1,43 @@
 # Перенос baseline после переписывания Git history
 
 Команда `python -m simple_deploy.cli.remap_commits` переводит текущие backend
-source commits контуров по карте `git-filter-repo`. Её можно подготовить на
-одной машине, а запустить позже на рабочем runner. Рабочая база нужна только
-при запуске. Требуются Python 3.10+, установленный пакет `simple-deploy` и Git;
-дополнительные зависимости для маппера не нужны.
+source commits контуров по карте `git-filter-repo`. Карта текущего переноса
+включена в пакет и приезжает с обновлением simple-deploy: отдельно копировать
+`commit-map` на рабочую машину не требуется. Рабочая база нужна только при
+запуске. Требуются Python 3.10+, установленный пакет `simple-deploy` и Git;
+дополнительные зависимости сверх настроенного runner-а не нужны.
+
+## Короткий запуск из Git Bash
+
+1. Дождитесь завершения build/deploy и остановите web/API и worker.
+2. Обновите simple-deploy. Backend source должен уже содержать новую историю
+   и локальную ветку `dev`.
+3. Из корня simple-deploy посмотрите соответствия SHA:
+
+   ```bash
+   ./remap-commits.sh
+   ```
+
+4. Если просмотр завершился без ошибок и показывает нужные базу/source,
+   примените перенос:
+
+   ```bash
+   ./remap-commits.sh --apply
+   ```
+
+5. Повторите `./remap-commits.sh`: изменений больше не должно требоваться.
+   После этого можно запускать web/API и worker.
+
+Launcher использует `.venv/Scripts/python.exe` из этого checkout и переходит
+в корень simple-deploy. Source читается из `BACKEND_SOURCE_REPO_PATH` в
+`tools-ci/.env`. SQLite выбирается той же функцией registry, что у web/worker:
+`SIMPLE_DEPLOY_STATE_DB` из окружения процесса либо
+`local_state/simple_deploy.sqlite3`. Если отдельное значение этой переменной
+в `.env` указывает на другую базу, маппер остановится и попросит явный `--db`.
+Маппер не читает файл секретов и не создаёт отсутствующую SQLite.
+
+Без `--apply` выполняется только чтение. Launcher сам не запускает build,
+deploy, обычный `dry-run`, web или worker.
 
 ## Что переносится
 
@@ -17,28 +50,32 @@ source commits контуров по карте `git-filter-repo`. Её можн
 а не применение нового релиза. Команда не выполняет SQL приложения, не
 подключается к PostgreSQL и не делает Git fetch/pull/checkout.
 
-## Что перенести на рабочую машину
+## Встроенная карта и явные пути
 
-1. Обновлённый `simple-deploy` с этой maintenance-командой.
-2. Файл `commit-map` именно того переписывания, которое затронуло source.
-   Обычно он находится в `.git/filter-repo/commit-map`, а у bare-репозитория —
-   в `filter-repo/commit-map`. `ref-map` для этой операции не подходит.
-3. Рабочую копию backend source с новой историей и веткой сборки `dev`.
+По умолчанию используется ресурс пакета
+`simple_deploy/registry/commit_maps/backend-history-v1.map`. Это полная карта
+подготовленного переноса: только пары SHA, включая отметки об удалённых
+коммитах, без путей, содержимого исходников и учётных данных. Она включается
+и в Git checkout, и в устанавливаемый Python-пакет.
 
-Карту и резервные копии храните вне Git, например в игнорируемом
-`local_state/commit-remap/`. Реальные SHA и локальные пути не добавляйте
-в tracked-документацию. Маппер не использует `.env` и не выбирает базу сам:
-`--db`, `--commit-map` и `--source-repo` обязательны. Если runner использует
-`SIMPLE_DEPLOY_STATE_DB`, передайте в `--db` именно этот путь.
+Для другого переписывания можно передать `--commit-map /path/to/commit-map`.
+Такой файл должен относиться именно к нужной смене истории; `ref-map` не
+подходит. Внешние карты и резервные копии храните вне Git, например в
+игнорируемом `local_state/commit-remap/`. Реальные SHA и локальные пути не
+добавляйте в tracked-документацию.
+
+Параметры `--db`, `--source-repo`, `--env-file` и `--commit-map` необязательны:
+они переопределяют автоматический выбор. Если одновременно заданы `--db` и
+`--source-repo`, `.env` не читается и зависимости настроенного runner-а для
+разрешения путей не нужны. База для записи всегда выводится в плане.
 
 ## Предварительный просмотр
 
-Из корня `simple-deploy` в PowerShell задайте свои пути:
+При необходимости явных путей из корня `simple-deploy` в PowerShell:
 
 ```powershell
 $remapArgs = @(
     '--db', 'C:/example/simple-deploy/local_state/simple_deploy.sqlite3',
-    '--commit-map', 'C:/example/simple-deploy/local_state/commit-remap/commit-map',
     '--source-repo', 'C:/example/repos/backend-source'
 )
 .venv/Scripts/python.exe -Xutf8 -m simple_deploy.cli.remap_commits @remapArgs

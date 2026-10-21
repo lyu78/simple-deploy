@@ -507,9 +507,16 @@ Manifest SQL-артефакта перечисляет Django migration-файл
 
 Для переноса текущих baseline после переписывания backend source history
 есть отдельная maintenance-команда `python -m simple_deploy.cli.remap_commits`.
-Она принимает явные пути к SQLite, commit-map и source repo; по умолчанию
+Для Git Bash доступен короткий launcher `./remap-commits.sh`: по умолчанию
 показывает план, а с `--apply` создаёт SQLite backup и атомарно переводит SHA
-в `contour_state`. Старые release manifests и история attempts сохраняются.
+в `contour_state`. Карта подготовленного переноса включена в Python-пакет как
+`registry/commit_maps/backend-history-v1.map` и приезжает с обновлением кода.
+Source читается из `BACKEND_SOURCE_REPO_PATH` в `tools-ci/.env`, база выбирается
+штатной функцией registry (окружение `SIMPLE_DEPLOY_STATE_DB` либо
+`local_state/simple_deploy.sqlite3`). Конфликт отдельного пути к БД в `.env`
+блокирует автоматический выбор. Явные `--db`, `--source-repo`, `--env-file` и
+`--commit-map` сохранены; при явных базе и source `.env` не читается.
+Старые release manifests и история attempts сохраняются.
 Неизвестные/удалённые SHA блокируют перенос; соответствия берутся из карты,
 состояние реальной БД не проверяется. Порядок запуска и ограничения описаны
 в `docs/runbooks/remap-runner-commits.md`.
