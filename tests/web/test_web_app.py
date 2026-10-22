@@ -145,6 +145,7 @@ class WebAppTests(unittest.TestCase):
                                         TOOLS_CI_ROOT / "local.secrets.env"
                                     ),
                                     "timeout": 77,
+                                    "reuse_frontend": TEST_BUILD_VERSION,
                                     "skip_data_sql_artifacts": True,
                                 },
                             },
@@ -246,6 +247,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(created_job["kind"], "build")
         self.assertEqual(created_job["status"], "queued")
         self.assertIn("skip_data_sql_artifacts", created_job["payload_json"])
+        self.assertIn(f'"reuse_frontend": "{TEST_BUILD_VERSION}"', created_job["payload_json"])
         created_deploy_job = created_deploy_job_response.json()
         self.assertEqual(created_deploy_job["kind"], "deploy")
         self.assertEqual(created_deploy_job["contour"], "dev")

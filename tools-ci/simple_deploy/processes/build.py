@@ -36,9 +36,11 @@ def build(request: BuildRequest) -> ProcessResult:
         request.env_file, request.secrets_file, require_secrets=False
     )
     validate_build_repository_pairs(env)
-    job_log("BUILD prepare frontend env files")
-    prepare_frontend_env_files(env)
+    if not request.reuse_frontend:
+        job_log("BUILD prepare frontend env files")
+        prepare_frontend_env_files(env)
     build_env = prepare_build_env(env)
+    build_env["SIMPLE_DEPLOY_REUSE_FRONTEND"] = request.reuse_frontend
     build_env[INCLUDE_DATA_SQL_ENV] = (
         "1"
         if data_sql_artifacts_enabled(request.skip_data_sql_artifacts)

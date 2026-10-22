@@ -144,6 +144,31 @@ class ProcessBuildTests(unittest.TestCase):
         build_env = stream_mock.call_args.kwargs["env"]
         self.assertEqual(build_env["SIMPLE_DEPLOY_INCLUDE_DATA_SQL"], "0")
 
+    def test_build_reuse_frontend_skips_env_generation(self):
+        """При повторном использовании builder получает версию без записи env."""
+        args = Namespace(
+            env_file=DEFAULT_ENV_FILE,
+            secrets_file=DEFAULT_SECRETS_FILE,
+            timeout=3600,
+            reuse_frontend="1.2.3",
+            skip_data_sql_artifacts=False,
+        )
+        env = {
+            "BACKEND_SOURCE_REPO_PATH": BACKEND_SOURCE_REPO_WINDOWS,
+            "BACKEND_TARGET_REPO_PATH": "backend-target",
+            "FRONTEND_SOURCE_REPO_PATH": "frontend-source",
+            "FRONTEND_TARGET_REPO_PATH": "frontend-target",
+            "DEV_DOMAIN": DEV_DOMAIN,
+        }
+        with patch("simple_deploy.processes.build.load_env", return_value=env):
+            with patch("simple_deploy.processes.build.prepare_frontend_env_files") as frontend_env:
+                with patch("simple_deploy.processes.build.stream_command", return_value=0) as stream:
+                    self.assertEqual(build(args), 0)
+        frontend_env.assert_not_called()
+        self.assertEqual(
+            stream.call_args.kwargs["env"]["SIMPLE_DEPLOY_REUSE_FRONTEND"], "1.2.3"
+        )
+
     def test_build_skips_data_sql_with_explicit_flag(self):
         """Build выключает data SQL generation по явному CLI flag."""
         args = Namespace(

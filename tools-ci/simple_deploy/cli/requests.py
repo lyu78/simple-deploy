@@ -54,6 +54,7 @@ def build_request_from_args(args: argparse.Namespace) -> BuildRequest:
     return BuildRequest(
         **_env_file_kwargs(args),
         timeout=getattr(args, "timeout", DEFAULT_REQUEST_TIMEOUT_SECONDS),
+        reuse_frontend=getattr(args, "reuse_frontend", ""),
         skip_data_sql_artifacts=getattr(
             args, "skip_data_sql_artifacts", False
         ),

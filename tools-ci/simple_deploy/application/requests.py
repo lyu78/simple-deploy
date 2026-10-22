@@ -91,6 +91,11 @@ class DryRunRequest(_EnvFilesRequestBase):
 class BuildRequest(_TimedEnvFilesRequestBase):
     """Request сборки release bundle через builder pipeline."""
 
+    reuse_frontend: str = Field(
+        default="",
+        description="Версия готового релиза, из которого берутся frontend-архивы.",
+    )
+
     skip_data_sql_artifacts: StrictBool = Field(
         default=False,
         description=(

@@ -151,6 +151,12 @@ def parse_args() -> argparse.Namespace:
 
     build_parser = subparsers.add_parser("build")
     build_parser.add_argument(
+        "--reuse-frontend",
+        default="",
+        metavar="VERSION",
+        help="Взять готовые frontend-архивы DEV/TEST/PROD из указанного релиза.",
+    )
+    build_parser.add_argument(
         "--include-data-sql",
         action="store_true",
         help="Устаревший no-op: SQL из docs исключены из сборки.",

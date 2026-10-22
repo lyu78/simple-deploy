@@ -121,6 +121,8 @@ type JobFormState = {
   buildVersion: string;
   error: string;
   timeout: string;
+  reuseFrontend: boolean;
+  reuseFrontendVersion: string;
   latest: boolean;
   includeDataMigrationSql: boolean;
   includeSetDefaultSql: boolean;
@@ -161,6 +163,8 @@ const defaultForm: JobFormState = {
   buildVersion: "",
   error: "",
   timeout: "3600",
+  reuseFrontend: false,
+  reuseFrontendVersion: "",
   latest: true,
   includeDataMigrationSql: false,
   includeSetDefaultSql: false,
@@ -196,6 +200,7 @@ function jobPayload(form: JobFormState): Record<string, unknown> {
   if (form.kind === "build") {
     return {
       timeout,
+      reuse_frontend: form.reuseFrontend ? form.reuseFrontendVersion : "",
       skip_data_sql_artifacts: true
     };
   }
@@ -473,7 +478,8 @@ function JobCreateForm({
   const needsBuildVersion = ["deploy", "set_baseline", "mark_applied", "mark_failed"].includes(form.kind) && !(form.kind === "deploy" && form.latest);
   const needsTimeout = ["build", "pipeline"].includes(form.kind);
   const selectedBuild = buildOptions.find((option) => option.build_version === form.buildVersion) ?? null;
-  const submitDisabled = submitting || (needsBuildVersion && !selectedBuild) || (form.kind === "mark_failed" && !form.error.trim());
+  const selectedFrontendSource = buildOptions.find((option) => option.build_version === form.reuseFrontendVersion) ?? null;
+  const submitDisabled = submitting || (needsBuildVersion && !selectedBuild) || (form.kind === "build" && form.reuseFrontend && !selectedFrontendSource) || (form.kind === "mark_failed" && !form.error.trim());
 
   React.useEffect(() => {
     if (!needsBuildVersion || form.buildVersion || !buildOptions.length) {
@@ -481,6 +487,13 @@ function JobCreateForm({
     }
     setForm((current) => ({ ...current, buildVersion: buildOptions[0].build_version }));
   }, [buildOptions, form.buildVersion, needsBuildVersion, setForm]);
+
+  React.useEffect(() => {
+    if (!form.reuseFrontend || form.reuseFrontendVersion || !buildOptions.length) {
+      return;
+    }
+    setForm((current) => ({ ...current, reuseFrontendVersion: buildOptions[0].build_version }));
+  }, [buildOptions, form.reuseFrontend, form.reuseFrontendVersion, setForm]);
 
   return (
     <form className="job-form" onSubmit={onSubmit}>
@@ -546,6 +559,41 @@ function JobCreateForm({
         </label>
       ) : null}
       <div className="check-group">
+        {form.kind === "build" ? (
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={form.reuseFrontend}
+              disabled={!buildOptions.length}
+              onChange={(event) => setForm((current) => ({
+                ...current,
+                reuseFrontend: event.target.checked,
+                reuseFrontendVersion: event.target.checked && !current.reuseFrontendVersion
+                  ? buildOptions[0]?.build_version ?? ""
+                  : current.reuseFrontendVersion
+              }))}
+            />
+            Взять готовый фронтенд из релиза
+          </label>
+        ) : null}
+        {form.kind === "build" && form.reuseFrontend ? (
+          <label>
+            Релиз с фронтендом
+            <select
+              value={form.reuseFrontendVersion}
+              onChange={(event) => setForm((current) => ({ ...current, reuseFrontendVersion: event.target.value }))}
+            >
+              {buildOptions.map((option) => (
+                <option value={option.build_version} key={option.build_version}>
+                  {option.build_version}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {form.kind === "build" && !buildOptions.length ? (
+          <p>Нет успешных релизов для повторного использования фронтенда.</p>
+        ) : null}
         {form.kind === "deploy" ? (
           <label className="check-row">
             <input

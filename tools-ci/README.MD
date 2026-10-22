@@ -384,6 +384,22 @@ registry release row, release manifest или настроенного bootstrap
 .venv/Scripts/simple-deploy.exe build
 ```
 
+Если frontend не менялся, можно собрать backend и schema SQL заново, взяв
+готовые frontend-архивы DEV/TEST/PROD из указанного успешного релиза:
+
+```bash
+.venv/Scripts/simple-deploy.exe build --reuse-frontend <previous_build_version>
+```
+
+Команда проверяет наличие трех архивов и исходного manifest до backend build.
+Архивы копируются под новой версией релиза без изменения содержимого; поэтому
+встроенный во frontend `VITE_BUILD_VERSION` остается от исходной сборки. Новый
+manifest сохраняет фактический frontend commit и версию релиза-источника.
+Используйте режим, только если frontend-код, настройки контуров и контракт с
+backend совместимы. Последующий `deploy` выполняется обычной командой.
+В веб-панели тот же режим доступен при создании job вида `Build`: включите
+галочку «Взять готовый фронтенд из релиза» и выберите исходный релиз.
+
 Деплой уже собранного релиза:
 
 ```bash
